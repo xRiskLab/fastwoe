@@ -1,0 +1,93 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "fastwoe/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["fastwoe"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/fastwoe",
+    "/tests",
+    "/examples",
+    "/docs",
+    "/ims",
+    "/README.md",
+    "/LICENSE",
+]
+
+[project]
+name = "fastwoe"
+dynamic = ["version"]
+description = "Fast Weight of Evidence (WOE) encoding and inference"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    {name = "xRiskLab", email = "contact@xrisklab.ai"}
+]
+license = {text = "MIT"}
+keywords = ["machine-learning", "feature-engineering", "woe", "weight-of-evidence", "statistical-inference"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+    "numpy>=1.19.0",
+    "pandas>=1.3.0",
+    "scipy>=1.7.0",
+    "scikit-learn>=1.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=22.0.0",
+    "ruff>=0.1.0",
+]
+examples = [
+    "matplotlib>=3.5.0",
+    "seaborn>=0.11.0",
+    "jupyter>=1.0.0",
+    "statsmodels>=0.13.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/xRiskLab/fastwoe"
+Repository = "https://github.com/xRiskLab/fastwoe"
+Documentation = "https://github.com/xRiskLab/fastwoe#readme"
+Issues = "https://github.com/xRiskLab/fastwoe/issues"
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --cov=fastwoe --cov-report=term-missing"
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "compatibility: marks tests as compatibility tests across Python/sklearn versions",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py39"
+select = ["E", "F", "W", "I", "N", "B", "C4", "UP"]
+ignore = ["E203", "E501"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+    "pytest-cov>=6.1.1",
+]

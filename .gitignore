@@ -1,0 +1,17 @@
+.DS_Store
+**/.DS_Store/
+.pytest_cache/
+**/.pytest_cache/
+__pycache__/
+**/__pycache__/
+**/__pycache__/*.pyc
+*.pyc
+**/*.pyc
+.trunk
+.venv/
+.coverage
+.test**
+
+# Hide egg-info
+*.egg-info/
+dist/
