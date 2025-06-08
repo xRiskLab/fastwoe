@@ -6,7 +6,7 @@
 
 FastWoe is a Python library for efficient **Weight of Evidence (WOE)** encoding of categorical features and statistical inference. It’s designed for machine learning practitioners seeking robust, interpretable feature engineering and likelihood-ratio-based inference for binary classification problems.
 
-![FastWOE](https://github.com/xRiskLab/fastwoe/raw/main/ims/title.png)
+![FastWoe](https://github.com/xRiskLab/fastwoe/raw/main/ims/title.png)
 
 ## 🌟 Key Features
 
@@ -15,7 +15,7 @@ FastWoe is a Python library for efficient **Weight of Evidence (WOE)** encoding 
 - **Cardinality Control**: Built-in preprocessing to handle high-cardinality categorical features
 - **Risk Differentiation Metrics**: Feature-level statistics including Gini score and Information Value (IV)
 - **Compatible with scikit-learn**: Follows scikit-learn's preprocessing transformer interface
-- **Statistical Foundation**: Combines on Alan Turing's method with Maximum Likelihood theory (see [paper](docs/woe_st_errors.md))
+- **Statistical Foundation**: Combines Alan Turing's factor principle with Maximum Likelihood theory (see [paper](docs/woe_st_errors.md))
 
 ## 🎲 What is Weight of Evidence?
 
@@ -23,7 +23,7 @@ FastWoe is a Python library for efficient **Weight of Evidence (WOE)** encoding 
 
 Weight of Evidence (WOE) is a statistical technique that:
 
-- Transforms categorical variables into logarithmic scores
+- Transforms discrete features into logarithmic scores
 - Measures the strength of relationship between feature categories and true labels
 - Provides interpretable coefficients as weights in logistic regression models
 - Handles missing values and rare categories gracefully
@@ -96,6 +96,18 @@ print(mapping[['category', 'count', 'event_rate', 'woe', 'woe_se']])
 
 ## 🔧 Advanced Usage
 
+> [!CAUTION]
+> When we make inferences with `predict_proba` and `predict_ci` methods, we are making a naive assumption that pieces of evidence are independent.
+> The sum of WOE scores can only produce meaningful probabilistic outputs if the data is not strongly correlated among features.
+
+### Probability Predictions
+
+```python
+# Get predictions with Naive Bayes classification
+preds = woe_encoder.predict_proba(X_preprocessed)[:, 1]
+print(preds.mean())
+```
+
 ### Confidence Intervals
 
 > [!NOTE]  
@@ -127,7 +139,7 @@ from sklearn.linear_model import LogisticRegression
 
 # Create a complete pipeline
 pipeline = Pipeline([
-    ('preprocessor', WoePreprocessor(max_categories=20)),
+    ('preprocessor', WoePreprocessor(top_p=0.95, min_count=10)),
     ('woe_encoder', FastWoe()),
     ('classifier', LogisticRegression())
 ])
@@ -157,7 +169,7 @@ pipeline.fit(data[['category', 'high_card_cat']], data['target'])
 The `WoePreprocessor` is a preprocessing step that reduces the cardinality of categorical features. It is used to handle high-cardinality categorical features.
 
 > [!WARNING]  
-> High-cardinality features (>50 categories) can lead to overfitting and unreliable WOE estimates. Always use WoePreprocessor for such features.
+> High-cardinality features (>50 categories) can lead to overfitting and unreliable WOE estimates. Always use WoePreprocessor for such features if you plan to use in downstream tasks.
 
 #### Parameters
 - `max_categories` (int): Maximum categories to keep per feature
@@ -180,7 +192,7 @@ The `WoePreprocessor` is a preprocessing step that reduces the cardinality of ca
 
 preprocessor = WoePreprocessor(top_p=0.95, min_count=5)
 # Result: Keeps ["A", "B", "C", "D"] (95% coverage), groups rest as "__other__"
-# Reduces 100 → 5 categories while preserving 95% of data patterns
+# Reduces 100 → 5 categories while preserving 95% of the categories
 ```
 
 ## 📊 Theoretical Background
@@ -192,12 +204,9 @@ This implementation is based on rigorous statistical theory:
 1. **WOE Standard Error**: `SE(WOE) = sqrt(1/n_good + 1/n_bad)`
 2. **Confidence Intervals**: Using normal approximation with calculated standard errors
 3. **Information Value**: Measures predictive power of each feature
-4. **Gini Coefficient**: Derived from AUC to measure feature discrimination
+4. **Gini Coefficient**: Derived from AUC to measure discriminatory power
 
-For detailed mathematical derivations, see [Weight of Evidence (WOE), Log Odds, and Standard Errors](docs/woe_standard_errors.md).
-
-> [!CAUTION]
-> WOE encoding can create data leakage if applied before train/test split. Always fit the encoder only on training data.
+For technical details, see [Weight of Evidence (WOE), Log Odds, and Standard Errors](docs/woe_standard_errors.md).
 
 ![Credit scoring example](https://github.com/xRiskLab/fastwoe/raw/main/ims/credit_example_woe.png)
 ![I.J. Good](https://github.com/xRiskLab/fastwoe/raw/main/ims/good_bayes_odds.png)
@@ -304,7 +313,7 @@ uv run ruff check fastwoe/ tests/
 - **Statistical Rigor**: MLE-based standard errors and confidence intervals for WOE estimates
 - **High-Cardinality Support**: WoePreprocessor for handling features with many categories
 - **Comprehensive Statistics**: Gini coefficient, Information Value (IV), and feature-level metrics
-- **Scikit-learn Integration**: Full compatibility with sklearn pipelines and transformers
+- **Integration with scikit-learn**: Full compatibility with sklearn pipelines and transformers
 - **Cross-Version Testing**: Compatibility verified across Python 3.9-3.12 and sklearn 1.3.0+
 
 #### 🔧 Technical
