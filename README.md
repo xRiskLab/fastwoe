@@ -6,6 +6,10 @@
 
 FastWoe is a Python library for efficient **Weight of Evidence (WOE)** encoding of categorical features and statistical inference. It’s designed for machine learning practitioners seeking robust, interpretable feature engineering and likelihood-ratio-based inference for binary classification problems.
 
+![FastWOE](https://github.com/xRiskLab/fastwoe/raw/main/ims/title.png)
+
+## 🌟 Key Features
+
 - **Fast WOE Encoding**: Leverages scikit-learn's `TargetEncoder` for efficient computation
 - **Statistical Confidence Intervals**: Provides standard errors and confidence intervals for WOE values
 - **Cardinality Control**: Built-in preprocessing to handle high-cardinality categorical features
