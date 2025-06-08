@@ -341,9 +341,9 @@ Notice that the resulting values correspond to the intercept CIs from the logist
 
 ## 6. Implications
 
-By understanding the properties of standard errors for WOE-transformed variables, we can derive valuable insights about the log likelihood ratios in predictive modeling. Applying standard errors to WOE allows us to identify bins containing the most uncertainty due to sampling variability. This, in turn, can indicate potential limitations in our inferences and highlight areas where additional data might be needed to improve model reliability.
+By understanding the properties of standard errors for WOE-transformed variables, we can derive valuable insights about the log of the likelihood ratios in predictive modeling. Applying standard errors to WOE allows us to identify bins containing the most uncertainty due to sampling variability. This, in turn, can indicate potential limitations in our inferences and highlight areas where additional data might be needed to improve model reliability.
 
-Additionally, standard errors can help in assessing the true effect of the WOE values (since larger absolute WOEs can be misleading) as well as in constructing confidence intervals, which are crucial for interpreting the model's predictions and making informed decisions.
+Additionally, standard errors can help in assessing the true effect of the WOE values (since large absolute WOEs can be misleading due to low sample sizes) as well as in constructing confidence intervals, which are crucial for interpreting the model's predictions and making informed decisions.
 
 \begin{warningbox}
 \textbf{Key Takeaway:} The centering operation in WOE transformation does not affect the uncertainty (standard error) of the estimates, making WOE a reliable transformation for feature engineering in machine learning and statistical modeling.
