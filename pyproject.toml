@@ -70,6 +70,7 @@ Homepage = "https://github.com/xRiskLab/fastwoe"
 Repository = "https://github.com/xRiskLab/fastwoe"
 Documentation = "https://github.com/xRiskLab/fastwoe#readme"
 Issues = "https://github.com/xRiskLab/fastwoe/issues"
+PyPI = "https://pypi.org/project/fastwoe/"
 
 [tool.pytest.ini_options]
 minversion = "7.0"
@@ -90,4 +91,5 @@ ignore = ["E203", "E501"]
 dev = [
     "pytest>=8.4.0",
     "pytest-cov>=6.1.1",
+    "twine>=6.1.0",
 ]

@@ -1,7 +1,9 @@
 # FastWoe: Fast Weight of Evidence (WOE) encoding and inference
 
+[![PyPI version](https://img.shields.io/pypi/v/fastwoe.svg)](https://pypi.org/project/fastwoe/)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![scikit-learn 1.3.0+](https://img.shields.io/badge/sklearn-1.3.0+-orange.svg)](https://scikit-learn.org/)
+[![PyPI downloads](https://img.shields.io/pypi/dm/fastwoe.svg)](https://pypi.org/project/fastwoe/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 FastWoe is a Python library for efficient **Weight of Evidence (WOE)** encoding of categorical features and statistical inference. It’s designed for machine learning practitioners seeking robust, interpretable feature engineering and likelihood-ratio-based inference for binary classification problems.
@@ -39,6 +41,13 @@ Where WOE represents the log-odds difference between a category and the overall 
 
 > [!IMPORTANT]  
 > FastWoe requires Python 3.9+ and scikit-learn 1.3.0+ for TargetEncoder support.
+
+### From PyPI (Recommended)
+```bash
+pip install fastwoe
+```
+
+📦 **View on PyPI**: [https://pypi.org/project/fastwoe/](https://pypi.org/project/fastwoe/)
 
 ### From Source
 ```bash
