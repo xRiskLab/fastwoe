@@ -4,27 +4,24 @@
 [![scikit-learn 1.3.0+](https://img.shields.io/badge/sklearn-1.3.0+-orange.svg)](https://scikit-learn.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-FastWoe is a Python library for efficient **Weight of Evidence (WOE)** encoding of categorical features with statistical confidence intervals. It's designed for machine learning practitioners who need robust, interpretable feature engineering for binary classification tasks.
-
-![FastWOE](https://github.com/xRiskLab/fastwoe/raw/main/ims/title.png)
-
-## 🌟 Key Features
+FastWoe is a Python library for efficient **Weight of Evidence (WOE)** encoding of categorical features and statistical inference. It’s designed for machine learning practitioners seeking robust, interpretable feature engineering and likelihood-ratio-based inference for binary classification problems.
 
 - **Fast WOE Encoding**: Leverages scikit-learn's `TargetEncoder` for efficient computation
 - **Statistical Confidence Intervals**: Provides standard errors and confidence intervals for WOE values
 - **Cardinality Control**: Built-in preprocessing to handle high-cardinality categorical features
-- **Risk Differentiation Stats (binary classification only)**: Feature-level statistics including Gini score and Information Value (IV)
-- **Scikit-learn Compatible**: Follows scikit-learn's preprocessing transformer interface
-- **Statistical Foundation**: Based on Maximum Likelihood theory of estimation (see [paper](docs/woe_st_errors.md))
+- **Risk Differentiation Metrics**: Feature-level statistics including Gini score and Information Value (IV)
+- **Compatible with scikit-learn**: Follows scikit-learn's preprocessing transformer interface
+- **Statistical Foundation**: Combines on Alan Turing's method with Maximum Likelihood theory (see [paper](docs/woe_st_errors.md))
 
 ## 🎲 What is Weight of Evidence?
 
 ![Weight of Evidence](https://github.com/xRiskLab/fastwoe/raw/main/ims/weight_of_evidence.png)
 
 Weight of Evidence (WOE) is a statistical technique that:
-- Transforms categorical variables into continuous values
-- Measures the strength of relationship between feature categories and target variable  
-- Provides interpretable coefficients in logistic regression
+
+- Transforms categorical variables into logarithmic scores
+- Measures the strength of relationship between feature categories and true labels
+- Provides interpretable coefficients as weights in logistic regression models
 - Handles missing values and rare categories gracefully
 
 **Mathematical Definition:**
@@ -193,7 +190,7 @@ This implementation is based on rigorous statistical theory:
 3. **Information Value**: Measures predictive power of each feature
 4. **Gini Coefficient**: Derived from AUC to measure feature discrimination
 
-For detailed mathematical derivations, see [Weight of Evidence (WOE), Log Odds, and Standard Errors](docs/woe_st_errors.md).
+For detailed mathematical derivations, see [Weight of Evidence (WOE), Log Odds, and Standard Errors](docs/woe_standard_errors.md).
 
 > [!CAUTION]
 > WOE encoding can create data leakage if applied before train/test split. Always fit the encoder only on training data.
@@ -333,17 +330,13 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 3. Daniele Micci-Barreca (2001). A preprocessing scheme for high-cardinality categorical attributes in classification and prediction problems.
 4. Naeem Siddiqi (2006). Credit Risk Scorecards: Developing and Implementing Intelligent Credit Scoring.
 
-## 🔗 Related Projects
+## 🔗 Other Projects
 
 - [scikit-learn](https://scikit-learn.org/): Python Machine learning library providing TargetEncoder implementation
 - [category_encoders](https://contrib.scikit-learn.org/category_encoders/): Additional categorical encoding methods
+- [WoeBoost](https://github.com/xRiskLab/woeboost): Weight of Evidence (WOE) Gradient Boosting in Python
 
-## 📞 Support
+## ℹ️ Additional Information
 
-- **Documentation**: [README.md](README.md) and [Theoretical Background](woe_st_errors.md)
-- **Issues**: [GitHub Issues](https://github.com/xRiskLab/fastwoe/issues)
+- **Documentation**: [README.md](README.md) and [Theoretical Background](docs/woe_standard_errors.md)
 - **Examples**: See [examples/](examples/) directory
-
----
-
-**FastWoe** - Making Weight of Evidence (WOE) inference fast, reliable, and statistically sound! 🚀

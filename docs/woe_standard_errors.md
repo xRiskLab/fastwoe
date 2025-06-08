@@ -33,6 +33,24 @@ header-includes:
       numbersep=5pt
     }
   - \usepackage{graphicx}
+  - \usepackage[most]{tcolorbox}
+  - \usepackage{mdframed}
+  - \usepackage{needspace}
+  - \setlength{\parskip}{6pt plus 2pt minus 1pt}
+  - \setlength{\parindent}{0pt}
+  - \definecolor{infoboxbackground}{RGB}{240, 247, 255}
+  - \definecolor{infoboxborder}{RGB}{187, 222, 251}
+  - \definecolor{featureboxbackground}{RGB}{240, 247, 255}
+  - \definecolor{featureboxborder}{RGB}{66, 133, 244}
+  - \definecolor{warningboxbackground}{RGB}{255, 243, 205}
+  - \definecolor{warningboxborder}{RGB}{243, 156, 18}
+  - \definecolor{theoremboxbackground}{RGB}{232, 245, 232}
+  - \definecolor{theoremboxborder}{RGB}{165, 214, 167}
+  - \definecolor{definitionboxbackground}{RGB}{255, 249, 230}
+  - \definecolor{definitionboxborder}{RGB}{255, 217, 102}
+  - \newmdenv[backgroundcolor=theoremboxbackground,linecolor=theoremboxborder,linewidth=2pt,roundcorner=5pt,innerleftmargin=15pt,innerrightmargin=15pt,innertopmargin=15pt,innerbottommargin=15pt,skipabove=15pt,skipbelow=15pt,leftmargin=0pt,rightmargin=0pt]{theorembox}
+  - \newmdenv[backgroundcolor=featureboxbackground,linecolor=featureboxborder,linewidth=2pt,roundcorner=5pt,innerleftmargin=15pt,innerrightmargin=15pt,innertopmargin=15pt,innerbottommargin=15pt,skipabove=15pt,skipbelow=15pt,leftmargin=0pt,rightmargin=0pt]{featurebox}
+  - \newmdenv[backgroundcolor=warningboxbackground,linecolor=warningboxborder,leftline=true,rightline=false,topline=false,bottomline=false,linewidth=2pt,innerleftmargin=20pt,innerrightmargin=15pt,innertopmargin=15pt,innerbottommargin=15pt,skipabove=15pt,skipbelow=15pt,leftmargin=0pt,rightmargin=0pt]{warningbox}
 ---
 
 This document explains:
@@ -66,9 +84,19 @@ $$
 \text{WOE}_1 = \theta_1 - \theta_{\text{prior}}
 $$
 
+
+
 ---
 
 ## 2. Variance and Standard Error
+
+\begin{theorembox}
+\textbf{Basic Property of Variance:} The variance of a random variable remains unchanged when a constant is subtracted from it.
+
+$$\text{Var}(X - c) = \text{Var}(X)$$
+
+This property is the cornerstone of our analysis. For more details on variance properties, see \href{https://math.stackexchange.com/questions/3083350/wald-test-for-variance-of-normal-distribution}{this discussion}.
+\end{theorembox}
 
 ### SE of log odds:
 $$
@@ -84,15 +112,20 @@ $$
 \text{Var}(\text{WOE}_1) = \text{Var}(\theta_1)
 $$
 
-### Why?
+\begin{featurebox}
+\textbf{Why Standard Errors Are Identical}
+
 Because subtracting a constant does not change variance:
-$$
-\text{Var}(X - c) = \text{Var}(X)
-$$
+$$\text{Var}(X - c) = \text{Var}(X)$$
+
+The prior log odds $\theta_{\text{prior}}$ is a \textbf{fixed constant} calculated from the entire dataset. When we subtract this constant from the log odds to obtain WOE, the variability (and hence standard error) remains exactly the same.
+\end{featurebox}
 
 ---
 
 ## 3. Difference of WOE = Coefficient in Logistic Regression
+
+
 
 For two groups:
 
@@ -108,7 +141,11 @@ $$
 
 ## 4. Python Simulation Example
 
+\begin{featurebox}
+\textbf{Empirical Verification}
+
 Below we provide a simulation for the effect of constant in the variance calculation. We create 10,000 iterations by sampling from a binomial distribution and calculate the variance of log-odds and WOE.
+\end{featurebox}
 
 ```python
 import numpy as np
@@ -155,23 +192,26 @@ woe_1_samples = np.array(woe_1_samples)
 variance_log_odds = np.var(log_odds_1_samples, ddof=1)
 variance_woe = np.var(woe_1_samples, ddof=1)
 
-print(f"Empirical Var(Log Odds): {variance_log_odds:.4f}")
-print(f"Empirical Var(WOE): {variance_woe:.4f}")
+print(f"Empirical Variance (Log Odds): {variance_log_odds:.4f}")
+print(f"Empirical Variance (WOE): {variance_woe:.4f}")
 print(f"Difference: {abs(variance_log_odds - variance_woe):.4f}")
 ```
 
-The results confirm that adding or subtracting a constant does not change the variance:
-```plain
-Empirical Var(Log Odds): 0.0890
-Empirical Var(WOE): 0.0890
-Difference: 0.0000
-```
+**Results:** The results confirm that adding or subtracting a constant does not change the variance:
+
+- Empirical Variance (Log Odds): 0.0890
+- Empirical Variance (WOE): 0.0890  
+- Difference: 0.0000
 
 This means that the centering of log-odds through WOE transformation does not affect the standard error.
 
 ## 5. Logistic Regression Example
 
+\begin{featurebox}
+\textbf{Connecting WOE to Logistic Regression}
+
 In this section, we provide examples from logistic regression to demonstrate that the standard error (SE) of the Weight of Evidence (WOE) is linked to the variability of log odds per row and is not influenced by the centering effect.
+\end{featurebox}
 
 ### Data
 
@@ -187,11 +227,9 @@ $$
 \end{array}
 $$
 
-From this table, we can derive the log odds for $P(y=1|x=0)$ and $P(y=1|x=1)$. The log odds are defined as:
+From the Table above, we can derive the log odds for $P(y=1|x=0)$ and $P(y=1|x=1)$. The log odds are defined as:
 
-$$
-\log \left( \frac{P(y=1|x)}{P(y=0|x)} \right)
-$$
+$$\log \left( \frac{P(y=1|x)}{P(y=0|x)} \right)$$
 
 These are:
 
@@ -203,7 +241,7 @@ $$
 \log \left( \frac{P(y=1|x=1)}{P(y=0|x=1)} \right) = \log \left( \frac{10/30}{20/30} \right) = \log \left( \frac{10}{20} \right) = \log (0.5) \approx -0.693
 $$
 
-We will see how these values appear from a logistic regression fit next.
+
 
 ### Logistic Regression
 
@@ -222,7 +260,7 @@ $$
 \end{array}
 $$
 
-Notice that the sign of $\text{beta (x=1)}$ flips depending on what we consider to be the intercept in our model as this is difference in the final log-odds between the two conditions.
+Notice that the sign of $\text{beta (x=1)}$ flips depending on what we consider to be the intercept in our model. The coefficient represents the difference in the final log-odds between the two conditions and thus changes sign when we switch the reference base from $x=0$ to $x=1$.
 
 Looking at the Std. Error column, we can see that the SE for the intercept is $0.3651$, while for the coefficient it is $0.5323$.
 
@@ -241,23 +279,17 @@ Here we see that the standard error for the intercept is $0.3873$.
 
 We can get the standard errors reported for the intercepts from our $2 \times 2$ table:
 
-$$
-\text{SE}(x=0) = \sqrt{\frac{1}{10} + \frac{1}{30}} = 0.3651
-$$
+$$\text{SE}(x=0) = \sqrt{\frac{1}{10} + \frac{1}{30}} = 0.3651$$
 
-$$
-\text{SE}(x=1) = \sqrt{\frac{1}{20} + \frac{1}{10}} = 0.3873
-$$
+$$\text{SE}(x=1) = \sqrt{\frac{1}{20} + \frac{1}{10}} = 0.3873$$
 
 The beta standard error is then the square root of the pooled variance of the two rows in our contingency table:
 
-$$
-\text{SE}(\beta) = \sqrt{\text{SE}(x=0)^2 + \text{SE}(x=1)^2} = \sqrt{0.3651^2 + 0.3873^2} = 0.5323
-$$
+$$\text{SE}(\beta) = \sqrt{\text{SE}(x=0)^2 + \text{SE}(x=1)^2} = \sqrt{0.3651^2 + 0.3873^2} = 0.5323$$
 
 ### Weight of Evidence (WOE)
 
-To calculate WOE, we will use a conditional probability table. It should be noted that WOE can also be calculated through the odds form of the Bayes theorem, which would require only the odds of y = 1 in a bin and the overall odds [1], but this is not necessary for this example.
+To calculate WOE, we will use a conditional probability table. It should be noted that WOE can also be calculated through the odds form of the Bayes theorem, which would require knowing only the odds of y = 1 in a bin and the overall odds, an interested reader can find more details in [1].
 
 $$
 \begin{array}{c|ccc}
@@ -307,14 +339,32 @@ $$
 
 Notice that the resulting values correspond to the intercept CIs from the logistic regression fit summaries.
 
-![A Visual Description of WOE and Log Odds Standard Errors](../ims/sketch.png){width=70%}
-
 ## 6. Implications
 
 By understanding the properties of standard errors for WOE-transformed variables, we can derive valuable insights about the log likelihood ratios in predictive modeling. Applying standard errors to WOE allows us to identify bins containing the most uncertainty due to sampling variability. This, in turn, can indicate potential limitations in our inferences and highlight areas where additional data might be needed to improve model reliability.
 
 Additionally, standard errors can help in assessing the true effect of the WOE values (since larger absolute WOEs can be misleading) as well as in constructing confidence intervals, which are crucial for interpreting the model's predictions and making informed decisions.
 
+\begin{warningbox}
+\textbf{Key Takeaway:} The centering operation in WOE transformation does not affect the uncertainty (standard error) of the estimates, making WOE a reliable transformation for feature engineering in machine learning and statistical modeling.
+\end{warningbox}
+
+## 7. Python Implementation
+
+You can find the Python implementation in the \href{https://github.com/xRiskLab/fastwoe}{FastWoe} package, which provides a fast and efficient Python implementation of WOE encoding and inference.
+
+![FastWoe](ims/title.png){ width=80% }
+
 ## 7. References
 
 [1] Good, I.J. Probability and the Weighing of Evidence. London: Griffin, 1950.
+
+\newpage
+
+## Appendix
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.8\textwidth]{ims/sketch.png}
+\caption{A Visual Description of WOE and Log Odds Standard Errors}
+\end{figure} 
