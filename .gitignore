@@ -18,5 +18,4 @@ dist/
 
 # Development notes with sensitive info
 .dev_notes.md
-.dev_notes.md
 .env
