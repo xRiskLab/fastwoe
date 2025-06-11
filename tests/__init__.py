@@ -1,1 +1,1 @@
-"""Test package for FastWoe library.""" 
+"""Test package for FastWoe library."""

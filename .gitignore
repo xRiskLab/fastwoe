@@ -11,6 +11,8 @@ __pycache__/
 .venv/
 .coverage
 .test**
+.vscode/
+data/
 
 # Hide egg-info
 *.egg-info/

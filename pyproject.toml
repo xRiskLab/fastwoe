@@ -56,7 +56,7 @@ dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "black>=22.0.0",
-    "ruff>=0.1.0",
+    "ruff>=0.11.13",
 ]
 examples = [
     "matplotlib>=3.5.0",
@@ -84,12 +84,86 @@ markers = [
 [tool.ruff]
 line-length = 88
 target-version = "py39"
-select = ["E", "F", "W", "I", "N", "B", "C4", "UP"]
-ignore = ["E203", "E501"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "B", "C4", "UP", "SLF", "ARG", "D"]
+ignore = [
+    "E203",   # whitespace before ':'
+    "E501",   # line too long
+    "N806",   # Variable in function should be lowercase (allow X, y for ML)
+    "N803",   # Argument name should be lowercase (allow X_train, y_train for ML)
+    "UP035",  # typing.Dict and typing.List are still needed for Python 3.9 compatibility
+    "F841",   # unused variable (equivalent to pylint W0612)
+    "SLF001", # protected access (equivalent to pylint protected-access)
+    "C901",   # too complex (common C013 equivalent)
+    "ARG001", # unused function argument (equivalent to pylint unused-argument)
+    "ARG002", # unused method argument (equivalent to pylint unused-argument)
+    "ARG003", # unused class method argument (equivalent to pylint unused-argument)
+    "ARG004", # unused static method argument (equivalent to pylint unused-argument)
+    "ARG005", # unused lambda argument (equivalent to pylint unused-argument)
+    "D100",   # missing docstring in public module
+    "D101",   # missing docstring in public class
+    "D102",   # missing docstring in public method
+    "D103",   # missing docstring in public function
+    "D104",   # missing docstring in public package
+    "D105",   # missing docstring in magic method
+    "D106",   # missing docstring in public nested class
+    "D107",   # missing docstring in __init__
+    "D200",   # short docstring should fit on one line
+    "D205",   # blank line required between summary and description
+    "D212",   # multi-line docstring summary should start at the first line
+    "D400",   # first line should end with a period
+    "D415",   # first line should end with punctuation
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "D",      # ignore all docstring rules in tests
+    "SLF001", # allow protected access in tests
+    "ARG",    # allow unused arguments in test fixtures
+    "N801",   # class name should use CapWords convention
+    "N802",   # function name should be lowercase
+]
+"examples/*" = [
+    "D",      # ignore docstring rules in examples
+    "N803",   # argument name should be lowercase
+    "N806",   # variable in function should be lowercase
+    "C408",   # unnecessary collection call (dict() vs {})
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"  # Use Google docstring convention
 
 [dependency-groups]
 dev = [
     "pytest>=8.4.0",
     "pytest-cov>=6.1.1",
+    "ruff>=0.11.13",
     "twine>=6.1.0",
+    "jupyter>=1.0.0",
+    "ipykernel>=6.0.0",
+    "matplotlib>=3.5.0",
+    "seaborn>=0.11.0",
 ]
+
+[tool.pylint.messages_control]
+disable = [
+    "C0103",      # invalid-name (allow X, y, X_train, etc. for ML)
+    "W0212",      # protected-access (allow testing private methods)
+    "W0613",      # unused-argument (common in test fixtures)
+    "W0612",      # unused-variable (common in test setup)
+    "C0115",      # missing-class-docstring (not needed for test classes)
+    "C0116",      # missing-function-docstring (not needed for test methods)
+    "R0903",      # too-few-public-methods (common for mock classes)
+    "W0107",      # unnecessary-pass (sometimes needed for empty methods)
+    "C0415",      # import-outside-toplevel (common in tests for mocking)
+    "R1714",      # consider-using-in (minor style preference)
+    "E0401",      # import-error (dependencies should be available)
+]
+
+[tool.pylint.format]
+max-line-length = 88
+
+[tool.pylint.basic]
+# Allow single letter variable names (common in ML: X, y)
+good-names = ["i", "j", "k", "ex", "Run", "_", "X", "y"]

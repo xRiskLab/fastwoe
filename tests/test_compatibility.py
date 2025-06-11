@@ -3,11 +3,10 @@ Compatibility tests for FastWoe across Python and scikit-learn versions.
 Uses pytest with custom markers for optional execution.
 """
 
-import subprocess
-import sys
-import tempfile
 import os
-from pathlib import Path
+import subprocess
+import tempfile
+
 import pytest
 
 # Test combinations: [python_version, sklearn_version, description]
@@ -44,10 +43,10 @@ def test_python_sklearn_compatibility(python_ver, sklearn_ver, description):
     success, _, _ = run_cmd("which uv")
     if not success:
         pytest.skip("uv not available - skipping compatibility tests")
-    
+
     env_name = f".test-py{python_ver.replace('.', '')}-sklearn{sklearn_ver.replace('.', '')}"
     numpy_constraint = get_numpy_constraint(python_ver, sklearn_ver)
-    
+
     # Test script content
     test_content = '''
 import sys
@@ -59,94 +58,94 @@ try:
     import sklearn
     import pandas as pd
     import numpy as np
-    
+
     print(f"Testing Python {sys.version.split()[0]} + sklearn {sklearn.__version__} + numpy {np.__version__}")
-    
+
     # Quick functionality test
     np.random.seed(42)
     data = pd.DataFrame({
         "cat": ["A", "B", "C"] * 10,
         "target": np.random.binomial(1, 0.3, 30)
     })
-    
+
     # Test core functionality
     preprocessor = fastwoe.WoePreprocessor()
     X_proc = preprocessor.fit_transform(data[["cat"]])
-    
+
     woe = fastwoe.FastWoe()
     X_woe = woe.fit_transform(X_proc, data["target"])
-    
+
     # Test key methods
     mapping = woe.get_mapping("cat")
     stats = woe.get_feature_stats()
     ci = woe.predict_ci(X_proc.head(2))
-    
+
     assert X_woe.shape == (30, 1), f"Expected (30, 1), got {X_woe.shape}"
     assert len(mapping) > 0, "Mapping should not be empty"
     assert len(stats) > 0, "Stats should not be empty"
     assert ci.shape[0] == 2, f"Expected 2 CI predictions, got {ci.shape[0]}"
-    
+
     print("✅ All FastWoe functionality verified!")
-    
+
 except Exception as e:
     print(f"❌ Error: {e}")
     raise
 
 print("SUCCESS")
 '''
-    
+
     try:
         # Install Python version
         success, _, stderr = run_cmd(f"uv python install {python_ver}")
         if not success and "already installed" not in stderr.lower():
             pytest.fail(f"Failed to install Python {python_ver}: {stderr}")
-        
+
         # Create environment
         run_cmd(f"rm -rf {env_name}")
         success, _, stderr = run_cmd(f"uv venv {env_name} --python {python_ver}")
         if not success:
             pytest.fail(f"Environment creation failed: {stderr}")
-        
+
         python_exe = f"{env_name}/bin/python"
-        
+
         # Install dependencies
         deps = [numpy_constraint, "pandas>=1.3.0", "scipy>=1.7.0"]
         if sklearn_ver == "latest":
             deps.append("scikit-learn")
         else:
             deps.append(f"scikit-learn=={sklearn_ver}")
-        
+
         for dep in deps:
             success, _, stderr = run_cmd(f"uv pip install --python {python_exe} '{dep}'")
             if not success:
                 pytest.fail(f"Failed to install {dep}: {stderr}")
-        
+
         # Install FastWoe
         success, _, stderr = run_cmd(f"uv pip install --python {python_exe} -e .")
         if not success:
             pytest.fail(f"FastWoe installation failed: {stderr}")
-        
+
         # Run test
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
             f.write(test_content)
             test_file = f.name
-        
+
         try:
             success, stdout, stderr = run_cmd(f"{python_exe} {test_file}")
-            
+
             # Print output for debugging
             if stdout:
                 print(f"\n--- Test Output ---\n{stdout}")
-            
+
             if not success:
                 pytest.fail(f"Compatibility test failed for {description}:\n{stderr}")
-            
+
             # Verify success message
             assert "SUCCESS" in stdout, f"Test didn't complete successfully: {stdout}"
-            
+
         finally:
             os.unlink(test_file)
-            
+
     finally:
         # Cleanup
         run_cmd(f"rm -rf {env_name}")
@@ -157,21 +156,21 @@ def test_minimum_requirements():
     """Test that minimum requirements are correctly specified."""
     # This is a lightweight test that can run without uv
     import fastwoe
-    
+
     # Test that we can import everything
     assert hasattr(fastwoe, 'FastWoe')
     assert hasattr(fastwoe, 'WoePreprocessor')
     assert hasattr(fastwoe, '__version__')
-    
+
     # Test basic instantiation
     woe = fastwoe.FastWoe()
     preprocessor = fastwoe.WoePreprocessor()
-    
+
     assert woe is not None
     assert preprocessor is not None
 
 
-@pytest.mark.compatibility 
+@pytest.mark.compatibility
 def test_sklearn_target_encoder_availability():
     """Test that TargetEncoder is available in the current environment."""
     try:
@@ -185,4 +184,4 @@ if __name__ == "__main__":
     # Allow running this file directly for development
     print("🧪 Running FastWoe compatibility tests...")
     print("Use 'pytest tests/test_compatibility.py -m compatibility' for full test suite")
-    pytest.main([__file__, "-v", "-m", "compatibility"]) 
+    pytest.main([__file__, "-v", "-m", "compatibility"])
