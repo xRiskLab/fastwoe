@@ -15,9 +15,9 @@ FastWoe is a Python library for efficient **Weight of Evidence (WOE)** encoding 
 - **Fast WOE Encoding**: Leverages scikit-learn's `TargetEncoder` for efficient computation
 - **Statistical Confidence Intervals**: Provides standard errors and confidence intervals for WOE values
 - **Cardinality Control**: Built-in preprocessing to handle high-cardinality categorical features
-- **Risk Differentiation Metrics**: Feature-level statistics including Gini score and Information Value (IV)
+- **Binning Summaries**: Feature-level binning statistics including Gini score and Information Value (IV)
 - **Compatible with scikit-learn**: Follows scikit-learn's preprocessing transformer interface
-- **Statistical Foundation**: Combines Alan Turing's factor principle with Maximum Likelihood theory (see [paper](docs/woe_st_errors.md))
+- **Uncertainty Quantification**: Combines Alan Turing's factor principle with Maximum Likelihood theory (see [paper](docs/woe_st_errors.md))
 
 ## 🎲 What is Weight of Evidence?
 
@@ -132,12 +132,12 @@ print(ci_results[['prediction', 'lower_ci', 'upper_ci']].head())
 ```python
 # Get comprehensive feature statistics
 feature_stats = woe_encoder.get_feature_stats()
-print(feature_stats[['feature', 'gini', 'information_value', 'n_categories']])
+print(feature_stats)
 ```
 
 ### Standardized WOE
 ```python
-# Get Wald scores (standardized log-odds)
+# Get Wald scores (standardized log-odds) or use "woe" for raw WOE values
 X_standardized = woe_encoder.transform_standardized(X_preprocessed, output='wald')
 ```
 
@@ -204,6 +204,30 @@ preprocessor = WoePreprocessor(top_p=0.95, min_count=5)
 # Reduces 100 → 5 categories while preserving 95% of the categories
 ```
 
+### WeightOfEvidence Class
+
+The `WeightOfEvidence` class provides interpretability for FastWoe classifiers with automatic parameter inference and uncertainty quantification through confidence intervals.
+
+#### Parameters
+- `classifier` (FastWoe, optional): FastWoe classifier to explain (auto-created if None)
+- `X_train` (array-like, optional): Training features (auto-inferred if possible)
+- `y_train` (array-like, optional): Training labels (auto-inferred if possible)
+- `feature_names` (list, optional): Feature names (auto-inferred if possible)
+- `class_names` (list, optional): Class names (auto-inferred if possible)
+- `auto_infer` (bool): Enable automatic parameter inference (default=True)
+
+#### Key Methods
+- `explain(x, sample_idx=None, class_to_explain=None, true_label=None, return_dict=True)`: Explain single sample or sample from dataset
+- `explain_ci(x, sample_idx=None, alpha=0.05, return_dict=True)`: Explain with confidence intervals for uncertainty quantification
+- `predict_ci(X, alpha=0.05)`: Batch predictions with confidence bounds
+- `summary()`: Get explainer overview and statistics
+
+#### Key Features
+- **Auto-Inference**: Automatically detects parameters from FastWoe classifiers
+- **Dual Usage**: Support both `explain(sample)` and `explain(dataset, index)` patterns
+- **Uncertainty Quantification**: Confidence intervals for WOE scores and probabilities
+- **Rich Output**: Human-readable interpretations with evidence strength levels
+
 ## 📊 Theoretical Background
 
 ![A.M. Turing example](https://github.com/xRiskLab/fastwoe/raw/main/ims/turing_paper.png)
@@ -213,7 +237,7 @@ This implementation is based on rigorous statistical theory:
 1. **WOE Standard Error**: `SE(WOE) = sqrt(1/n_good + 1/n_bad)`
 2. **Confidence Intervals**: Using normal approximation with calculated standard errors
 3. **Information Value**: Measures predictive power of each feature
-4. **Gini Coefficient**: Derived from AUC to measure discriminatory power
+4. **Gini Score**: Derived from AUC to measure discriminatory power
 
 For technical details, see [Weight of Evidence (WOE), Log Odds, and Standard Errors](docs/woe_standard_errors.md).
 
@@ -313,7 +337,27 @@ uv run ruff check fastwoe/ tests/
 
 ## 📋 Changelog
 
-### Version 0.1.0 (Current)
+### Version 0.1.1 (Current)
+
+**Enhanced Interpretability Module** 🚀
+
+#### ✨ New Features
+- **WeightOfEvidence Interpretability**: Explanation module for FastWoe classifiers
+- **Auto-Inference Capabilities**: Automatically detect and infer feature names, class names, and training data
+- **Unified Explanation API**: Single `explain()` method supporting both single samples and dataset+index patterns
+- **Enhanced Output Control**: `return_dict` parameter for clean formatted output vs dictionary return
+
+#### 🔧 Usability Improvements
+- **Flexible Input Handling**: Support for numpy arrays, pandas Series/DataFrames, and mixed data types
+- **Consistent Class Formatting**: Unified formatting between true labels and predicted classes
+- **Enhanced Examples**: Comprehensive examples showing FastWoe vs traditional classifiers
+
+#### 📊 Enhanced API
+- `WeightOfEvidence()`: Auto-inference factory with intelligent parameter detection
+- `explain(sample)` and `explain(dataset, sample_idx)`: Dual usage patterns for maximum flexibility
+- `explain_ci(sample, alpha=0.05)`: Explain with confidence intervals for uncertainty quantification
+
+### Version 0.1.0
 
 **Initial Release** 🎉
 
@@ -324,12 +368,6 @@ uv run ruff check fastwoe/ tests/
 - **Comprehensive Statistics**: Gini coefficient, Information Value (IV), and feature-level metrics
 - **Integration with scikit-learn**: Full compatibility with sklearn pipelines and transformers
 - **Cross-Version Testing**: Compatibility verified across Python 3.9-3.12 and sklearn 1.3.0+
-
-#### 🔧 Technical
-- **Build System**: Modern `pyproject.toml` with Hatchling backend
-- **Testing**: 26+ comprehensive tests with 94% code coverage
-- **Documentation**: Complete API reference and mathematical background
-- **Examples**: Jupyter notebooks and practical usage examples
 
 #### 📊 Supported Operations
 - `fit()`, `transform()`, `fit_transform()`: Core WOE encoding
