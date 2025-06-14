@@ -339,7 +339,15 @@ uv run ruff check fastwoe/ tests/
 
 ## 📋 Changelog
 
-### Version 0.1.1.post1 (Current)
+### Version 0.1.1.post2 (Current)
+
+- **Fixed**:
+  - NumPy array input handling: `FastWoe.fit` and related methods now accept NumPy arrays as input, automatically converting them to pandas DataFrames/Series with a warning. This prevents `AttributeError` and improves user experience.
+- **Notes**:
+  - All changes from `0.1.1.post1` are included in this release.
+  - This release supersedes `0.1.1.post1`.
+
+### Version 0.1.1.post1
 
 - **Bug Fixes**:
   - Fixed issues with pandas/numpy data type conversions
