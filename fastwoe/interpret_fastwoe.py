@@ -292,11 +292,9 @@ class WeightOfEvidence(BaseEstimator):
         x: Union[np.ndarray, pd.Series, pd.DataFrame],
         sample_idx: Optional[int] = None,
         class_to_explain: Optional[Union[int, str]] = None,
-        true_label: Optional[Union[int, str]] = None,
         true_labels: Optional[Union[np.ndarray, pd.Series]] = None,
         return_dict: bool = True,
     ) -> Optional[dict]:
-        # sourcery skip: extract-duplicate-method, hoist-statement-from-if
         """
         Explain a prediction using Weight of Evidence.
 
@@ -312,8 +310,6 @@ class WeightOfEvidence(BaseEstimator):
             Index of sample to explain (when x is a dataset)
         class_to_explain : int or str, optional
             Class to explain. If None, uses predicted class
-        true_label : int or str, optional
-            True label for single sample comparison
         true_labels : array-like of shape (n_samples,), optional
             True labels array (when using dataset + sample_idx)
         return_dict : bool, default=True
@@ -345,7 +341,6 @@ class WeightOfEvidence(BaseEstimator):
         >>>
         >>> # Sample from dataset - print nice output only
         >>> explainer.explain(X_test, sample_idx=0, return_dict=False)
-
         """
         if not self.is_fitted_:
             raise ValueError("WeightOfEvidence must be fitted before explaining")
@@ -354,12 +349,18 @@ class WeightOfEvidence(BaseEstimator):
             # Dataset + index pattern: extract sample and explain
             if isinstance(x, pd.DataFrame):
                 sample = x.iloc[sample_idx]
-                sample_dict = sample.to_dict()
+                sample_dict = {
+                    k: v.item() if hasattr(v, "item") else v
+                    for k, v in sample.to_dict().items()
+                }
             else:
                 sample = x[sample_idx]
-                sample_dict = dict(zip(self.feature_names, sample))
+                sample_dict = {
+                    k: v.item() if hasattr(v, "item") else v
+                    for k, v in zip(self.feature_names, sample)
+                }
 
-            # Get true label if provided
+            # Get true label from true_labels if provided
             true_label = (
                 true_labels.iloc[sample_idx]
                 if true_labels is not None and hasattr(true_labels, "iloc")
@@ -373,46 +374,26 @@ class WeightOfEvidence(BaseEstimator):
                 sample, class_to_explain, true_label
             )
 
-            # sourcery-skip: extract-duplicate-method, hoist-statement-from-if
             if not return_dict:
-                # Create a nice formatted panel for the sample explanation
                 sample_info = (
                     f"Sample Index: {sample_idx}\nOriginal Features: {sample_dict}"
                 )
-
                 if true_label is not None:
                     sample_info += (
                         f"\nTrue Label: {self._format_class_name(true_label)}"
                     )
-
-                sample_info += f"""
-                    Predicted Label: {explanation["predicted_label"]}
-                    Predicted Probabilities: {explanation["predicted_proba"]}
-                    WOE Evidence: {explanation["total_woe"]:.4f}
-                    Interpretation: {explanation["interpretation"]}"""
-
+                sample_info += (
+                    f"Predicted Label: {explanation['predicted_label']}\n"
+                    f"Predicted Probabilities: {explanation['predicted_proba']}\n"
+                    f"WOE Evidence: {explanation['total_woe']:.4f}\n"
+                    f"Interpretation: {explanation['interpretation']}"
+                )
                 console.print(Panel(sample_info, title="Sample Explanation"))
-
-                # Show feature contributions if available
                 if "feature_contributions" in explanation:
-                    contrib_table = Table(
-                        title="Feature Contributions", show_header=True
-                    )
-                    contrib_table.add_column("Feature")
-                    contrib_table.add_column("WOE Contribution")
-
-                    for feature, contribution in explanation[
-                        "feature_contributions"
-                    ].items():
-                        contrib_table.add_row(feature, f"{contribution:.4f}")
-
-                    console.print(contrib_table)
-
+                    self._render_centered_bars(explanation["feature_contributions"])
                 return None
-
         else:
             # Single sample pattern: explain(sample)
-            # Input validation if a dataset is passed instead of a single sample
             if isinstance(x, pd.DataFrame) and len(x) > 1:
                 raise ValueError(
                     f"explain() received DataFrame with {len(x)} rows but no sample_idx. "
@@ -423,11 +404,10 @@ class WeightOfEvidence(BaseEstimator):
                     f"explain() received array with shape {x.shape} but no sample_idx. "
                     f"Use explain(dataset, sample_idx=i) or extract single sample: dataset[i]"
                 )
-
-                # Handle true_labels with single sample - extract the appropriate true_label
-            if true_labels is not None and true_label is None:
+            # Extract true_label from true_labels for single sample
+            true_label = None
+            if true_labels is not None:
                 if isinstance(x, pd.Series) and isinstance(true_labels, pd.Series):
-                    # Try to match by index first (most robust)
                     if (
                         hasattr(x, "name")
                         and x.name is not None
@@ -435,65 +415,49 @@ class WeightOfEvidence(BaseEstimator):
                     ):
                         true_label = true_labels.loc[x.name]
                     else:
-                        # If indices don't align, we need to make an assumption
                         raise ValueError(
                             f"Cannot automatically extract true_label from true_labels. "
                             f"Sample index {getattr(x, 'name', 'unknown')} not found in true_labels index. "
-                            f"Please use true_label=true_labels.iloc[position] or true_label=true_labels.loc[index] explicitly."
+                            f"Please use true_labels.iloc[position] or true_labels.loc[index] explicitly."
                         )
                 else:
-                    # For non-pandas data, assume the last element (common with iloc[-1])
                     true_label = (
                         true_labels[-1]
                         if hasattr(true_labels, "__getitem__")
                         else true_labels
                     )
-
             explanation = self._explain_single_sample(x, class_to_explain, true_label)
-
-            # Print nice output if not returning dict
             if not return_dict:
-                # Prepare sample display
                 if isinstance(x, pd.Series):
-                    sample_dict = x.to_dict()
+                    sample_dict = {
+                        k: v.item() if hasattr(v, "item") else v
+                        for k, v in x.to_dict().items()
+                    }
                 elif isinstance(x, np.ndarray):
-                    sample_dict = dict(zip(self.feature_names, x))
+                    sample_dict = {
+                        k: v.item() if hasattr(v, "item") else v
+                        for k, v in zip(self.feature_names, x)
+                    }
                 else:
-                    sample_dict = x.to_dict() if hasattr(x, "to_dict") else dict(x)
-
-                # Create a nice formatted panel for the sample explanation
+                    raw_dict = x.to_dict() if hasattr(x, "to_dict") else dict(x)
+                    sample_dict = {
+                        k: v.item() if hasattr(v, "item") else v
+                        for k, v in raw_dict.items()
+                    }
                 sample_info = f"**Original Features**: {sample_dict}"
-
                 if true_label is not None:
                     sample_info += (
                         f"\n**True Label**: {self._format_class_name(true_label)}"
                     )
-
                 sample_info += f"""
                     Predicted Label: {explanation["predicted_label"]}
                     Predicted Probabilities: {explanation["predicted_proba"]}
                     WOE Evidence: {explanation["total_woe"]:.4f}
                     Interpretation: {explanation["interpretation"]}"""
-
                 console.print(Panel(sample_info, title="Sample Explanation"))
-
-                # Show feature contributions if available
                 if "feature_contributions" in explanation:
-                    contrib_table = Table(
-                        title="Feature Contributions", show_header=True
-                    )
-                    contrib_table.add_column("Feature")
-                    contrib_table.add_column("WOE Contribution")
-
-                    for feature, contribution in explanation[
-                        "feature_contributions"
-                    ].items():
-                        contrib_table.add_row(feature, f"{contribution:.4f}")
-
-                    console.print(contrib_table)
-
+                    self._render_centered_bars(explanation["feature_contributions"])
                 return None
-
         return explanation
 
     def _explain_single_sample(
@@ -502,15 +466,10 @@ class WeightOfEvidence(BaseEstimator):
         class_to_explain: Optional[Union[int, str]] = None,
         true_label: Optional[Union[int, str]] = None,
     ) -> dict:
-        """Core explanation logic for a single sample."""
         explanation = self._explain_fastwoe(x, class_to_explain)
-
-        # Add true label if provided - put it first for true → predicted comparison
         if true_label is not None:
             formatted_true_label = self._format_class_name(true_label)
-            # Create new dict with true_label first
             explanation = {"true_label": formatted_true_label, **explanation}
-
         return explanation
 
     def _explain_fastwoe(
@@ -594,7 +553,7 @@ class WeightOfEvidence(BaseEstimator):
             return {str(i): round(float(prob), 5) for i, prob in enumerate(proba_array)}
 
     def _interpret_woe(self, woe: float) -> str:
-        """Provide human-readable interpretation of WOE value."""
+        """Interpret WOE value in human-readable terms."""
         if woe > 2:
             return "Very strong evidence FOR the hypothesis"
         elif woe > 1:
@@ -611,6 +570,47 @@ class WeightOfEvidence(BaseEstimator):
             return "Strong evidence AGAINST the hypothesis"
         else:
             return "Very strong evidence AGAINST the hypothesis"
+
+    def _render_centered_bars(
+        self, contributions: dict, width: int = 20, min_bar: int = 1
+    ) -> None:
+        """
+        Render feature contributions as centered horizontal bars.
+        """
+        if not contributions:
+            return
+
+        table = Table(title="Feature Contributions", show_lines=True)
+        table.add_column("Feature")
+        table.add_column("WOE")
+        table.add_column("Contribution", min_width=width)
+
+        max_abs = max(abs(v) for v in contributions.values())
+        half_width = width // 2  # half for each side
+
+        # Sort features by value (largest to smallest)
+        sorted_contributions = sorted(
+            contributions.items(), key=lambda x: x[1], reverse=True
+        )
+
+        for feat, val in sorted_contributions:
+            if max_abs == 0 or val >= 0 and val <= 0:
+                left = " " * half_width
+                right = " " * half_width
+            elif val < 0:
+                bar_len = max(int((abs(val) / max_abs) * half_width), min_bar)
+                left = "█" * bar_len
+                left = left.rjust(half_width)
+                right = " " * half_width
+            else:
+                bar_len = max(int((val / max_abs) * half_width), min_bar)
+                left = " " * half_width
+                right = "█" * bar_len
+                right = right.ljust(half_width)
+            bar_ = left + right
+            table.add_row(feat, f"{val:7.4f}", bar_)
+
+        console.print(table)
 
     def summary(self) -> str:
         """Return a summary of the explainer."""
@@ -634,17 +634,12 @@ class WeightOfEvidence(BaseEstimator):
         x: Union[np.ndarray, pd.Series, pd.DataFrame],
         sample_idx: Optional[int] = None,
         class_to_explain: Optional[Union[int, str]] = None,
-        true_label: Optional[Union[int, str]] = None,
         true_labels: Optional[Union[np.ndarray, pd.Series]] = None,
         alpha: float = 0.05,
         return_dict: bool = True,
-    ) -> Optional[dict]:  # sourcery skip: extract-duplicate-method
+    ) -> Optional[dict]:
         """
         Explain predictions with confidence intervals using FastWoe's predict_ci.
-
-        This method provides uncertainty quantification for both WOE scores and
-        probability predictions, showing conservative (lower bound) and optimistic
-        (upper bound) scenarios.
 
         Parameters
         ----------
@@ -654,8 +649,6 @@ class WeightOfEvidence(BaseEstimator):
             Index of sample to explain (when x is a dataset)
         class_to_explain : int or str, optional
             Class to explain. If None, uses predicted class
-        true_label : int or str, optional
-            True label for single sample comparison
         true_labels : array-like of shape (n_samples,), optional
             True labels array (when using dataset + sample_idx)
         alpha : float, default=0.05
@@ -668,30 +661,25 @@ class WeightOfEvidence(BaseEstimator):
         dict or None
             If return_dict=True: Explanation dictionary with CI information
             If return_dict=False: None (prints formatted explanation instead)
-
-        Examples:
-        --------
-        >>> # Single sample with confidence intervals
-        >>> sample = X_test.iloc[0]
-        >>> explanation = explainer.explain_ci(sample)
-        >>> print(f"Conservative: {explanation['ci_conservative']['total_woe']:.3f}")
-        >>> print(f"Best estimate: {explanation['total_woe']:.3f}")
-        >>> print(f"Optimistic: {explanation['ci_optimistic']['total_woe']:.3f}")
         """
         if not self.is_fitted_:
             raise ValueError("WeightOfEvidence must be fitted before explaining")
 
         if sample_idx is not None:
-            # Dataset + index pattern: extract sample and explain
             if isinstance(x, pd.DataFrame):
                 sample = x.iloc[sample_idx]
-                # Clean sample dict without pandas index information
-                sample_dict = {col: sample[col] for col in x.columns}
+                sample_dict = {
+                    col: sample[col].item()
+                    if hasattr(sample[col], "item")
+                    else sample[col]
+                    for col in x.columns
+                }
             else:
                 sample = x[sample_idx]
-                sample_dict = dict(zip(self.feature_names, sample))
-
-            # Get true label if provided
+                sample_dict = {
+                    k: v.item() if hasattr(v, "item") else v
+                    for k, v in zip(self.feature_names, sample)
+                }
             true_label = (
                 true_labels.iloc[sample_idx]
                 if true_labels is not None and hasattr(true_labels, "iloc")
@@ -699,32 +687,23 @@ class WeightOfEvidence(BaseEstimator):
                 if true_labels is not None
                 else None
             )
-
-            # Get explanation using the core CI method
             explanation = self._explain_single_sample_ci(
                 sample, class_to_explain, true_label, alpha
             )
-
             if not return_dict:
-                # Create a clean formatted panel for the CI sample explanation
                 sample_info = (
                     f"Sample Index: {sample_idx}\nOriginal Features: {sample_dict}"
                 )
-
                 if true_label is not None:
                     sample_info += (
                         f"\nTrue Label: {self._format_class_name(true_label)}"
                     )
-
                 console.print(
                     Panel(sample_info, title="Sample with Confidence Intervals")
                 )
                 self._print_ci_explanation(explanation)
                 return None
-
         else:
-            # Single sample pattern: explain(sample)
-            # Input validation
             if isinstance(x, pd.DataFrame) and len(x) > 1:
                 raise ValueError(
                     f"explain_ci() received DataFrame with {len(x)} rows but no sample_idx. "
@@ -735,8 +714,7 @@ class WeightOfEvidence(BaseEstimator):
                     f"explain_ci() received array with shape {x.shape} but no sample_idx. "
                     f"Use explain_ci(dataset, sample_idx=i) or extract single sample: dataset[i]"
                 )
-
-            # Handle true_labels with single sample
+            true_label = None
             if true_labels is not None:
                 if hasattr(true_labels, "__len__") and len(true_labels) > 1:
                     raise ValueError(
@@ -747,35 +725,36 @@ class WeightOfEvidence(BaseEstimator):
                     if hasattr(true_labels, "__getitem__")
                     else true_labels
                 )
-
-            # Get explanation using the core CI method
             explanation = self._explain_single_sample_ci(
                 x, class_to_explain, true_label, alpha
             )
-
             if not return_dict:
-                # Prepare sample display for single sample
                 if isinstance(x, pd.Series):
-                    sample_dict = {col: x[col] for col in x.index}
+                    sample_dict = {
+                        col: x[col].item() if hasattr(x[col], "item") else x[col]
+                        for col in x.index
+                    }
                 elif isinstance(x, np.ndarray):
-                    sample_dict = dict(zip(self.feature_names, x))
+                    sample_dict = {
+                        k: v.item() if hasattr(v, "item") else v
+                        for k, v in zip(self.feature_names, x)
+                    }
                 else:
-                    sample_dict = x.to_dict() if hasattr(x, "to_dict") else dict(x)
-
-                # Create a nice formatted panel for the CI sample explanation
+                    raw_dict = x.to_dict() if hasattr(x, "to_dict") else dict(x)
+                    sample_dict = {
+                        k: v.item() if hasattr(v, "item") else v
+                        for k, v in raw_dict.items()
+                    }
                 sample_info = f"**Original Features**: {sample_dict}"
-
                 if true_label is not None:
                     sample_info += (
                         f"\n**True Label**: {self._format_class_name(true_label)}"
                     )
-
                 console.print(
                     Panel(sample_info, title="🎯 Sample with Confidence Intervals")
                 )
                 self._print_ci_explanation(explanation)
                 return None
-
         return explanation
 
     def _explain_single_sample_ci(
@@ -785,43 +764,25 @@ class WeightOfEvidence(BaseEstimator):
         true_label: Optional[Union[int, str]] = None,
         alpha: float = 0.05,
     ) -> dict:
-        """Core explanation logic for a single sample with confidence intervals."""
-        # Get base explanation
         base_explanation = self._explain_fastwoe(x, class_to_explain)
-
-        # Get confidence intervals from FastWoe
         x_df = self._prepare_input_for_prediction(x)
         ci_results = self.classifier.predict_ci(x_df, alpha=alpha)
-
-        # Extract CI values for this sample
         ci_lower = ci_results.iloc[0]["ci_lower"]
         ci_upper = ci_results.iloc[0]["ci_upper"]
-
-        # Calculate WOE confidence intervals by reconstructing from probability CIs
         odds_prior = self.classifier.y_prior_ / (1 - self.classifier.y_prior_)
-
-        # Convert probability bounds back to WOE bounds (before sigmoid)
-        # Handle edge cases to avoid divide by zero
         eps = 1e-15
         ci_lower_safe = np.clip(ci_lower, eps, 1 - eps)
         ci_upper_safe = np.clip(ci_upper, eps, 1 - eps)
-
         logit_lower = np.log(ci_lower_safe / (1 - ci_lower_safe))
         logit_upper = np.log(ci_upper_safe / (1 - ci_upper_safe))
-
-        # Remove prior to get WOE bounds
         woe_lower = logit_lower - np.log(odds_prior)
         woe_upper = logit_upper - np.log(odds_prior)
-
-        # Create conservative and optimistic scenarios
         ci_conservative = {
             "predicted_label": "Positive" if woe_lower > 0 else "Negative",
             "predicted_proba_ci": float(ci_lower),
             "total_woe": float(woe_lower),
             "interpretation": self._interpret_woe(woe_lower),
-            "scenario": "Conservative (Lower CI)",
         }
-
         ci_optimistic = {
             "predicted_label": "Positive" if woe_upper > 0 else "Negative",
             "predicted_proba_ci": float(ci_upper),
@@ -829,8 +790,6 @@ class WeightOfEvidence(BaseEstimator):
             "interpretation": self._interpret_woe(woe_upper),
             "scenario": "Optimistic (Upper CI)",
         }
-
-        # Combine with base explanation
         explanation = {
             **base_explanation,
             "confidence_level": f"{(1 - alpha) * 100:.0f}%",
@@ -841,21 +800,20 @@ class WeightOfEvidence(BaseEstimator):
                 "prob_range": float(ci_upper - ci_lower),
             },
         }
-
-        # Add true label if provided
         if true_label is not None:
             formatted_true_label = self._format_class_name(true_label)
             explanation = {"true_label": formatted_true_label, **explanation}
-
         return explanation
 
     def _print_ci_explanation(self, explanation: dict) -> None:
         # sourcery skip: extract-duplicate-method
         """Print a formatted confidence interval explanation."""
         # Header information
-        header_info = f"""Predicted Label: {explanation["predicted_label"]}
-Predicted Probabilities: {explanation["predicted_proba"]}
-Confidence Level: {explanation["confidence_level"]}"""
+        header_info = (
+            f"Predicted Label: {explanation['predicted_label']}\n"
+            f"Predicted Probabilities: {explanation['predicted_proba']}\n"
+            f"Confidence Level: {explanation['confidence_level']}"
+        )
 
         console.print(Panel(header_info, title="Inference Summary"))
 
@@ -878,8 +836,7 @@ Confidence Level: {explanation["confidence_level"]}"""
             cons_predicted_label,
             f"{ci_cons['total_woe']:.4f}",
             f"{ci_cons['predicted_proba_ci']:.4f}",
-            ci_cons["interpretation"][:40]
-            + ("..." if len(ci_cons["interpretation"]) > 40 else ""),
+            ci_cons["interpretation"],
         )
 
         # Point estimate row (middle)
@@ -894,8 +851,7 @@ Confidence Level: {explanation["confidence_level"]}"""
             point_predicted_label,
             f"{explanation['total_woe']:.4f}",
             f"{base_prob:.4f}",
-            explanation["interpretation"][:40]
-            + ("..." if len(explanation["interpretation"]) > 40 else ""),
+            explanation["interpretation"],
         )
 
         # Optimistic scenario row (last)
@@ -906,8 +862,7 @@ Confidence Level: {explanation["confidence_level"]}"""
             opt_predicted_label,
             f"{ci_opt['total_woe']:.4f}",
             f"{ci_opt['predicted_proba_ci']:.4f}",
-            ci_opt["interpretation"][:40]
-            + ("..." if len(ci_opt["interpretation"]) > 40 else ""),
+            ci_opt["interpretation"],
         )
 
         console.print(scenarios_table)
@@ -925,16 +880,7 @@ Confidence Level: {explanation["confidence_level"]}"""
 
         # Feature contributions if available
         if "feature_contributions" in explanation:
-            contrib_table = Table(
-                title="Feature Contributions (Point Estimate)", show_header=True
-            )
-            contrib_table.add_column("Feature")
-            contrib_table.add_column("Contribution")
-
-            for feature, contribution in explanation["feature_contributions"].items():
-                contrib_table.add_row(feature, f"{contribution:.4f}")
-
-            console.print(contrib_table)
+            self._render_centered_bars(explanation["feature_contributions"])
 
     def predict_ci(
         self,
@@ -1021,7 +967,7 @@ Confidence Level: {explanation["confidence_level"]}"""
         odds_prior = self.classifier.y_prior_ / (1 - self.classifier.y_prior_)
 
         # Convert probability bounds back to WOE bounds
-        eps = 1e-8
+        eps = 1e-15
         ci_lower_safe = np.clip(ci_lower_probs, eps, 1 - eps)
         ci_upper_safe = np.clip(ci_upper_probs, eps, 1 - eps)
 

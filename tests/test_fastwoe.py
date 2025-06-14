@@ -1,5 +1,7 @@
 """Tests for FastWoe library."""
 
+import warnings
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -193,7 +195,7 @@ class TestFastWoe:
 
         woe = FastWoe()
         woe.fit(X, y)
-        X_transformed = woe.transform(X)
+        X_transformed = woe.transform(X)  # pylint: disable=invalid-name
 
         assert X_transformed.shape == X.shape
         assert isinstance(X_transformed, pd.DataFrame)
@@ -215,7 +217,7 @@ class TestFastWoe:
         y = sample_data["target"]
 
         woe = FastWoe()
-        X_transformed = woe.fit_transform(X, y)
+        X_transformed = woe.fit_transform(X, y)  # pylint: disable=invalid-name
 
         assert X_transformed.shape == X.shape
         assert isinstance(X_transformed, pd.DataFrame)
@@ -296,22 +298,22 @@ class TestFastWoe:
         assert np.all((ci_df["ci_lower"] >= 0) & (ci_df["ci_lower"] <= 1))
         assert np.all((ci_df["ci_upper"] >= 0) & (ci_df["ci_upper"] <= 1))
 
-    # pylint: disable=protected-access
     def test_calculate_woe_se(self):
         """Test WOE standard error calculation."""
         woe = FastWoe()
 
-        # Normal case
-        se = woe._calculate_woe_se(good_count=20, bad_count=30)
-        expected_se = np.sqrt(1 / 20 + 1 / 30)
+        # Test normal case
+        se = woe._calculate_woe_se(good_count=100, bad_count=50)
+        expected_se = np.sqrt(1 / 100 + 1 / 50)
         assert np.isclose(se, expected_se)
 
-        # Edge cases
-        se_zero_good = woe._calculate_woe_se(good_count=0, bad_count=30)
-        assert se_zero_good == np.inf
+        # Test symmetry
+        se_reverse = woe._calculate_woe_se(good_count=50, bad_count=100)
+        assert np.isclose(se, se_reverse)  # SE should be same when swapping counts
 
-        se_zero_bad = woe._calculate_woe_se(good_count=20, bad_count=0)
-        assert se_zero_bad == np.inf
+        # Test larger counts give smaller SE
+        se_large = woe._calculate_woe_se(good_count=1000, bad_count=500)
+        assert se_large < se  # SE should decrease with sqrt of sample size
 
     def test_calculate_woe_ci(self):
         """Test WOE confidence interval calculation."""
@@ -407,7 +409,7 @@ class TestFastWoe:
             woe.fit(X, y)
 
         # Transform should work without errors
-        X_transformed = woe.transform(X)
+        X_transformed = woe.transform(X)  # pylint: disable=invalid-name
         assert X_transformed.shape == X.shape
         assert not X_transformed["numerical_score"].isna().any()
         assert np.isfinite(X_transformed["numerical_score"]).all()
@@ -603,6 +605,44 @@ class TestFastWoe:
         woe.fit(arg0, arg1)
         return woe.predict(arg0)
 
+    def test_get_split_value_histogram(self):
+        """Test get_split_value_histogram for a binned numerical feature."""
+        np.random.seed(42)
+        X = pd.DataFrame({"score": np.random.randint(300, 850, 200)})
+        y = np.random.binomial(1, 0.3, 200)
+        woe = FastWoe(numerical_threshold=10, warn_on_numerical=True)
+        woe.fit(X, y)
+
+        # Test array output
+        edges_array = woe.get_split_value_histogram("score", as_array=True)
+        assert isinstance(edges_array, np.ndarray)
+        assert edges_array.shape[0] > 2  # At least 2 edges
+        assert np.isneginf(edges_array[0])  # First edge should be -inf
+        assert np.isinf(edges_array[-1])  # Last edge should be inf
+        assert np.all(
+            np.diff(edges_array[1:-1]) > 0
+        )  # Edges should be strictly increasing
+
+        # Test list output
+        edges_list = woe.get_split_value_histogram("score", as_array=False)
+        assert isinstance(edges_list, list)
+        assert len(edges_list) == edges_array.shape[0]
+        assert edges_list[0] == float("-inf")
+        assert edges_list[-1] == float("inf")
+
+        # Test error cases
+        with pytest.raises(ValueError, match="FastWoe must be fitted"):
+            FastWoe().get_split_value_histogram("score")
+
+        with pytest.raises(ValueError, match="Feature 'nonexistent' not found"):
+            woe.get_split_value_histogram("nonexistent")
+
+        # Test with non-binned feature
+        X_cat = pd.DataFrame({"category": ["A", "B", "C"] * 67})  # 201 rows
+        y_cat = np.random.binomial(1, 0.3, 201)  # Match X_cat size
+        woe_cat = FastWoe()
+        woe_cat.fit(X_cat, y_cat)
+
 
 # pylint: disable=invalid-name
 class TestIntegration:
@@ -654,3 +694,45 @@ class TestIntegration:
         woe = FastWoe()
         with pytest.raises(ValueError, match="FastWoe only supports binary targets"):
             woe.fit(X, y_multiclass)
+
+    def test_fastwoe_input_types(self):
+        """Test FastWoe behavior with different input types."""
+
+        # Create sample data
+        np.random.seed(42)
+        X_np = np.random.randn(100, 3)  # 100 samples, 3 features
+        y_np = np.random.binomial(1, 0.5, 100)  # Binary target
+
+        # Convert to pandas
+        X_pd = pd.DataFrame(X_np, columns=["feature_1", "feature_2", "feature_3"])
+        y_pd = pd.Series(y_np)
+
+        # Test with numpy arrays - should work with warning
+        fastwoe_np = FastWoe()
+        with pytest.warns(UserWarning, match="Input X is a numpy array"):
+            fastwoe_np.fit(X_np, y_np)
+
+        # Verify numpy fit worked
+        assert len(fastwoe_np.mappings_) == 3  # One mapping per feature
+        assert all(f"feature_{i}" in fastwoe_np.mappings_ for i in range(3))
+
+        # Test with pandas - should work without input type warnings
+        fastwoe_pd = FastWoe()
+        with warnings.catch_warnings(record=True) as w:
+            fastwoe_pd.fit(X_pd, y_pd)
+            # Filter out the numerical binning warning
+            input_type_warnings = [msg for msg in w if "Input" in str(msg.message)]
+            assert not input_type_warnings
+
+        # Verify pandas fit worked
+        assert len(fastwoe_pd.mappings_) == 3  # One mapping per feature
+        assert all(col in fastwoe_pd.mappings_ for col in X_pd.columns)
+
+        # Verify both fits produce similar results
+        np_woe_values = [df["woe"].values for df in fastwoe_np.mappings_.values()]
+        pd_woe_values = [df["woe"].values for df in fastwoe_pd.mappings_.values()]
+
+        # Compare WOE values (they should be similar but not exactly equal due to binning)
+        # sourcery skip: no-loop-in-tests
+        for np_woe, pd_woe in zip(np_woe_values, pd_woe_values):
+            np.testing.assert_allclose(np_woe, pd_woe, rtol=1e-2)

@@ -187,7 +187,7 @@ class FastWoe:  # pylint: disable=invalid-name
 
         # Numerical binning configuration
         default_binner_kwargs = {
-            "n_bins": 10,
+            "n_bins": 5,
             "strategy": "quantile",
             "encode": "ordinal",
         }
@@ -222,26 +222,32 @@ class FastWoe:  # pylint: disable=invalid-name
         """
         Calculate standard error of WOE using actual counts.
 
-        Formula: SE(WOE) = sqrt(1/n_good + 1/n_bad)
+        If either count is zero, estimate using a conservative rule-of-thumb
+        for binomial log-odds variance.
 
         Parameters
         ----------
         good_count : int
-            Number of non-events (y=0) in the category
+            Number of non-events (y=0) in the category.
         bad_count : int
-            Number of events (y=1) in the category
+            Number of events (y=1) in the category.
 
         Returns:
         -------
         float
-            Standard error of the WOE value
-
+            Standard error of the WOE value.
         """
-        # Avoid division by zero
-        if good_count <= 0 or bad_count <= 0:
-            return np.inf
+        n = good_count + bad_count
 
-        return np.sqrt(1.0 / good_count + 1.0 / bad_count)
+        if good_count <= 0 or bad_count <= 0:
+            # Use rule-of-three for p when either count is zero
+            p = 3.0 / n if bad_count <= 0 else 1.0 - (3.0 / n)
+            variance = 1.0 / (p * (1.0 - p) * n)  # log-odds variance
+        else:
+            # Standard error from counts
+            variance = 1.0 / good_count + 1.0 / bad_count
+
+        return np.sqrt(variance)
 
     def _calculate_woe_ci(self, woe_value, se_value, alpha=0.05):
         """
@@ -316,8 +322,7 @@ class FastWoe:  # pylint: disable=invalid-name
             "max_woe": mapping_df["woe"].max(),
         }
 
-    # pylint: disable=invalid-name, too-many-locals
-    def fit(self, X: pd.DataFrame, y: pd.Series):
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Union[pd.Series, np.ndarray]):
         """
         Fit the FastWoe encoder to features (both categorical and numerical).
 
@@ -330,17 +335,33 @@ class FastWoe:  # pylint: disable=invalid-name
 
         Parameters
         ----------
-        X : pd.DataFrame
-            Input DataFrame with features to encode
-        y : pd.Series
-            Binary target variable (0/1)
+        X : Union[pd.DataFrame, np.ndarray]
+            Input features to encode. If numpy array, will be converted to DataFrame with generic column names.
+        y : Union[pd.Series, np.ndarray]
+            Binary target variable (0/1). If numpy array, will be converted to Series.
 
         Returns:
         -------
         self : FastWoe
             The fitted encoder instance
-
         """
+        # Convert numpy arrays to pandas if needed
+        if isinstance(X, np.ndarray):
+            X = pd.DataFrame(X, columns=[f"feature_{i}" for i in range(X.shape[1])])
+            warnings.warn(
+                "Input X is a numpy array. Converting to pandas DataFrame with generic column names. "
+                "For better control, convert to DataFrame with meaningful column names before passing to fit().",
+                stacklevel=2,
+            )
+
+        if isinstance(y, np.ndarray):
+            y = pd.Series(y)
+            warnings.warn(
+                "Input y is a numpy array. Converting to pandas Series. "
+                "For better control, convert to Series before passing to fit().",
+                stacklevel=2,
+            )
+
         # Validate target is binary
         unique_targets = pd.Series(y).nunique()
         unique_values = sorted(pd.Series(y).unique())
@@ -531,9 +552,31 @@ class FastWoe:  # pylint: disable=invalid-name
         """Fit and transform in one step."""
         return self.fit(X, y).transform(X)
 
-    def get_mapping(self, col: str) -> pd.DataFrame:
-        """Return the mapping table for a feature (category, count, event_rate, woe)."""
-        return self.mappings_[col].reset_index()
+    def get_mapping(self, feature: str) -> pd.DataFrame:
+        """
+        Get the WOE mapping DataFrame for a specific feature, preserving correct bin order for binned features.
+        """
+        if not self.is_fitted_:
+            raise ValueError("FastWoe must be fitted before getting mappings")
+        if feature not in self.mappings_:
+            raise ValueError(f"Feature '{feature}' not found in fitted features")
+        mapping = self.mappings_[feature].copy()
+        # For binned numerical features, reindex by bin_labels
+        if feature in getattr(self, "binners_", {}):
+            binner = self.binners_[feature]
+            if hasattr(binner, "bin_edges_"):
+                edges = binner.bin_edges_[0]
+                bin_labels = []
+                for i in range(len(edges) - 1):
+                    if i == 0:
+                        label = f"(-∞, {edges[i + 1]:.1f}]"
+                    elif i == len(edges) - 2:
+                        label = f"({edges[i]:.1f}, ∞)"
+                    else:
+                        label = f"({edges[i]:.1f}, {edges[i + 1]:.1f}]"
+                    bin_labels.append(label)
+                mapping = mapping.reindex(bin_labels)
+        return mapping.reset_index()
 
     def get_all_mappings(self) -> dict:
         """Get all mappings (useful for serialization, audit, or compact storage)."""
@@ -556,7 +599,6 @@ class FastWoe:  # pylint: disable=invalid-name
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
         """
         Predict probabilities using WOE-transformed features.
-        This is a simple linear combination - for real scoring you'd use logistic regression.
         """
         X_woe = self.transform(X)
         odds_prior = self.y_prior_ / (1 - self.y_prior_)
@@ -803,11 +845,11 @@ class FastWoe:  # pylint: disable=invalid-name
         # Store binner and info
         self.binners_[col] = binner
         self.binning_info_[col] = {
-            "original_unique_values": X[col].nunique(),
-            "bins_created": len(bin_labels)
+            "values": X[col].nunique(),
+            "n_bins": len(bin_labels)
             if hasattr(binner, "bin_edges_")
             else binner.n_bins,
-            "missing_values": mask_missing.sum(),
+            "missing": mask_missing.sum(),
             "bin_edges": edges.tolist() if hasattr(binner, "bin_edges_") else None,
         }
 
@@ -820,7 +862,7 @@ class FastWoe:  # pylint: disable=invalid-name
         Returns:
         -------
         pd.DataFrame
-            Summary with columns: feature, original_unique_values, bins_created, missing_values
+            Summary with columns: feature, values, n_bins, missing
 
         """
         if not self.binning_info_:
@@ -830,10 +872,62 @@ class FastWoe:  # pylint: disable=invalid-name
         summary.extend(
             {
                 "feature": col,
-                "original_unique_values": info["original_unique_values"],
-                "bins_created": info["bins_created"],
-                "missing_values": info["missing_values"],
+                "values": info["values"],
+                "n_bins": info["n_bins"],
+                "missing": info["missing"],
             }
             for col, info in self.binning_info_.items()
         )
         return pd.DataFrame(summary)
+
+    def get_split_value_histogram(
+        self, feature: str, as_array: bool = True
+    ) -> Union[np.ndarray, list]:
+        """
+        Get the actual split values (bin edges) for a numerical binned feature.
+
+        This function returns the exact numerical thresholds used to create
+        the bins for a numerical feature, rather than string representations.
+
+        Parameters
+        ----------
+        feature : str
+            Name of the numerical feature to get split values for
+        as_array : bool, default=True
+            If True, return as numpy array. If False, return as list.
+
+        Returns:
+        -------
+        np.ndarray or list
+            Array/list of split values (bin edges) used for binning.
+            For n bins, returns n+1 edges (including min and max boundaries).
+        """
+        if not self.is_fitted_:
+            raise ValueError(
+                "FastWoe must be fitted before calling get_split_value_histogram"
+            )
+
+        if feature not in self.mappings_:
+            raise ValueError(f"Feature '{feature}' not found in fitted features")
+
+        if feature not in self.binners_:
+            raise ValueError(
+                f"Feature '{feature}' is not a binned numerical feature. "
+                f"This function only works with numerical features that were automatically binned."
+            )
+
+        # Get the binner for this feature
+        binner = self.binners_[feature]
+
+        if not hasattr(binner, "bin_edges_"):
+            raise ValueError(
+                f"Unable to extract bin edges for feature '{feature}'. "
+                f"The binner may not support edge extraction."
+            )
+        edges = binner.bin_edges_[0].copy()
+
+        # Replace first and last edges with -inf and +inf
+        edges[0] = -np.inf
+        edges[-1] = np.inf
+
+        return edges if as_array else edges.tolist()
