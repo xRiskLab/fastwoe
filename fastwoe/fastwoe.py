@@ -322,8 +322,7 @@ class FastWoe:  # pylint: disable=invalid-name
             "max_woe": mapping_df["woe"].max(),
         }
 
-    # pylint: disable=invalid-name, too-many-locals
-    def fit(self, X: pd.DataFrame, y: pd.Series):
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Union[pd.Series, np.ndarray]):
         """
         Fit the FastWoe encoder to features (both categorical and numerical).
 
@@ -336,17 +335,33 @@ class FastWoe:  # pylint: disable=invalid-name
 
         Parameters
         ----------
-        X : pd.DataFrame
-            Input DataFrame with features to encode
-        y : pd.Series
-            Binary target variable (0/1)
+        X : Union[pd.DataFrame, np.ndarray]
+            Input features to encode. If numpy array, will be converted to DataFrame with generic column names.
+        y : Union[pd.Series, np.ndarray]
+            Binary target variable (0/1). If numpy array, will be converted to Series.
 
         Returns:
         -------
         self : FastWoe
             The fitted encoder instance
-
         """
+        # Convert numpy arrays to pandas if needed
+        if isinstance(X, np.ndarray):
+            X = pd.DataFrame(X, columns=[f"feature_{i}" for i in range(X.shape[1])])
+            warnings.warn(
+                "Input X is a numpy array. Converting to pandas DataFrame with generic column names. "
+                "For better control, convert to DataFrame with meaningful column names before passing to fit().",
+                stacklevel=2,
+            )
+
+        if isinstance(y, np.ndarray):
+            y = pd.Series(y)
+            warnings.warn(
+                "Input y is a numpy array. Converting to pandas Series. "
+                "For better control, convert to Series before passing to fit().",
+                stacklevel=2,
+            )
+
         # Validate target is binary
         unique_targets = pd.Series(y).nunique()
         unique_values = sorted(pd.Series(y).unique())
@@ -584,7 +599,6 @@ class FastWoe:  # pylint: disable=invalid-name
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
         """
         Predict probabilities using WOE-transformed features.
-        This is a simple linear combination - for real scoring you'd use logistic regression.
         """
         X_woe = self.transform(X)
         odds_prior = self.y_prior_ / (1 - self.y_prior_)

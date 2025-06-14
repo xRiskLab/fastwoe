@@ -1,5 +1,7 @@
 """Tests for FastWoe library."""
 
+import warnings
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -215,7 +217,7 @@ class TestFastWoe:
         y = sample_data["target"]
 
         woe = FastWoe()
-        X_transformed = woe.fit_transform(X, y)
+        X_transformed = woe.fit_transform(X, y)  # pylint: disable=invalid-name
 
         assert X_transformed.shape == X.shape
         assert isinstance(X_transformed, pd.DataFrame)
@@ -407,7 +409,7 @@ class TestFastWoe:
             woe.fit(X, y)
 
         # Transform should work without errors
-        X_transformed = woe.transform(X)
+        X_transformed = woe.transform(X)  # pylint: disable=invalid-name
         assert X_transformed.shape == X.shape
         assert not X_transformed["numerical_score"].isna().any()
         assert np.isfinite(X_transformed["numerical_score"]).all()
@@ -692,3 +694,45 @@ class TestIntegration:
         woe = FastWoe()
         with pytest.raises(ValueError, match="FastWoe only supports binary targets"):
             woe.fit(X, y_multiclass)
+
+    def test_fastwoe_input_types(self):
+        """Test FastWoe behavior with different input types."""
+
+        # Create sample data
+        np.random.seed(42)
+        X_np = np.random.randn(100, 3)  # 100 samples, 3 features
+        y_np = np.random.binomial(1, 0.5, 100)  # Binary target
+
+        # Convert to pandas
+        X_pd = pd.DataFrame(X_np, columns=["feature_1", "feature_2", "feature_3"])
+        y_pd = pd.Series(y_np)
+
+        # Test with numpy arrays - should work with warning
+        fastwoe_np = FastWoe()
+        with pytest.warns(UserWarning, match="Input X is a numpy array"):
+            fastwoe_np.fit(X_np, y_np)
+
+        # Verify numpy fit worked
+        assert len(fastwoe_np.mappings_) == 3  # One mapping per feature
+        assert all(f"feature_{i}" in fastwoe_np.mappings_ for i in range(3))
+
+        # Test with pandas - should work without input type warnings
+        fastwoe_pd = FastWoe()
+        with warnings.catch_warnings(record=True) as w:
+            fastwoe_pd.fit(X_pd, y_pd)
+            # Filter out the numerical binning warning
+            input_type_warnings = [msg for msg in w if "Input" in str(msg.message)]
+            assert not input_type_warnings
+
+        # Verify pandas fit worked
+        assert len(fastwoe_pd.mappings_) == 3  # One mapping per feature
+        assert all(col in fastwoe_pd.mappings_ for col in X_pd.columns)
+
+        # Verify both fits produce similar results
+        np_woe_values = [df["woe"].values for df in fastwoe_np.mappings_.values()]
+        pd_woe_values = [df["woe"].values for df in fastwoe_pd.mappings_.values()]
+
+        # Compare WOE values (they should be similar but not exactly equal due to binning)
+        # sourcery skip: no-loop-in-tests
+        for np_woe, pd_woe in zip(np_woe_values, pd_woe_values):
+            np.testing.assert_allclose(np_woe, pd_woe, rtol=1e-2)
