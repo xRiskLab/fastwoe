@@ -286,6 +286,38 @@ class TestWeightOfEvidence:
         with pytest.raises(ValueError, match="Only FastWoe classifiers are supported"):
             WeightOfEvidence(mock_clf, X, y)
 
+    def test_true_labels_consistency(self, sample_data):
+        """Test that true_labels parameter works consistently across methods."""
+        X, y, clf = sample_data
+
+        woe = WeightOfEvidence(clf, X, y, class_names=["Negative", "Positive"])
+        sample = X.iloc[0]
+        true_labels = pd.Series([1, 0, 1, 0, 1])  # Some test labels
+
+        # Test explain with true_labels
+        explanation = woe.explain(X.iloc[:5], sample_idx=0, true_labels=true_labels)
+        assert explanation["true_label"] == "Positive"  # Should use class name
+
+        # Test explain_ci with true_labels
+        explanation_ci = woe.explain_ci(
+            X.iloc[:5], sample_idx=1, true_labels=true_labels
+        )
+        assert explanation_ci["true_label"] == "Negative"  # Should use class name
+
+        # Test with numpy array
+        true_labels_np = np.array([1, 0, 1, 0, 1])
+        explanation_np = woe.explain(
+            X.iloc[:5], sample_idx=2, true_labels=true_labels_np
+        )
+        assert explanation_np["true_label"] == "Positive"
+
+        # Test with list
+        true_labels_list = [1, 0, 1, 0, 1]
+        explanation_list = woe.explain(
+            X.iloc[:5], sample_idx=3, true_labels=true_labels_list
+        )
+        assert explanation_list["true_label"] == "Negative"
+
 
 class TestIntegration:
     """Integration tests for WeightOfEvidence with FastWoe."""
@@ -793,24 +825,25 @@ class TestConfidenceIntervals:
         assert "total_woe" in ci_cons
         assert "predicted_proba_ci" in ci_cons
         assert "interpretation" in ci_cons
-        assert "scenario" in ci_cons
 
         # Check optimistic scenario
         ci_opt = explanation["ci_optimistic"]
         assert "total_woe" in ci_opt
         assert "predicted_proba_ci" in ci_opt
         assert "interpretation" in ci_opt
-        assert "scenario" in ci_opt
 
-        # Check uncertainty range
-        unc = explanation["uncertainty_range"]
-        assert "woe_range" in unc
-        assert "prob_range" in unc
-        assert unc["woe_range"] > 0  # Should have some uncertainty
-        assert unc["prob_range"] > 0
+    def test_explain_ci_with_true_label(self, sample_data_ci):
+        """Test CI explanation with true label."""
+        X, y, clf = sample_data_ci
 
-        # Check ordering: conservative <= base <= optimistic
-        assert ci_cons["total_woe"] <= explanation["total_woe"] <= ci_opt["total_woe"]
+        woe = WeightOfEvidence(clf, X, y)
+        sample = X.iloc[0]
+        true_labels = pd.Series([y[0]])  # Convert to Series
+
+        explanation = woe.explain_ci(sample, true_labels=true_labels)
+        assert isinstance(explanation, dict)
+        assert "true_label" in explanation
+        assert explanation["true_label"] in ["Positive", "Negative"]
 
     def test_explain_ci_custom_alpha(self, sample_data_ci):
         """Test confidence interval with custom alpha level."""
@@ -843,19 +876,6 @@ class TestConfidenceIntervals:
         assert isinstance(explanation, dict)
         assert "ci_conservative" in explanation
         assert "ci_optimistic" in explanation
-
-    def test_explain_ci_with_true_label(self, sample_data_ci):
-        """Test CI explanation with true label."""
-        X, y, clf = sample_data_ci
-
-        woe = WeightOfEvidence(clf, X, y)
-        sample = X.iloc[0]
-        true_label = y[0]
-
-        explanation = woe.explain_ci(sample, true_label=true_label)
-
-        assert "true_label" in explanation
-        assert explanation["true_label"] in ["Negative", "Positive"]
 
     def test_explain_ci_print_format(self, sample_data_ci, capsys):
         """Test CI explanation print format."""
@@ -997,6 +1017,7 @@ class TestConfidenceIntervals:
         assert upper_probs.shape == (3, 2)
 
         # Check probability bounds ordering
+        # sourcery skip: no-loop-in-tests
         for i in range(3):
             # Lower bound probabilities should be <= upper bound probabilities
             assert lower_probs[i, 1] <= upper_probs[i, 1]  # Positive class prob

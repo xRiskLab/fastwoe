@@ -17,22 +17,25 @@ COMPATIBILITY_MATRIX = [
     ("3.12", "latest", "Latest: Python 3.12 + latest sklearn"),
 ]
 
+
 def run_cmd(cmd):
     """Run command and return result."""
     try:
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=False)
+        result = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, check=False
+        )
         return result.returncode == 0, result.stdout, result.stderr
     except Exception as e:
         return False, "", str(e)
 
+
 def get_numpy_constraint(python_ver, sklearn_ver):
     """Get appropriate numpy version constraint."""
-    if sklearn_ver in ["1.3.0", "1.3.2"]:
-        return "numpy<2.0"
-    elif python_ver == "3.9":
+    if sklearn_ver in ["1.3.0", "1.3.2"] or python_ver == "3.9":
         return "numpy<2.0"
     else:
         return "numpy>=1.21,<2.1"
+
 
 @pytest.mark.compatibility
 @pytest.mark.slow
@@ -44,11 +47,13 @@ def test_python_sklearn_compatibility(python_ver, sklearn_ver, description):
     if not success:
         pytest.skip("uv not available - skipping compatibility tests")
 
-    env_name = f".test-py{python_ver.replace('.', '')}-sklearn{sklearn_ver.replace('.', '')}"
+    env_name = (
+        f".test-py{python_ver.replace('.', '')}-sklearn{sklearn_ver.replace('.', '')}"
+    )
     numpy_constraint = get_numpy_constraint(python_ver, sklearn_ver)
 
     # Test script content
-    test_content = '''
+    test_content = """
 import sys
 import warnings
 warnings.filterwarnings("ignore")
@@ -92,11 +97,12 @@ except Exception as e:
     raise
 
 print("SUCCESS")
-'''
+"""
 
     try:
         # Install Python version
         success, _, stderr = run_cmd(f"uv python install {python_ver}")
+        # sourcery skip: no-conditionals-in-tests
         if not success and "already installed" not in stderr.lower():
             pytest.fail(f"Failed to install Python {python_ver}: {stderr}")
 
@@ -115,8 +121,11 @@ print("SUCCESS")
         else:
             deps.append(f"scikit-learn=={sklearn_ver}")
 
+        # sourcery skip: no-loop-in-tests
         for dep in deps:
-            success, _, stderr = run_cmd(f"uv pip install --python {python_exe} '{dep}'")
+            success, _, stderr = run_cmd(
+                f"uv pip install --python {python_exe} '{dep}'"
+            )
             if not success:
                 pytest.fail(f"Failed to install {dep}: {stderr}")
 
@@ -126,7 +135,7 @@ print("SUCCESS")
             pytest.fail(f"FastWoe installation failed: {stderr}")
 
         # Run test
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(test_content)
             test_file = f.name
 
@@ -158,9 +167,9 @@ def test_minimum_requirements():
     import fastwoe
 
     # Test that we can import everything
-    assert hasattr(fastwoe, 'FastWoe')
-    assert hasattr(fastwoe, 'WoePreprocessor')
-    assert hasattr(fastwoe, '__version__')
+    assert hasattr(fastwoe, "FastWoe")
+    assert hasattr(fastwoe, "WoePreprocessor")
+    assert hasattr(fastwoe, "__version__")
 
     # Test basic instantiation
     woe = fastwoe.FastWoe()
@@ -175,6 +184,7 @@ def test_sklearn_target_encoder_availability():
     """Test that TargetEncoder is available in the current environment."""
     try:
         from sklearn.preprocessing import TargetEncoder
+
         assert TargetEncoder is not None
     except ImportError:
         pytest.fail("TargetEncoder not available - need scikit-learn >= 1.3.0")
@@ -183,5 +193,7 @@ def test_sklearn_target_encoder_availability():
 if __name__ == "__main__":
     # Allow running this file directly for development
     print("🧪 Running FastWoe compatibility tests...")
-    print("Use 'pytest tests/test_compatibility.py -m compatibility' for full test suite")
+    print(
+        "Use 'pytest tests/test_compatibility.py -m compatibility' for full test suite"
+    )
     pytest.main([__file__, "-v", "-m", "compatibility"])

@@ -6,7 +6,7 @@
 [![PyPI downloads](https://img.shields.io/pypi/dm/fastwoe.svg)](https://pypi.org/project/fastwoe/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-FastWoe is a Python library for efficient **Weight of Evidence (WOE)** encoding of categorical features and statistical inference. It’s designed for machine learning practitioners seeking robust, interpretable feature engineering and likelihood-ratio-based inference for binary classification problems.
+FastWoe is a Python library for efficient **Weight of Evidence (WOE)** encoding of categorical features and statistical inference. It's designed for machine learning practitioners seeking robust, interpretable feature engineering and likelihood-ratio-based inference for binary classification problems.
 
 ![FastWoe](https://github.com/xRiskLab/fastwoe/raw/main/ims/title.png)
 
@@ -106,8 +106,8 @@ print(mapping[['category', 'count', 'event_rate', 'woe', 'woe_se']])
 ## 🔧 Advanced Usage
 
 > [!CAUTION]
-> When we make inferences with `predict_proba` and `predict_ci` methods, we are making a naive assumption that pieces of evidence are independent.
-> The sum of WOE scores can only produce meaningful probabilistic outputs if the data is not strongly correlated among features.
+> When we make inferences with `predict_proba` and `predict_ci` methods, we are making a (naive) assumption that pieces of evidence are independent.
+> The sum of WOE scores can only produce meaningful probabilistic outputs if the data is not strongly correlated among features and does not contain very granular categories with very few observations.
 
 ### Probability Predictions
 
@@ -234,10 +234,12 @@ The `WeightOfEvidence` class provides interpretability for FastWoe classifiers w
 
 This implementation is based on rigorous statistical theory:
 
-1. **WOE Standard Error**: `SE(WOE) = sqrt(1/n_good + 1/n_bad)`
+1. **WOE Standard Error**: `SE(WOE) = sqrt(1/good_count + 1/bad_count)`
 2. **Confidence Intervals**: Using normal approximation with calculated standard errors
 3. **Information Value**: Measures predictive power of each feature
 4. **Gini Score**: Derived from AUC to measure discriminatory power
+
+For rare counts, we rely on the rule of three to calculate the standard error.
 
 For technical details, see [Weight of Evidence (WOE), Log Odds, and Standard Errors](docs/woe_standard_errors.md).
 
@@ -337,7 +339,14 @@ uv run ruff check fastwoe/ tests/
 
 ## 📋 Changelog
 
-### Version 0.1.1 (Current)
+### Version 0.1.1.post1 (Current)
+
+- **Bug Fixes**:
+  - Fixed issues with pandas/numpy data type conversions
+  - Improved handling of rare categories in WOE calculations
+  - Better error messages for edge cases
+
+### Version 0.1.1
 
 **Enhanced Interpretability Module** 🚀
 
