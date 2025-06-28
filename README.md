@@ -339,7 +339,19 @@ uv run ruff check fastwoe/ tests/
 
 ## 📋 Changelog
 
-### Version 0.1.1.post2 (Current)
+### Version 0.1.1.post3 (Current)
+
+- **Fixed**:
+  - sklearn version compatibility: Fixed `TypeError` with `quantile_method` parameter in `KBinsDiscretizer` for older sklearn versions (< 1.3.0). The code now checks sklearn version and only uses `quantile_method` when supported.
+  - API consistency: `predict_ci()` method now returns a numpy array instead of a DataFrame, consistent with `predict_proba()`. Returns shape `(n_samples, 2)` with columns `[ci_lower, ci_upper]`.
+- **Improved**:
+  - Added comprehensive tests to verify compatibility across different sklearn versions
+  - Updated `WeightOfEvidence` interpretability module to work with the new `predict_ci` format
+- **Notes**:
+  - All changes from `0.1.1.post2` are included in this release.
+  - This release supersedes `0.1.1.post2`.
+
+### Version 0.1.1.post2
 
 - **Fixed**:
   - NumPy array input handling: `FastWoe.fit` and related methods now accept NumPy arrays as input, automatically converting them to pandas DataFrames/Series with a warning. This prevents `AttributeError` and improves user experience.

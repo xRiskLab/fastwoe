@@ -289,14 +289,22 @@ class TestFastWoe:
 
         woe = FastWoe()
         woe.fit(X, y)
-        ci_df = woe.predict_ci(X)
+        ci_array = woe.predict_ci(X)
 
-        assert isinstance(ci_df, pd.DataFrame)
-        assert "ci_lower" in ci_df.columns
-        assert "ci_upper" in ci_df.columns
-        assert len(ci_df) == len(X)
-        assert np.all((ci_df["ci_lower"] >= 0) & (ci_df["ci_lower"] <= 1))
-        assert np.all((ci_df["ci_upper"] >= 0) & (ci_df["ci_upper"] <= 1))
+        # Should return numpy array with shape (n_samples, 2)
+        assert isinstance(ci_array, np.ndarray)
+        assert ci_array.shape == (len(X), 2)
+
+        # Extract columns: [ci_lower, ci_upper]
+        ci_lower = ci_array[:, 0]
+        ci_upper = ci_array[:, 1]
+
+        # All values should be valid probabilities (0-1)
+        assert np.all((ci_lower >= 0) & (ci_lower <= 1))
+        assert np.all((ci_upper >= 0) & (ci_upper <= 1))
+
+        # Lower bound should be <= upper bound
+        assert np.all(ci_lower <= ci_upper)
 
     def test_calculate_woe_se(self):
         """Test WOE standard error calculation."""
@@ -736,3 +744,34 @@ class TestIntegration:
         # sourcery skip: no-loop-in-tests
         for np_woe, pd_woe in zip(np_woe_values, pd_woe_values):
             np.testing.assert_allclose(np_woe, pd_woe, rtol=1e-2)
+
+    def test_sklearn_version_compatibility(self):
+        """Test that FastWoe works with different sklearn versions."""
+        from sklearn.datasets import make_classification
+
+        # Generate synthetic data with numerical features
+        X, y = make_classification(
+            n_samples=1000,
+            n_features=20,
+            n_informative=5,
+            n_redundant=5,
+            random_state=42,
+        )
+
+        # Convert to DataFrame
+        X_df = pd.DataFrame(X, columns=[f"feature_{i}" for i in range(X.shape[1])])
+
+        # Test that FastWoe works without quantile_method errors
+        fastwoe = FastWoe(numerical_threshold=10)
+
+        # This should work regardless of sklearn version
+        fastwoe.fit(X_df, y)
+
+        # Verify the fit worked
+        assert fastwoe.is_fitted_
+        assert len(fastwoe.mappings_) > 0
+
+        # Test transform
+        X_transformed = fastwoe.transform(X_df)
+        assert X_transformed.shape == X_df.shape
+        assert not X_transformed.isna().any().any()

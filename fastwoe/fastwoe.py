@@ -596,10 +596,20 @@ class FastWoe:  # pylint: disable=invalid-name
             ["feature", "gini", "iv", "n_categories"]
         ].round(4)
 
-    def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
+    def predict_proba(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
         """
         Predict probabilities using WOE-transformed features.
         """
+        # Handle numpy array input
+        if isinstance(X, np.ndarray):
+            warnings.warn(
+                "Input X is a numpy array. Converting to pandas DataFrame with generic column names. "
+                "For better control, convert to DataFrame with meaningful column names before passing to predict_proba().",
+                UserWarning,
+                stacklevel=2,
+            )
+            X = pd.DataFrame(X, columns=[f"feature_{i}" for i in range(X.shape[1])])
+
         X_woe = self.transform(X)
         odds_prior = self.y_prior_ / (1 - self.y_prior_)
         woe_score = X_woe.sum(axis=1) + np.log(odds_prior)
@@ -608,7 +618,7 @@ class FastWoe:  # pylint: disable=invalid-name
         prob = sigmoid(woe_score)
         return np.column_stack([1 - prob, prob])
 
-    def predict_ci(self, X: pd.DataFrame, alpha=0.05) -> pd.DataFrame:
+    def predict_ci(self, X: Union[pd.DataFrame, np.ndarray], alpha=0.05) -> np.ndarray:
         """
         Predict confidence intervals for WOE values and probabilities.
 
@@ -617,19 +627,31 @@ class FastWoe:  # pylint: disable=invalid-name
 
         Parameters
         ----------
-        X : pd.DataFrame
+        X : pd.DataFrame or np.ndarray
             Input features to predict confidence intervals for
         alpha : float, default=0.05
             Significance level (0.05 for 95% CI)
 
         Returns:
         -------
-        pd.DataFrame
-            DataFrame with columns: prediction, ci_lower, ci_upper
+        np.ndarray
+            Array with shape (n_samples, 2) containing:
+            - Column 0: Lower confidence bound
+            - Column 1: Upper confidence bound
 
         """
         if not self.is_fitted_:
             raise ValueError("Model must be fitted before calling predict_ci")
+
+        # Handle numpy array input
+        if isinstance(X, np.ndarray):
+            warnings.warn(
+                "Input X is a numpy array. Converting to pandas DataFrame with generic column names. "
+                "For better control, convert to DataFrame with meaningful column names before passing to predict_ci().",
+                UserWarning,
+                stacklevel=2,
+            )
+            X = pd.DataFrame(X, columns=[f"feature_{i}" for i in range(X.shape[1])])
 
         # Get WOE-transformed features
         X_woe = self.transform(X)
@@ -672,13 +694,8 @@ class FastWoe:  # pylint: disable=invalid-name
         prob_lower = sigmoid(logit_lower)
         prob_upper = sigmoid(logit_upper)
 
-        return pd.DataFrame(
-            {
-                "ci_lower": prob_lower,
-                "ci_upper": prob_upper,
-            },
-            index=X.index,
-        )
+        # Return numpy array with shape (n_samples, 2)
+        return np.column_stack([prob_lower, prob_upper])
 
     def transform_standardized(
         self, X: pd.DataFrame, output="woe", col_name: Optional[str] = None
@@ -749,7 +766,7 @@ class FastWoe:  # pylint: disable=invalid-name
 
             return z_scores
 
-    def predict(self, X: pd.DataFrame) -> np.ndarray:
+    def predict(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
         """
         Predict binary outcomes using WOE-transformed features.
 
@@ -757,6 +774,16 @@ class FastWoe:  # pylint: disable=invalid-name
         This is based on the WOE interpretation where 0 represents
         the center (average log odds).
         """
+        # Handle numpy array input
+        if isinstance(X, np.ndarray):
+            warnings.warn(
+                "Input X is a numpy array. Converting to pandas DataFrame with generic column names. "
+                "For better control, convert to DataFrame with meaningful column names before passing to predict().",
+                UserWarning,
+                stacklevel=2,
+            )
+            X = pd.DataFrame(X, columns=[f"feature_{i}" for i in range(X.shape[1])])
+
         woe_score = self.transform(X).sum(axis=1)
         return (woe_score > 0).astype(int).values
 
@@ -778,7 +805,6 @@ class FastWoe:  # pylint: disable=invalid-name
         )
         return numerical_features
 
-    # pylint: disable=unused-argument
     def _bin_numerical_feature(
         self, X: pd.DataFrame, col: str, y: pd.Series
     ) -> pd.DataFrame:
@@ -786,10 +812,25 @@ class FastWoe:  # pylint: disable=invalid-name
         Apply binning to a numerical feature and return the binned data.
         """
         # Create and fit the binner
-        # Set quantile_method to avoid sklearn future warning
+        # Set quantile_method to avoid sklearn future warning (only if supported)
         binner_kwargs = self.binner_kwargs.copy()
-        if "quantile_method" not in binner_kwargs:
-            binner_kwargs["quantile_method"] = "averaged_inverted_cdf"
+
+        # Check if quantile_method is supported in this version of sklearn
+        # quantile_method was added in sklearn 1.3.0
+        try:
+            import sklearn
+
+            sklearn_version = sklearn.__version__
+            if sklearn_version >= "1.3.0":
+                if "quantile_method" not in binner_kwargs:
+                    binner_kwargs["quantile_method"] = "averaged_inverted_cdf"
+            else:
+                # Remove quantile_method if it exists in kwargs for older sklearn versions
+                binner_kwargs.pop("quantile_method", None)
+        except (ImportError, AttributeError):
+            # If we can't determine sklearn version, remove quantile_method to be safe
+            binner_kwargs.pop("quantile_method", None)
+
         binner = KBinsDiscretizer(random_state=self.random_state, **binner_kwargs)
 
         # Handle missing values

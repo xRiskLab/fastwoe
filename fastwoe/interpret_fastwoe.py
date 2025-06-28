@@ -1,7 +1,7 @@
 """
 interpret_fastwoe.py.
 
-FastWoe interpretability module for explaining predictions and understanding feature contributions.
+FastWoe interpretability module for explaining predictions.
 
 The explanations help users understand why a particular prediction was made and
 how much each feature contributed to the final decision.
@@ -30,14 +30,11 @@ class WeightOfEvidence(BaseEstimator):
     Weight of Evidence scores that measure how much evidence features provide
     for one hypothesis over another.
 
-    This class automatically detects FastWoe classifiers and uses original
-    categorical data for predictions while using WOE-transformed data for explanations.
-
     Parameters
     ----------
     classifier : FastWoe, optional
         A trained FastWoe classifier with predict and predict_proba methods.
-        If None, automatically creates and fits a FastWoe classifier using X_train and y_train
+        If None, automatically creates and fits a FastWoe classifier
     X_train : array-like of shape (n_samples, n_features), optional
         Training data (original categorical data) used to fit the FastWoe classifier.
         Required when classifier is None
@@ -329,18 +326,6 @@ class WeightOfEvidence(BaseEstimator):
             - 'feature_contributions': individual feature contributions
 
             If return_dict=False: None (prints formatted explanation instead)
-
-        Examples:
-        --------
-        >>> # Single sample - get dictionary
-        >>> sample = X_test.iloc[0]
-        >>> explanation = explainer.explain(sample)
-        >>>
-        >>> # Sample from dataset - get dictionary
-        >>> explanation = explainer.explain(X_test, sample_idx=0)
-        >>>
-        >>> # Sample from dataset - print nice output only
-        >>> explainer.explain(X_test, sample_idx=0, return_dict=False)
         """
         if not self.is_fitted_:
             raise ValueError("WeightOfEvidence must be fitted before explaining")
@@ -767,25 +752,26 @@ class WeightOfEvidence(BaseEstimator):
         base_explanation = self._explain_fastwoe(x, class_to_explain)
         x_df = self._prepare_input_for_prediction(x)
         ci_results = self.classifier.predict_ci(x_df, alpha=alpha)
-        ci_lower = ci_results.iloc[0]["ci_lower"]
-        ci_upper = ci_results.iloc[0]["ci_upper"]
+        # ci_results is now a numpy array with shape (n_samples, 2): [ci_lower, ci_upper]
+        ci_lower_probs = ci_results[:, 0]  # Lower confidence bounds
+        ci_upper_probs = ci_results[:, 1]  # Upper confidence bounds
         odds_prior = self.classifier.y_prior_ / (1 - self.classifier.y_prior_)
         eps = 1e-15
-        ci_lower_safe = np.clip(ci_lower, eps, 1 - eps)
-        ci_upper_safe = np.clip(ci_upper, eps, 1 - eps)
+        ci_lower_safe = np.clip(ci_lower_probs, eps, 1 - eps)
+        ci_upper_safe = np.clip(ci_upper_probs, eps, 1 - eps)
         logit_lower = np.log(ci_lower_safe / (1 - ci_lower_safe))
         logit_upper = np.log(ci_upper_safe / (1 - ci_upper_safe))
         woe_lower = logit_lower - np.log(odds_prior)
         woe_upper = logit_upper - np.log(odds_prior)
         ci_conservative = {
             "predicted_label": "Positive" if woe_lower > 0 else "Negative",
-            "predicted_proba_ci": float(ci_lower),
+            "predicted_proba_ci": float(ci_lower_probs[0]),
             "total_woe": float(woe_lower),
             "interpretation": self._interpret_woe(woe_lower),
         }
         ci_optimistic = {
             "predicted_label": "Positive" if woe_upper > 0 else "Negative",
-            "predicted_proba_ci": float(ci_upper),
+            "predicted_proba_ci": float(ci_upper_probs[0]),
             "total_woe": float(woe_upper),
             "interpretation": self._interpret_woe(woe_upper),
             "scenario": "Optimistic (Upper CI)",
@@ -797,7 +783,7 @@ class WeightOfEvidence(BaseEstimator):
             "ci_optimistic": ci_optimistic,
             "uncertainty_range": {
                 "woe_range": float(woe_upper - woe_lower),
-                "prob_range": float(ci_upper - ci_lower),
+                "prob_range": float(ci_upper_probs[0] - ci_lower_probs[0]),
             },
         }
         if true_label is not None:
@@ -909,7 +895,7 @@ class WeightOfEvidence(BaseEstimator):
         -------
         dict
             Dictionary containing prediction scenarios with rich output:
-            - 'base_estimate': Standard predictions with labels, probabilities, WOE, interpretations
+            - 'base_estimate': Point estimate predictions
             - 'lower_bound': Conservative predictions (lower CI) with full details
             - 'upper_bound': Optimistic predictions (upper CI) with full details
             - 'uncertainty_summary': Uncertainty metrics and confidence levels
@@ -921,20 +907,6 @@ class WeightOfEvidence(BaseEstimator):
             - 'woe_scores': WOE evidence values
             - 'interpretation': Human-readable WOE interpretations
             - 'scenario': Description of the prediction scenario
-
-        Examples:
-        --------
-        >>> # Get predictions with confidence bounds
-        >>> results = explainer.predict_ci(X_test)
-        >>>
-        >>> # Conservative predictions (most cautious)
-        >>> conservative_preds = results['lower_bound']['predictions']
-        >>>
-        >>> # Optimistic predictions (most aggressive)
-        >>> optimistic_preds = results['upper_bound']['predictions']
-        >>>
-        >>> # Check prediction uncertainty
-        >>> agreement = results['uncertainty_summary']['prediction_agreement']
         """
         if not self.is_fitted_:
             raise ValueError("WeightOfEvidence must be fitted before predicting")
@@ -956,8 +928,9 @@ class WeightOfEvidence(BaseEstimator):
 
         # Get confidence intervals from FastWoe
         ci_results = self.classifier.predict_ci(X_df, alpha=alpha)
-        ci_lower_probs = ci_results["ci_lower"].values
-        ci_upper_probs = ci_results["ci_upper"].values
+        # ci_results is now a numpy array with shape (n_samples, 2): [ci_lower, ci_upper]
+        ci_lower_probs = ci_results[:, 0]  # Lower confidence bounds
+        ci_upper_probs = ci_results[:, 1]  # Upper confidence bounds
 
         # Get WOE scores
         X_woe = self.classifier.transform(X_df)
