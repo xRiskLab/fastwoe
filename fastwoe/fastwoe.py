@@ -819,9 +819,10 @@ class FastWoe:  # pylint: disable=invalid-name
         # quantile_method was added in sklearn 1.3.0
         try:
             import sklearn
+            from packaging import version
 
-            sklearn_version = sklearn.__version__
-            if sklearn_version >= "1.3.0":
+            sklearn_version = version.parse(sklearn.__version__)
+            if sklearn_version >= version.parse("1.3.0"):
                 if "quantile_method" not in binner_kwargs:
                     binner_kwargs["quantile_method"] = "averaged_inverted_cdf"
             else:
