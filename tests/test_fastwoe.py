@@ -542,7 +542,10 @@ class TestFastWoe:
         y_multiclass = pd.Series([0, 1, 2] * 10)  # 3 classes
 
         woe = FastWoe()
-        with pytest.raises(ValueError, match="FastWoe only supports binary targets"):
+        with pytest.raises(
+            ValueError,
+            match="Target variable must be binary \\(0/1\\) or continuous proportions \\(0-1\\)",
+        ):
             woe.fit(X, y_multiclass)
 
     def test_target_validation_single_class(self):
@@ -552,7 +555,7 @@ class TestFastWoe:
 
         woe = FastWoe()
         with pytest.raises(
-            ValueError, match="Target variable must have exactly 2 classes"
+            ValueError, match="Target variable must have at least 2 unique values"
         ):
             woe.fit(X, y_single)
 
@@ -563,7 +566,8 @@ class TestFastWoe:
 
         woe = FastWoe()
         with pytest.raises(
-            ValueError, match="Target variable must contain only 0 and 1"
+            ValueError,
+            match="Target variable must be binary \\(0/1\\) or continuous proportions \\(0-1\\)",
         ):
             woe.fit(X, y_invalid)
 
@@ -740,7 +744,10 @@ class TestIntegration:
         y_multiclass = [chr(65 + i) for i in y_multiclass]
 
         woe = FastWoe()
-        with pytest.raises(ValueError, match="FastWoe only supports binary targets"):
+        with pytest.raises(
+            ValueError,
+            match="Target variable must be binary \\(0/1\\) or continuous proportions \\(0-1\\)",
+        ):
             woe.fit(X, y_multiclass)
 
     def test_fastwoe_input_types(self):

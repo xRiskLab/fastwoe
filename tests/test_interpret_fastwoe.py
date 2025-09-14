@@ -129,7 +129,10 @@ class TestWeightOfEvidence:
         y = np.random.choice([0, 1, 2], n_samples)
 
         clf = FastWoe()
-        with pytest.raises(ValueError, match="FastWoe only supports binary targets"):
+        with pytest.raises(
+            ValueError,
+            match="Target variable must be binary \\(0/1\\) or continuous proportions \\(0-1\\)",
+        ):
             clf.fit(X, y)
 
     def test_resolve_class_identifier(self, sample_data):

@@ -459,6 +459,10 @@ woe_encoder = FastWoe(
 )
 ```
 
+###  Version 0.1.2.post1
+- **Fixed**:
+  - **Continuous target**: Allowed a case where the target is continuous.
+
 ### Version 0.1.2
 - **Improved**:
   - Added decision tree-based binning (`DecisionTreeClassifier`) for numerical features
@@ -475,6 +479,15 @@ woe_encoder = FastWoe(
   - Removed unnecessary sklearn version detection code
   - Always applies `quantile_method="averaged_inverted_cdf"` for consistent binning behavior
   - Maintains `scikit-learn>=1.3.0` requirement
+
+### Version 0.1.2.post1
+
+- **Fixed**:
+  - GitHub workflow compatibility: Fixed `TypeError` with `quantile_method` parameter in `KBinsDiscretizer` for older scikit-learn versions. The code now properly checks scikit-learn version (>= 1.7.0) before using the `quantile_method` parameter.
+  - Added explicit `packaging>=21.0` dependency for reliable version checking
+- **Improved**:
+  - Enhanced version compatibility checking with proper fallback mechanisms
+  - All GitHub workflow tests now pass successfully
 
 ### Version 0.1.1.post3
 

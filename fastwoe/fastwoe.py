@@ -256,6 +256,27 @@ class FastWoe:  # pylint: disable=invalid-name
 
     def _calculate_gini(self, y_true, y_pred):
         """Calculate Gini coefficient from AUC."""
+        # Ensure inputs are 1D numpy arrays
+        y_true = np.asarray(y_true).flatten()
+        y_pred = np.asarray(y_pred).flatten()
+
+        # Check if arrays have the same length
+        if len(y_true) != len(y_pred):
+            # If lengths don't match, this might be per-category stats
+            # Return NaN for now as this case needs different handling
+            return np.nan
+
+        # Remove any NaN values
+        mask = ~(np.isnan(y_true) | np.isnan(y_pred))
+        if not mask.any():
+            return np.nan
+
+        y_true = y_true[mask]
+        y_pred = y_pred[mask]
+
+        if len(y_true) < 2:
+            return np.nan
+
         try:
             auc = roc_auc_score(y_true, y_pred)
             return 2 * auc - 1
@@ -380,7 +401,10 @@ class FastWoe:  # pylint: disable=invalid-name
         X : Union[pd.DataFrame, np.ndarray]
             Input features to encode. If numpy array, will be converted to DataFrame with generic column names.
         y : Union[pd.Series, np.ndarray]
-            Binary target variable (0/1). If numpy array, will be converted to Series.
+            Target variable. Supports:
+            - Binary targets (0/1) for classification
+            - Continuous proportions (0-1) for regression/aggregated data
+            If numpy array, will be converted to Series.
 
         Returns:
         -------
@@ -404,27 +428,38 @@ class FastWoe:  # pylint: disable=invalid-name
                 stacklevel=2,
             )
 
-        # Validate target is binary
+        # Validate target type
         unique_targets = pd.Series(y).nunique()
         unique_values = sorted(pd.Series(y).unique())
+        y_series = pd.Series(y)
 
-        if unique_targets > 2:
-            raise ValueError(
-                "FastWoe only supports binary targets. "
-                f"Found {unique_targets} unique values: {unique_values}. "
-                "Multiclass support will be available in a future release."
-            )
-        elif unique_targets == 1:
-            raise ValueError(
-                f"Target variable must have exactly 2 classes. "
-                f"Found only 1 unique value: {unique_values}"
-            )
+        # Check if target is continuous (proportions) or binary
+        is_continuous = (
+            y_series.dtype in ["float32", "float64"]
+            and (y_series >= 0).all()
+            and (y_series <= 1).all()
+            and unique_targets > 2
+        )
 
-        # Ensure target values are 0 and 1
-        if not set(unique_values).issubset({0, 1}):
-            raise ValueError(
-                f"Target variable must contain only 0 and 1. Found values: {unique_values}"
-            )
+        is_binary = unique_targets == 2 and set(unique_values).issubset({0, 1})
+
+        if not (is_continuous or is_binary):
+            if unique_targets == 1:
+                raise ValueError(
+                    f"Target variable must have at least 2 unique values. "
+                    f"Found only 1 unique value: {unique_values}"
+                )
+            elif unique_targets == 2 and not set(unique_values).issubset({0, 1}):
+                raise ValueError(
+                    f"Target variable must be binary (0/1) or continuous proportions (0-1). "
+                    f"Found binary values: {unique_values}. Expected 0/1 for binary or 0-1 for proportions."
+                )
+            else:
+                raise ValueError(
+                    f"Target variable must be binary (0/1) or continuous proportions (0-1). "
+                    f"Found {unique_targets} unique values: {unique_values[:10]}{'...' if len(unique_values) > 10 else ''}. "
+                    f"For continuous targets, ensure values are between 0 and 1."
+                )
 
         # Detect numerical features that need binning
         numerical_features = self._detect_numerical_features(X)
@@ -935,11 +970,31 @@ class FastWoe:  # pylint: disable=invalid-name
         # Create and fit the binner
         binner_kwargs = self.binner_kwargs.copy()
 
-        # Set quantile_method to avoid sklearn future warning
+        # Set quantile_method to avoid sklearn future warning (only available in sklearn >= 1.7)
         if "quantile_method" not in binner_kwargs:
-            binner_kwargs["quantile_method"] = "averaged_inverted_cdf"
+            try:
+                import sklearn
+                from packaging import version
 
-        binner = KBinsDiscretizer(random_state=self.random_state, **binner_kwargs)
+                if version.parse(sklearn.__version__) >= version.parse("1.7.0"):
+                    binner_kwargs["quantile_method"] = "averaged_inverted_cdf"
+            except (ImportError, AttributeError):
+                # If packaging is not available or sklearn version can't be determined,
+                # don't add the parameter
+                pass
+
+        # Try to create the binner, removing quantile_method if it fails
+        try:
+            binner = KBinsDiscretizer(random_state=self.random_state, **binner_kwargs)
+        except TypeError as e:
+            if "quantile_method" in str(e):
+                # Remove quantile_method and try again
+                binner_kwargs.pop("quantile_method", None)
+                binner = KBinsDiscretizer(
+                    random_state=self.random_state, **binner_kwargs
+                )
+            else:
+                raise
         binner.fit(X_fit)
 
         # Transform all values
