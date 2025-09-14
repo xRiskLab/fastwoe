@@ -1,0 +1,136 @@
+name: Python Version Compatibility
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  # schedule:
+  #   # Run weekly on Sundays (disabled to save GitHub Actions minutes)
+  #   - cron: '0 0 * * 0'
+
+jobs:
+  compatibility-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
+        sklearn-version: ['1.3.0', '1.4.2', '1.5.2', 'latest']
+        include:
+          - python-version: '3.9'
+            python-version-short: 'py39'
+            sklearn-version: '1.3.0'  # Only test min supported sklearn for Python 3.9
+          - python-version: '3.10'
+            python-version-short: 'py310'
+            sklearn-version: '1.4.2'
+          - python-version: '3.11'
+            python-version-short: 'py311'
+            sklearn-version: '1.5.2'
+          - python-version: '3.12'
+            python-version-short: 'py312'
+            sklearn-version: 'latest'
+          - python-version: '3.13'
+            python-version-short: 'py313'
+            sklearn-version: 'latest'
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Cache uv dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/uv
+        key: ${{ runner.os }}-uv-${{ matrix.python-version }}-${{ hashFiles('**/pyproject.toml', '**/uv.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-uv-${{ matrix.python-version }}-
+          ${{ runner.os }}-uv-
+    
+    - name: Install uv
+      uses: astral-sh/setup-uv@v1
+      with:
+        version: "latest"
+    
+    - name: Install dependencies
+      run: |
+        uv sync --dev
+        if [ "${{ matrix.sklearn-version }}" != "latest" ]; then
+          uv add "scikit-learn==${{ matrix.sklearn-version }}"
+        fi
+    
+    - name: Run compatibility tests
+      run: |
+        echo "Testing Python ${{ matrix.python-version }} compatibility"
+        uv run python -c "import fastwoe; print(f'fastwoe version: {fastwoe.__version__}')"
+    
+    - name: Run full test suite
+      run: |
+        uv run python -m pytest tests/ -v --tb=short
+    
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results-${{ matrix.python-version-short }}
+        path: |
+          .pytest_cache/
+          test-results/
+        if-no-files-found: ignore
+        retention-days: 7
+
+  compatibility-summary:
+    runs-on: ubuntu-latest
+    needs: compatibility-test
+    if: always()
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download all test results
+      uses: actions/download-artifact@v4
+      continue-on-error: true
+      with:
+        path: test-results/
+    
+    - name: Generate compatibility report
+      run: |
+        echo "# Python Version Compatibility Report" > compatibility-report.md
+        echo "" >> compatibility-report.md
+        echo "Generated on: $(date)" >> compatibility-report.md
+        echo "" >> compatibility-report.md
+        
+        for result in test-results/*; do
+          if [ -d "$result" ]; then
+            version=$(basename "$result" | sed 's/test-results-//')
+            echo "## Python $version" >> compatibility-report.md
+            echo "" >> compatibility-report.md
+            
+            if [ -d "$result/.pytest_cache" ]; then
+              echo "✅ Tests completed successfully" >> compatibility-report.md
+            else
+              echo "❌ Tests failed or incomplete" >> compatibility-report.md
+            fi
+            echo "" >> compatibility-report.md
+          fi
+        done
+        
+        cat compatibility-report.md
+    
+    - name: Comment on PR
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          const report = fs.readFileSync('compatibility-report.md', 'utf8');
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: report
+          }); 

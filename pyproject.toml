@@ -45,12 +45,12 @@ classifiers = [
 ]
 
 dependencies = [
-    "numpy>=1.19.0",
+    "numpy>=1.19.0,<2.0.0",
     "pandas>=1.3.0",
     "scipy>=1.7.0",
-    "scikit-learn>=1.0.0",
+    "scikit-learn>=1.3.0",
     "rich>=13.7.0",
-    "packaging>=20.0",
+    "numba>=0.60.0",
 ]
 
 [project.optional-dependencies]
@@ -76,12 +76,23 @@ PyPI = "https://pypi.org/project/fastwoe/"
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-addopts = "-ra -q --cov=fastwoe --cov-report=term-missing"
+addopts = "-ra -q --cov=fastwoe --cov-report=term-missing --log-cli-level=INFO -s"
 testpaths = ["tests"]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "compatibility: marks tests as compatibility tests across Python/sklearn versions",
 ]
+
+# Logging configuration
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(levelname)s:%(name)s:%(message)s"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+
+# Logging configuration
+log_level = "INFO"
+log_format = "%(levelname)s:%(name)s:%(message)s"
+log_date_format = "%Y-%m-%d %H:%M:%S"
 
 [tool.ruff]
 line-length = 88

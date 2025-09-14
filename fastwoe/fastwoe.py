@@ -5,11 +5,14 @@ from typing import Optional, Union
 
 import numpy as np
 import pandas as pd
-from scipy.special import expit as sigmoid
+from scipy.special import expit as sigmoid  # pylint: disable=no-name-in-module
 from scipy.stats import norm
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import KBinsDiscretizer, TargetEncoder
+from sklearn.tree import DecisionTreeClassifier
+
+from .fast_somersd import somersd_yx
 
 
 class WoePreprocessor(BaseEstimator, TransformerMixin):
@@ -144,6 +147,21 @@ class FastWoe:  # pylint: disable=invalid-name
         Additional keyword arguments for scikit-learn TargetEncoder.
     random_state : int, optional
         Random state for reproducibility.
+    binner_kwargs : dict, optional
+        Additional keyword arguments for KBinsDiscretizer (when binning_method="kbins").
+    warn_on_numerical : bool, default=True
+        Whether to warn when numerical features are automatically binned.
+    numerical_threshold : int, default=20
+        Minimum number of unique values to trigger binning for numerical features.
+    binning_method : str, default="kbins"
+        Method for binning numerical features. Options:
+        - "kbins": Use KBinsDiscretizer (default)
+        - "tree": Use decision tree-based binning
+    tree_estimator : estimator object, optional
+        Custom tree estimator for binning (when binning_method="tree").
+        Must implement fit() and have a tree_ attribute. Default: DecisionTreeClassifier.
+    tree_kwargs : dict, optional
+        Additional keyword arguments for the tree estimator.
 
     Attributes:
     ----------
@@ -165,6 +183,9 @@ class FastWoe:  # pylint: disable=invalid-name
         binner_kwargs=None,
         warn_on_numerical=True,
         numerical_threshold=20,
+        binning_method="kbins",
+        tree_estimator=None,
+        tree_kwargs=None,
     ):
         # Enforce binary target type for TargetEncoder
         default_kwargs = {"smooth": 1e-5, "target_type": "binary"}
@@ -196,6 +217,29 @@ class FastWoe:  # pylint: disable=invalid-name
         else:
             self.binner_kwargs = {**default_binner_kwargs, **binner_kwargs}
 
+        # Binning method configuration
+        if binning_method not in ["kbins", "tree"]:
+            raise ValueError("binning_method must be 'kbins' or 'tree'")
+        self.binning_method = binning_method
+
+        # Tree estimator configuration
+        if tree_estimator is None:
+            self.tree_estimator = DecisionTreeClassifier
+        else:
+            self.tree_estimator = tree_estimator
+
+        # Tree parameters
+        default_tree_kwargs = {
+            "max_depth": 3,
+            "min_samples_split": 20,
+            "min_samples_leaf": 10,
+            "random_state": random_state,
+        }
+        if tree_kwargs is None:
+            self.tree_kwargs = default_tree_kwargs
+        else:
+            self.tree_kwargs = {**default_tree_kwargs, **tree_kwargs}
+
         self.warn_on_numerical = warn_on_numerical
         self.numerical_threshold = (
             numerical_threshold  # Apply binning if unique values >= threshold
@@ -216,9 +260,9 @@ class FastWoe:  # pylint: disable=invalid-name
             auc = roc_auc_score(y_true, y_pred)
             return 2 * auc - 1
         except ValueError:
-            return np.nan  # Handle cases with single class
+            return somersd_yx(y_true, y_pred).statistic
 
-    def _calculate_woe_se(self, good_count, bad_count):
+    def _calculate_woe_se(self, good_count: int, bad_count: int) -> float:
         """
         Calculate standard error of WOE using actual counts.
 
@@ -240,11 +284,9 @@ class FastWoe:  # pylint: disable=invalid-name
         n = good_count + bad_count
 
         if good_count <= 0 or bad_count <= 0:
-            # Use rule-of-three for p when either count is zero
             p = 3.0 / n if bad_count <= 0 else 1.0 - (3.0 / n)
-            variance = 1.0 / (p * (1.0 - p) * n)  # log-odds variance
+            variance = 1.0 if p <= 0 or p >= 1 or n <= 0 else 1.0 / (p * (1.0 - p) * n)
         else:
-            # Standard error from counts
             variance = 1.0 / good_count + 1.0 / bad_count
 
         return np.sqrt(variance)
@@ -389,13 +431,22 @@ class FastWoe:  # pylint: disable=invalid-name
 
         # Warn user about automatic binning if enabled
         if numerical_features and self.warn_on_numerical:
-            warnings.warn(
-                f"Detected numerical features: {numerical_features}. "
-                f"Applying automatic binning with {self.binner_kwargs['n_bins']} bins using "
-                f"'{self.binner_kwargs['strategy']}' strategy. Use get_binning_summary() to view details.",
-                UserWarning,
-                stacklevel=2,
-            )
+            if self.binning_method == "kbins":
+                warnings.warn(
+                    f"Detected numerical features: {numerical_features}. "
+                    f"Applying automatic binning with {self.binner_kwargs['n_bins']} bins using "
+                    f"'{self.binner_kwargs['strategy']}' strategy. Use get_binning_summary() to view details.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            else:  # tree method
+                warnings.warn(
+                    f"Detected numerical features: {numerical_features}. "
+                    f"Applying decision tree-based binning with max_depth={self.tree_kwargs['max_depth']}. "
+                    f"Use get_binning_summary() to view details.",
+                    UserWarning,
+                    stacklevel=2,
+                )
 
         # Apply binning to numerical features
         X_processed = X.copy()
@@ -499,19 +550,45 @@ class FastWoe:  # pylint: disable=invalid-name
             if col in self.binners_:
                 # Apply the same binning as during fit
                 binner = self.binners_[col]
+                binning_info = self.binning_info_[col]
                 X_col = X_processed[[col]].copy()
                 mask_missing = X_col[col].isna()
 
                 if not mask_missing.all():  # If there are any non-missing values
                     # Ensure column is object type to accept strings
                     X_processed[col] = X_processed[col].astype("object")
-                    X_processed.loc[~mask_missing, col] = binner.transform(
-                        X_col[~mask_missing]
-                    ).ravel()
+
+                    if binning_info.get("method") == "kbins":
+                        # KBinsDiscretizer method
+                        X_processed.loc[~mask_missing, col] = binner.transform(
+                            X_col[~mask_missing]
+                        ).ravel()
+                    else:  # tree method
+                        # Tree method - use bin edges for binning
+                        bin_edges = np.array(binning_info["bin_edges"])
+                        binned_values = np.digitize(
+                            X_col[~mask_missing][col].values,
+                            bin_edges[1:-1],
+                            right=False,
+                        )
+                        binned_values = np.clip(
+                            binned_values - 1, 0, len(bin_edges) - 2
+                        )
+                        X_processed.loc[~mask_missing, col] = binned_values
 
                 # Convert to string categories with meaningful labels (same as fit)
-                if hasattr(binner, "bin_edges_"):
+                if binning_info.get("method") == "kbins" and hasattr(
+                    binner, "bin_edges_"
+                ):
                     edges = binner.bin_edges_[0]
+                elif (
+                    binning_info.get("method") == "tree" and "bin_edges" in binning_info
+                ):
+                    edges = np.array(binning_info["bin_edges"])
+                else:
+                    edges = None
+
+                if edges is not None:
                     bin_labels = []
                     for i in range(len(edges) - 1):
                         if i == 0:
@@ -563,9 +640,25 @@ class FastWoe:  # pylint: disable=invalid-name
         mapping = self.mappings_[feature].copy()
         # For binned numerical features, reindex by bin_labels
         if feature in getattr(self, "binners_", {}):
-            binner = self.binners_[feature]
-            if hasattr(binner, "bin_edges_"):
+            binning_info = self.binning_info_[feature]
+
+            if binning_info.get("method") == "kbins" and hasattr(
+                self.binners_[feature], "bin_edges_"
+            ):
+                binner = self.binners_[feature]
                 edges = binner.bin_edges_[0]
+                bin_labels = []
+                for i in range(len(edges) - 1):
+                    if i == 0:
+                        label = f"(-∞, {edges[i + 1]:.1f}]"
+                    elif i == len(edges) - 2:
+                        label = f"({edges[i]:.1f}, ∞)"
+                    else:
+                        label = f"({edges[i]:.1f}, {edges[i + 1]:.1f}]"
+                    bin_labels.append(label)
+                mapping = mapping.reindex(bin_labels)
+            elif binning_info.get("method") == "tree" and "bin_edges" in binning_info:
+                edges = np.array(binning_info["bin_edges"])
                 bin_labels = []
                 for i in range(len(edges) - 1):
                     if i == 0:
@@ -810,53 +903,51 @@ class FastWoe:  # pylint: disable=invalid-name
     ) -> pd.DataFrame:
         """
         Apply binning to a numerical feature and return the binned data.
+        Supports both KBinsDiscretizer and decision tree-based binning.
         """
-        # Create and fit the binner
-        # Set quantile_method to avoid sklearn future warning (only if supported)
-        binner_kwargs = self.binner_kwargs.copy()
-
-        # Check if quantile_method is supported in this version of sklearn
-        # quantile_method was added in sklearn 1.3.0
-        try:
-            import sklearn
-            from packaging import version
-
-            sklearn_version = version.parse(sklearn.__version__)
-            if sklearn_version >= version.parse("1.3.0"):
-                if "quantile_method" not in binner_kwargs:
-                    binner_kwargs["quantile_method"] = "averaged_inverted_cdf"
-            else:
-                # Remove quantile_method if it exists in kwargs for older sklearn versions
-                binner_kwargs.pop("quantile_method", None)
-        except (ImportError, AttributeError):
-            # If we can't determine sklearn version, remove quantile_method to be safe
-            binner_kwargs.pop("quantile_method", None)
-
-        binner = KBinsDiscretizer(random_state=self.random_state, **binner_kwargs)
-
         # Handle missing values
         X_col = X[[col]].copy()
         mask_missing = X_col[col].isna()
 
         if mask_missing.any():
-            # Fit on non-missing values only
+            # Check if we have enough non-missing values
             X_fit = X_col[~mask_missing]
             if len(X_fit) == 0:
                 raise ValueError(
                     f"Column '{col}' has no non-missing values for binning"
                 )
-            binner.fit(X_fit)
         else:
-            binner.fit(X_col)
+            X_fit = X_col
+
+        if self.binning_method == "kbins":
+            return self._bin_with_kbins(X_col, col, mask_missing, X_fit)
+        else:  # tree method
+            return self._bin_with_tree(X_col, col, y, mask_missing, X_fit)
+
+    def _bin_with_kbins(
+        self,
+        X_col: pd.DataFrame,
+        col: str,
+        mask_missing: pd.Series,
+        X_fit: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """Apply KBinsDiscretizer binning to a numerical feature."""
+        # Create and fit the binner
+        binner_kwargs = self.binner_kwargs.copy()
+
+        # Set quantile_method to avoid sklearn future warning
+        if "quantile_method" not in binner_kwargs:
+            binner_kwargs["quantile_method"] = "averaged_inverted_cdf"
+
+        binner = KBinsDiscretizer(random_state=self.random_state, **binner_kwargs)
+        binner.fit(X_fit)
 
         # Transform all values
         X_binned = X_col.copy()
         if not mask_missing.all():  # If there are any non-missing values
             # Ensure column is object type to accept strings
             X_binned[col] = X_binned[col].astype("object")
-            X_binned.loc[~mask_missing, col] = binner.transform(
-                X_col[~mask_missing]
-            ).ravel()
+            X_binned.loc[~mask_missing, col] = binner.transform(X_fit).ravel()
 
         # Convert to string categories with meaningful labels
         if hasattr(binner, "bin_edges_"):
@@ -887,15 +978,127 @@ class FastWoe:  # pylint: disable=invalid-name
         # Store binner and info
         self.binners_[col] = binner
         self.binning_info_[col] = {
-            "values": X[col].nunique(),
+            "values": X_col[col].nunique(),
             "n_bins": len(bin_labels)
             if hasattr(binner, "bin_edges_")
             else binner.n_bins,
             "missing": mask_missing.sum(),
             "bin_edges": edges.tolist() if hasattr(binner, "bin_edges_") else None,
+            "method": "kbins",
         }
 
         return X_binned
+
+    def _bin_with_tree(
+        self,
+        X_col: pd.DataFrame,
+        col: str,
+        y: pd.Series,
+        mask_missing: pd.Series,
+        X_fit: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """Apply decision tree-based binning to a numerical feature."""
+        # Create and fit the tree
+        tree_kwargs = self.tree_kwargs.copy()
+        tree = self.tree_estimator(**tree_kwargs)
+
+        # Fit tree on non-missing data
+        y_fit = y[~mask_missing] if mask_missing.any() else y
+        tree.fit(X_fit, y_fit)
+
+        # Extract split points from the tree
+        split_points = self._extract_tree_splits(tree, col)
+
+        # Create bin edges from split points
+        bin_edges = self._create_bin_edges_from_splits(split_points, X_fit[col].values)
+
+        # Create bin labels
+        bin_labels = []
+        for i in range(len(bin_edges) - 1):
+            if i == 0:
+                label = f"(-∞, {bin_edges[i + 1]:.1f}]"
+            elif i == len(bin_edges) - 2:
+                label = f"({bin_edges[i]:.1f}, ∞)"
+            else:
+                label = f"({bin_edges[i]:.1f}, {bin_edges[i + 1]:.1f}]"
+            bin_labels.append(label)
+
+        # Apply binning
+        X_binned = X_col.copy()
+        if not mask_missing.all():  # If there are any non-missing values
+            # Ensure column is object type to accept strings
+            X_binned[col] = X_binned[col].astype("object")
+
+            # Bin the non-missing values
+            binned_values = np.digitize(X_fit[col].values, bin_edges[1:-1], right=False)
+            # digitize returns 1-based indices, but we want 0-based
+            binned_values = np.clip(binned_values - 1, 0, len(bin_labels) - 1)
+
+            X_binned.loc[~mask_missing, col] = binned_values
+
+            # Map ordinal values to labels
+            non_missing_values = X_binned.loc[~mask_missing, col]
+            if len(non_missing_values) > 0:
+                X_binned.loc[~mask_missing, col] = (
+                    non_missing_values.astype(int)
+                    .map(dict(enumerate(bin_labels)))
+                    .astype(str)
+                )
+
+        # Handle missing values
+        if mask_missing.any():
+            X_binned.loc[mask_missing, col] = "Missing"
+
+        # Store tree and info
+        self.binners_[col] = tree
+        self.binning_info_[col] = {
+            "values": X_col[col].nunique(),
+            "n_bins": len(bin_labels),
+            "missing": mask_missing.sum(),
+            "bin_edges": bin_edges.tolist(),
+            "method": "tree",
+            "split_points": split_points.tolist() if len(split_points) > 0 else [],
+        }
+
+        return X_binned
+
+    def _extract_tree_splits(self, tree, feature_name: str) -> np.ndarray:
+        """Extract split points from a fitted decision tree."""
+        if not hasattr(tree, "tree_"):
+            raise ValueError("Tree estimator must have a tree_ attribute")
+
+        tree_obj = tree.tree_
+        split_points = []
+
+        def extract_splits_recursive(node_id, depth=0):
+            if tree_obj.children_left[node_id] != tree_obj.children_right[node_id]:
+                # This is a split node
+                feature_idx = tree_obj.feature[node_id]
+                threshold = tree_obj.threshold[node_id]
+
+                # Only consider splits for our feature (should be 0 for single feature)
+                if feature_idx == 0:  # Assuming single feature
+                    split_points.append(threshold)
+
+                # Recursively process children
+                extract_splits_recursive(tree_obj.children_left[node_id], depth + 1)
+                extract_splits_recursive(tree_obj.children_right[node_id], depth + 1)
+
+        extract_splits_recursive(0)
+        return np.array(sorted(split_points))
+
+    def _create_bin_edges_from_splits(
+        self, split_points: np.ndarray, data: np.ndarray
+    ) -> np.ndarray:
+        """Create bin edges from split points, including min and max boundaries."""
+        if len(split_points) == 0:
+            # No splits found, create single bin
+            return np.array([-np.inf, np.inf])
+
+        min_val = np.min(data)
+        max_val = np.max(data)
+
+        return np.concatenate([[-np.inf], split_points, [np.inf]])
 
     def get_binning_summary(self) -> pd.DataFrame:
         """
@@ -904,23 +1107,24 @@ class FastWoe:  # pylint: disable=invalid-name
         Returns:
         -------
         pd.DataFrame
-            Summary with columns: feature, values, n_bins, missing
+            Summary with columns: feature, values, n_bins, missing, method
 
         """
         if not self.binning_info_:
             return pd.DataFrame()
 
-        summary = []
-        summary.extend(
-            {
-                "feature": col,
-                "values": info["values"],
-                "n_bins": info["n_bins"],
-                "missing": info["missing"],
-            }
-            for col, info in self.binning_info_.items()
+        return pd.DataFrame(
+            [
+                {
+                    "feature": col,
+                    "values": info["values"],
+                    "n_bins": info["n_bins"],
+                    "missing": info["missing"],
+                    "method": info.get("method", "unknown"),
+                }
+                for col, info in self.binning_info_.items()
+            ]
         )
-        return pd.DataFrame(summary)
 
     def get_split_value_histogram(
         self, feature: str, as_array: bool = True
@@ -958,15 +1162,26 @@ class FastWoe:  # pylint: disable=invalid-name
                 f"This function only works with numerical features that were automatically binned."
             )
 
-        # Get the binner for this feature
-        binner = self.binners_[feature]
+        # Get the binning info for this feature
+        binning_info = self.binning_info_[feature]
 
-        if not hasattr(binner, "bin_edges_"):
+        if binning_info.get("method") == "kbins":
+            # For KBinsDiscretizer, get edges from the binner
+            binner = self.binners_[feature]
+            if not hasattr(binner, "bin_edges_"):
+                raise ValueError(
+                    f"Unable to extract bin edges for feature '{feature}'. "
+                    f"The binner may not support edge extraction."
+                )
+            edges = binner.bin_edges_[0].copy()
+        elif binning_info.get("method") == "tree" and "bin_edges" in binning_info:
+            # For tree method, get edges from binning_info
+            edges = np.array(binning_info["bin_edges"])
+        else:
             raise ValueError(
                 f"Unable to extract bin edges for feature '{feature}'. "
-                f"The binner may not support edge extraction."
+                f"Binning info may be incomplete or method not supported."
             )
-        edges = binner.bin_edges_[0].copy()
 
         # Replace first and last edges with -inf and +inf
         edges[0] = -np.inf

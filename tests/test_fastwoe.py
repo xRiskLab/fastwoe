@@ -335,6 +335,46 @@ class TestFastWoe:
         assert isinstance(lower, float)
         assert isinstance(upper, float)
 
+    def test_calculate_gini_with_proportions(self):
+        """Test Gini calculation with proportion targets using somersd_yx."""
+        woe = FastWoe()
+
+        # Create test data with proportions as target (0.0 to 1.0)
+        # This should trigger the ValueError in roc_auc_score and fall back to somersd_yx
+        y_true = np.array([0.2, 0.3, 0.7, 0.8, 0.1, 0.9, 0.4, 0.6])
+        y_pred = np.array([0.1, 0.4, 0.6, 0.9, 0.2, 0.8, 0.3, 0.7])
+
+        # Calculate Gini using the method
+        gini = woe._calculate_gini(y_true, y_pred)
+
+        # Should be a valid float value
+        assert isinstance(gini, float)
+        assert not np.isnan(gini)
+        assert not np.isinf(gini)
+
+        # Gini should be between -1 and 1
+        assert -1.0 <= gini <= 1.0
+
+        # Test with perfect correlation (should give high positive Gini)
+        y_perfect = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8])
+        y_pred_perfect = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8])
+        gini_perfect = woe._calculate_gini(y_perfect, y_pred_perfect)
+        assert gini_perfect > 0.8  # Should be high for perfect correlation
+
+        # Test with negative correlation (should give negative Gini)
+        y_neg = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8])
+        y_pred_neg = np.array([0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1])
+        gini_neg = woe._calculate_gini(y_neg, y_pred_neg)
+        assert gini_neg < 0  # Should be negative for negative correlation
+
+        # Test with constant values (should return NaN when no variation)
+        y_constant = np.array([0.5, 0.5, 0.5, 0.5])
+        y_pred_constant = np.array([0.3, 0.3, 0.3, 0.3])
+        gini_constant = woe._calculate_gini(y_constant, y_pred_constant)
+        assert isinstance(gini_constant, float)
+        # With constant values, somersd_yx returns NaN, which is expected
+        assert np.isnan(gini_constant)
+
     def test_transform_standardized(self, sample_data):
         """Test standardized transformation."""
         X = sample_data[["cat1", "cat2"]]

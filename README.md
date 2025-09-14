@@ -1,5 +1,7 @@
 # FastWoe: Fast Weight of Evidence (WOE) encoding and inference
 
+[![CI](https://github.com/xRiskLab/rfgboost/workflows/CI/badge.svg)](https://github.com/xRiskLab/fastwoe/actions)
+[![Compatibility](https://github.com/xRiskLab/rfgboost/workflows/Python%20Version%20Compatibility/badge.svg)](https://github.com/xRiskLab/fastwoe/actions)
 [![PyPI version](https://img.shields.io/pypi/v/fastwoe.svg)](https://pypi.org/project/fastwoe/)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![scikit-learn 1.3.0+](https://img.shields.io/badge/sklearn-1.3.0+-orange.svg)](https://scikit-learn.org/)
@@ -15,6 +17,7 @@ FastWoe is a Python library for efficient **Weight of Evidence (WOE)** encoding 
 - **Fast WOE Encoding**: Leverages scikit-learn's `TargetEncoder` for efficient computation
 - **Statistical Confidence Intervals**: Provides standard errors and confidence intervals for WOE values
 - **Cardinality Control**: Built-in preprocessing to handle high-cardinality categorical features
+- **Intelligent Numerical Binning**: Support for both traditional binning and decision tree-based binning
 - **Binning Summaries**: Feature-level binning statistics including Gini score and Information Value (IV)
 - **Compatible with scikit-learn**: Follows scikit-learn's preprocessing transformer interface
 - **Uncertainty Quantification**: Combines Alan Turing's factor principle with Maximum Likelihood theory (see [paper](docs/woe_st_errors.md))
@@ -141,6 +144,85 @@ print(feature_stats)
 X_standardized = woe_encoder.transform_standardized(X_preprocessed, output='wald')
 ```
 
+### Numerical Feature Binning
+
+FastWoe supports two methods for binning numerical features:
+
+#### 1. Traditional Binning (Default)
+```python
+# Use KBinsDiscretizer with quantile strategy
+woe_encoder = FastWoe(
+    binning_method="kbins",
+    binner_kwargs={
+        "n_bins": 5,
+        "strategy": "quantile",  # or "uniform", "kbins"
+        "encode": "ordinal"
+    }
+)
+```
+
+#### 2. Decision Tree-Based Binning
+```python
+# Use single decision tree to find optimal splits
+woe_encoder = FastWoe(
+    binning_method="tree",
+    tree_kwargs={
+        "max_depth": 3,
+        "min_samples_split": 20,
+        "min_samples_leaf": 10
+    }
+)
+
+# Or use a custom tree estimator
+from sklearn.tree import ExtraTreeClassifier
+woe_encoder = FastWoe(
+    binning_method="tree",
+    tree_estimator=ExtraTreeClassifier,
+    tree_kwargs={"max_depth": 2, "random_state": 42}
+)
+```
+
+#### 3. Ensemble-Based Binning (New!)
+```python
+# Use ensemble methods for more robust binning
+from sklearn.ensemble import BaggingClassifier
+from sklearn.tree import ExtraTreeClassifier
+
+woe_encoder = FastWoe(
+    binning_method="ensemble",
+    tree_estimator=BaggingClassifier,
+    tree_kwargs={
+        "estimator": ExtraTreeClassifier(max_depth=2),
+        "n_estimators": 10,
+        "random_state": 42
+    }
+)
+
+# Or use RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier
+woe_encoder = FastWoe(
+    binning_method="ensemble",
+    tree_estimator=RandomForestClassifier,
+    tree_kwargs={
+        "n_estimators": 10,
+        "max_depth": 3,
+        "random_state": 42
+    }
+)
+```
+
+**Benefits of Tree-Based Binning:**
+- **Target-Aware**: Splits are optimized for the target variable
+- **Non-Linear Relationships**: Captures complex patterns better than uniform/quantile binning
+- **Automatic Bin Count**: Number of bins determined by tree structure
+- **Flexible Configuration**: Use any tree estimator with custom hyperparameters
+
+**Benefits of Ensemble-Based Binning:**
+- **Robust Splits**: Combines multiple trees for more stable binning
+- **Reduced Overfitting**: Less sensitive to individual tree decisions
+- **Rich Feature Space**: Extracts splits from multiple tree structures
+- **Ensemble Diversity**: Works with BaggingClassifier, RandomForestClassifier, etc.
+
 ### Pipeline Integration
 ```python
 from sklearn.pipeline import Pipeline
@@ -164,6 +246,10 @@ pipeline.fit(data[['category', 'high_card_cat']], data['target'])
 #### Parameters
 - `encoder_kwargs` (dict): Additional parameters for sklearn's TargetEncoder
 - `random_state` (int): Random state for reproducibility
+- `binning_method` (str): Method for numerical binning - "kbins" (default), "tree", or "ensemble"
+- `binner_kwargs` (dict): Parameters for KBinsDiscretizer (when binning_method="kbins")
+- `tree_estimator` (estimator): Custom tree/ensemble estimator for binning (when binning_method="tree" or "ensemble")
+- `tree_kwargs` (dict): Parameters for tree/ensemble estimator
 
 #### Key Methods
 - `fit(X, y)`: Fit the WOE encoder
@@ -339,7 +425,48 @@ uv run ruff check fastwoe/ tests/
 
 ## 📋 Changelog
 
-### Version 0.1.1.post3 (Current)
+### Version 0.1.2 (Current)
+
+**Decision Tree-Based Binning** 🌳
+
+#### ✨ New Features
+- **Tree-Based Binning**: Added `binning_method="tree"` for intelligent, target-aware numerical feature binning
+- **Flexible Configuration**: `tree_kwargs` parameter for customizing tree hyperparameters
+- **Automatic Bin Discovery**: Number of bins determined by tree structure rather than fixed structures
+
+#### 🔧 API Enhancements
+- **New Parameters**:
+  - `binning_method`: Choose between "kbins" (default) and "tree" methods
+  - `tree_estimator`: Tree estimator class
+  - `tree_kwargs`: Dictionary of tree parameters
+- **Enhanced Binning Summary**: Added "method" column to show which binning method was used
+
+#### 📊 Benefits of Tree Binning
+- **Target-Aware Splits**: Bins optimized for the target variable relationship
+- **Non-Linear Pattern Capture**: Better handling of complex numerical relationships
+- **Adaptive Bin Count**: Automatically determines optimal number of bins
+- **Backward Compatibility**: All existing functionality preserved
+
+#### 🎯 Usage Examples
+```python
+# Traditional binning (unchanged)
+woe_encoder = FastWoe(binning_method="kbins")
+
+# Tree-based binning
+woe_encoder = FastWoe(
+    binning_method="tree",
+    tree_kwargs={"max_depth": 3, "min_samples_split": 20}
+)
+```
+
+### Version 0.1.2
+- **Improved**:
+  - Added decision tree-based binning (`DecisionTreeClassifier`) for numerical features
+  - Implemented fast Somers' D in numba for non-binary target variables (e.g., loss rates)
+    - Fastest Somers' D implementation in Python (3x faster than scipy)
+    - Produces both `D_Y|X` and `D_X|Y` scores
+
+### Version 0.1.1.post3
 
 - **Fixed**:
   - sklearn version compatibility: Fixed `TypeError` with `quantile_method` parameter in `KBinsDiscretizer` for older sklearn versions (< 1.3.0). The code now checks sklearn version and only uses `quantile_method` when supported.

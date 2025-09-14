@@ -3,6 +3,8 @@
 .pytest_cache/
 **/.pytest_cache/
 __pycache__/
+.ruff_cache/
+.mypy_cache/
 **/__pycache__/
 **/__pycache__/*.pyc
 *.pyc

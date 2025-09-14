@@ -765,14 +765,14 @@ class WeightOfEvidence(BaseEstimator):
         woe_upper = logit_upper - np.log(odds_prior)
         ci_conservative = {
             "predicted_label": "Positive" if woe_lower > 0 else "Negative",
-            "predicted_proba_ci": float(ci_lower_probs[0]),
-            "total_woe": float(woe_lower),
+            "predicted_proba_ci": float(ci_lower_probs[0].item()),
+            "total_woe": float(woe_lower.item()),
             "interpretation": self._interpret_woe(woe_lower),
         }
         ci_optimistic = {
             "predicted_label": "Positive" if woe_upper > 0 else "Negative",
-            "predicted_proba_ci": float(ci_upper_probs[0]),
-            "total_woe": float(woe_upper),
+            "predicted_proba_ci": float(ci_upper_probs[0].item()),
+            "total_woe": float(woe_upper.item()),
             "interpretation": self._interpret_woe(woe_upper),
             "scenario": "Optimistic (Upper CI)",
         }
@@ -782,8 +782,8 @@ class WeightOfEvidence(BaseEstimator):
             "ci_conservative": ci_conservative,
             "ci_optimistic": ci_optimistic,
             "uncertainty_range": {
-                "woe_range": float(woe_upper - woe_lower),
-                "prob_range": float(ci_upper_probs[0] - ci_lower_probs[0]),
+                "woe_range": float((woe_upper - woe_lower).item()),
+                "prob_range": float((ci_upper_probs[0] - ci_lower_probs[0]).item()),
             },
         }
         if true_label is not None:
