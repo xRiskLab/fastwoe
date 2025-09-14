@@ -10,7 +10,7 @@ from scipy.stats import norm
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import KBinsDiscretizer, TargetEncoder
-from sklearn.tree import DecisionTreeClassifier
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
 from .fast_somersd import somersd_yx
 
@@ -223,10 +223,8 @@ class FastWoe:  # pylint: disable=invalid-name
         self.binning_method = binning_method
 
         # Tree estimator configuration
-        if tree_estimator is None:
-            self.tree_estimator = DecisionTreeClassifier
-        else:
-            self.tree_estimator = tree_estimator
+        # Will be set during fit() based on target type
+        self.tree_estimator = tree_estimator
 
         # Tree parameters
         default_tree_kwargs = {
@@ -957,7 +955,18 @@ class FastWoe:  # pylint: disable=invalid-name
         if self.binning_method == "kbins":
             return self._bin_with_kbins(X_col, col, mask_missing, X_fit)
         else:  # tree method
-            return self._bin_with_tree(X_col, col, y, mask_missing, X_fit)
+            # Determine if target is continuous (proportions) or binary
+            unique_targets = y.nunique()
+            unique_values = sorted(y.unique())
+            is_continuous = (
+                y.dtype in ["float32", "float64"]
+                and (y >= 0).all()
+                and (y <= 1).all()
+                and unique_targets > 2
+            )
+            return self._bin_with_tree(
+                X_col, col, y, mask_missing, X_fit, is_continuous
+            )
 
     def _bin_with_kbins(
         self,
@@ -1051,11 +1060,22 @@ class FastWoe:  # pylint: disable=invalid-name
         y: pd.Series,
         mask_missing: pd.Series,
         X_fit: pd.DataFrame,
+        is_continuous: bool = False,
     ) -> pd.DataFrame:
         """Apply decision tree-based binning to a numerical feature."""
+        # Select appropriate tree estimator based on target type
+        # pylint: disable=redefined-outer-name
+        if self.tree_estimator is None:
+            if is_continuous:
+                tree_estimator = DecisionTreeRegressor
+            else:
+                tree_estimator = DecisionTreeClassifier
+        else:
+            tree_estimator = self.tree_estimator
+
         # Create and fit the tree
         tree_kwargs = self.tree_kwargs.copy()
-        tree = self.tree_estimator(**tree_kwargs)
+        tree = tree_estimator(**tree_kwargs)
 
         # Fit tree on non-missing data
         y_fit = y[~mask_missing] if mask_missing.any() else y

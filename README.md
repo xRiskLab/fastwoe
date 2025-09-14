@@ -480,6 +480,14 @@ woe_encoder = FastWoe(
   - Always applies `quantile_method="averaged_inverted_cdf"` for consistent binning behavior
   - Maintains `scikit-learn>=1.3.0` requirement
 
+### Version 0.1.2.post2
+
+- **Fixed**:
+  - Tree binning with continuous targets: Fixed `ValueError` when using `binning_method='tree'` with continuous target values (proportions). The code now automatically selects `DecisionTreeRegressor` for continuous targets and `DecisionTreeClassifier` for binary targets.
+- **Improved**:
+  - Enhanced tree binning logic to handle both classification and regression scenarios
+  - Better target type detection for optimal tree estimator selection
+
 ### Version 0.1.2.post1
 
 - **Fixed**:

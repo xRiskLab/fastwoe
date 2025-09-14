@@ -822,3 +822,67 @@ class TestIntegration:
         X_transformed = fastwoe.transform(X_df)
         assert X_transformed.shape == X_df.shape
         assert not X_transformed.isna().any().any()
+
+    def test_continuous_target_tree_binning(self):
+        """Test tree binning with continuous target values (proportions)."""
+        from scipy.special import expit as sigmoid
+
+        # Create synthetic aggregated-binomial data
+        np.random.seed(42)
+        n_samples = 1000
+        n_features = 5
+
+        # Generate features
+        X = np.random.normal(size=(n_samples, n_features)).astype(np.float32)
+
+        # Generate continuous target (proportions between 0 and 1)
+        beta = np.random.normal(size=(n_features,)).astype(np.float32)
+        logit = X @ beta + np.random.normal(scale=0.5, size=n_samples).astype(
+            np.float32
+        )
+        p_true = sigmoid(logit)
+
+        # Create DataFrame
+        df = pd.DataFrame(X, columns=[f"x{i}" for i in range(n_features)])
+        df["p_true"] = p_true
+
+        # Test with tree binning
+        # sourcery skip: extract-duplicate-method
+        fw = FastWoe(
+            binning_method="tree", numerical_threshold=10, warn_on_numerical=False
+        )
+        fw.fit(df[["x0"]], df["p_true"])
+
+        # Verify the fit worked
+        assert fw.is_fitted_
+        assert "x0" in fw.mappings_
+
+        # Test transform
+        X_transformed = fw.transform(df[["x0"]])
+        assert X_transformed.shape == (n_samples, 1)
+        assert not X_transformed.isna().any().any()
+
+        # Test binning summary
+        summary = fw.get_binning_summary()
+        assert len(summary) == 1
+        assert summary.iloc[0]["feature"] == "x0"
+        assert summary.iloc[0]["method"] == "tree"
+        assert summary.iloc[0]["n_bins"] > 1
+
+        # Test split values
+        splits = fw.get_split_value_histogram("x0")
+        assert len(splits) > 2  # Should have at least 3 values (start, splits, end)
+        assert splits[0] == -np.inf
+        assert splits[-1] == np.inf
+
+        # Test that it works with binary targets too
+        df_binary = df.copy()
+        df_binary["p_true"] = (df["p_true"] > 0.5).astype(int)
+
+        fw_binary = FastWoe(
+            binning_method="tree", numerical_threshold=10, warn_on_numerical=False
+        )
+        fw_binary.fit(df_binary[["x0"]], df_binary["p_true"])
+
+        assert fw_binary.is_fitted_
+        assert "x0" in fw_binary.mappings_
