@@ -466,11 +466,21 @@ woe_encoder = FastWoe(
     - Fastest Somers' D implementation in Python (3x faster than scipy)
     - Produces both `D_Y|X` and `D_X|Y` scores
 
+###  Version 0.1.1.post4
+
+- **Fixed**:
+  - **sklearn Compatibility**: Simplified sklearn compatibility by always using `quantile_method="averaged_inverted_cdf"` parameter since FastWoe requires `scikit-learn>=1.3.0` where this parameter is always supported.
+
+- **Improved**:
+  - Removed unnecessary sklearn version detection code
+  - Always applies `quantile_method="averaged_inverted_cdf"` for consistent binning behavior
+  - Maintains `scikit-learn>=1.3.0` requirement
+
 ### Version 0.1.1.post3
 
 - **Fixed**:
   - sklearn version compatibility: Fixed `TypeError` with `quantile_method` parameter in `KBinsDiscretizer` for older sklearn versions (< 1.3.0). The code now checks sklearn version and only uses `quantile_method` when supported.
-  - API consistency: `predict_ci()` method now returns a numpy array instead of a DataFrame, consistent with `predict_proba()`. Returns shape `(n_samples, 2)` with columns `[ci_lower, ci_upper]`.
+  - API consistency: `predict_ci()` method now returns a numpy array instead of ald  DataFrame, consistent with `predict_proba()`. Returns shape `(n_samples, 2)` with columns `[ci_lower, ci_upper]`.
 - **Improved**:
   - Added comprehensive tests to verify compatibility across different sklearn versions
   - Updated `WeightOfEvidence` interpretability module to work with the new `predict_ci` format

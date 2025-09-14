@@ -14,12 +14,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
-        sklearn-version: ['1.3.0', '1.4.2', '1.5.2', 'latest']
         include:
           - python-version: '3.9'
             python-version-short: 'py39'
-            sklearn-version: '1.3.0'  # Only test min supported sklearn for Python 3.9
+            sklearn-version: '1.3.0'
           - python-version: '3.10'
             python-version-short: 'py310'
             sklearn-version: '1.4.2'
@@ -60,6 +58,8 @@ jobs:
         uv sync --dev
         if [ "${{ matrix.sklearn-version }}" != "latest" ]; then
           uv add "scikit-learn==${{ matrix.sklearn-version }}"
+        else
+          uv add "scikit-learn"
         fi
     
     - name: Run compatibility tests

@@ -57,7 +57,7 @@ jobs:
     
     - name: Build package
       run: |
-        uv tool run build
+        uv tool run --from build pyproject-build
     
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
@@ -65,29 +65,29 @@ jobs:
         name: dist
         path: dist/
 
-  publish:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
-    steps:
-    - name: Download build artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: dist
-        path: dist/
-    
-    - name: Publish to PyPI
-      uses: pypa/gh-action-pypi-publish@release/v1
-      # Uncomment when ready to publish to PyPI
-      # with:
-      #   password: ${{ secrets.PYPI_API_TOKEN }}
-      # Or use trusted publishing (recommended):
-      # with:
-      #   repository-url: https://upload.pypi.org/legacy/
+  # publish:
+  #   needs: build
+  #   runs-on: ubuntu-latest
+  #   permissions:
+  #     id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
+  #   steps:
+  #   - name: Download build artifacts
+  #     uses: actions/download-artifact@v4
+  #     with:
+  #       name: dist
+  #       path: dist/
+  #   
+  #   - name: Publish to PyPI
+  #     uses: pypa/gh-action-pypi-publish@release/v1
+  #     # Uncomment when ready to publish to PyPI
+  #     # with:
+  #     #   password: ${{ secrets.PYPI_API_TOKEN }}
+  #     # Or use trusted publishing (recommended):
+  #     # with:
+  #     #   repository-url: https://upload.pypi.org/legacy/
 
   create-release:
-    needs: publish
+    needs: build
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
