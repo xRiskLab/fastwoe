@@ -159,13 +159,13 @@ class TestFastWoe:
         """Test initialization of FastWoe."""
         woe = FastWoe()
         assert woe.random_state == 42
-        assert woe.encoder_kwargs == {"smooth": 1e-5, "target_type": "binary"}
+        assert woe.encoder_kwargs == {"smooth": 1e-5}  # target_type set during fit()
         assert not woe.is_fitted_
 
         # Test custom initialization
         woe = FastWoe(encoder_kwargs={"smooth": 1e-3}, random_state=123)
         assert woe.random_state == 123
-        assert woe.encoder_kwargs == {"smooth": 1e-3, "target_type": "binary"}
+        assert woe.encoder_kwargs == {"smooth": 1e-3}  # target_type set during fit()
 
     def test_init_multiclass_error(self):
         """Test that multiclass target_type raises NotImplementedError."""

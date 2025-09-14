@@ -187,17 +187,13 @@ class FastWoe:  # pylint: disable=invalid-name
         tree_estimator=None,
         tree_kwargs=None,
     ):
-        # Enforce binary target type for TargetEncoder
-        default_kwargs = {"smooth": 1e-5, "target_type": "binary"}
+        # Set up encoder kwargs - will be updated in fit() based on target type
+        default_kwargs = {"smooth": 1e-5}
         if encoder_kwargs is None:
             self.encoder_kwargs = default_kwargs
         else:
-            # Merge user kwargs with defaults, enforcing target_type
-            self.encoder_kwargs = {
-                **default_kwargs,
-                **encoder_kwargs,
-                "target_type": "binary",
-            }
+            # Merge user kwargs with defaults
+            self.encoder_kwargs = {**default_kwargs, **encoder_kwargs}
 
         # Check if user tried to set multiclass
         if encoder_kwargs and encoder_kwargs.get("target_type") == "multiclass":
@@ -459,6 +455,19 @@ class FastWoe:  # pylint: disable=invalid-name
                     f"For continuous targets, ensure values are between 0 and 1."
                 )
 
+        # Store target type for later use in WOE calculation
+        self.is_continuous_target = None
+        self.is_binary_target = None
+
+        self.is_continuous_target = is_continuous
+        self.is_binary_target = is_binary
+
+        # Update encoder_kwargs based on target type
+        if is_continuous:
+            self.encoder_kwargs["target_type"] = "continuous"
+        else:
+            self.encoder_kwargs["target_type"] = "binary"
+
         # Detect numerical features that need binning
         numerical_features = self._detect_numerical_features(X)
 
@@ -514,6 +523,9 @@ class FastWoe:  # pylint: disable=invalid-name
             )
 
             # Enhanced mapping with more details
+            # For both continuous and binary targets, we derive good/bad counts from probabilities
+            # This works because: good_count = total_count * (1 - probability)
+            # and bad_count = total_count * probability
             good_counts = np.round(count * (1 - event_rates)).astype(int)
             bad_counts = np.round(count * event_rates).astype(int)
 
@@ -707,6 +719,54 @@ class FastWoe:  # pylint: disable=invalid-name
     def get_all_mappings(self) -> dict:
         """Get all mappings (useful for serialization, audit, or compact storage)."""
         return {col: mapping.reset_index() for col, mapping in self.mappings_.items()}
+
+    def get_probability_mapping(self, feature: str) -> pd.DataFrame:
+        """
+        Get the probability mapping DataFrame for a specific feature.
+        This is particularly useful for continuous targets where you want the raw probabilities
+        instead of WOE values.
+
+        Parameters
+        ----------
+        feature : str
+            Name of the feature to get probability mapping for
+
+        Returns:
+        -------
+        pd.DataFrame
+            DataFrame with columns: category, count, count_pct, probability, probability_se
+        """
+        if not self.is_fitted_:
+            raise ValueError(
+                "FastWoe must be fitted before getting probability mappings"
+            )
+
+        if feature not in self.mappings_:
+            raise ValueError(f"Feature '{feature}' not found in fitted mappings")
+
+        mapping = self.mappings_[feature].copy()
+
+        # Extract probability information
+        prob_mapping = pd.DataFrame(
+            {
+                "category": mapping.index,
+                "count": mapping["count"],
+                "count_pct": mapping["count_pct"],
+                "probability": mapping["event_rate"],  # This is the actual probability
+            }
+        )
+
+        # Add probability standard error if available
+        if "woe_se" in mapping.columns:
+            # Convert WOE SE to probability SE using delta method
+            # For probability p, if WOE = log(p/(1-p)), then dWOE/dp = 1/(p*(1-p))
+            # So SE(p) = SE(WOE) * p * (1-p)
+            probabilities = mapping["event_rate"].values
+            woe_se = mapping["woe_se"].values
+            prob_se = woe_se * probabilities * (1 - probabilities)
+            prob_mapping["probability_se"] = prob_se
+
+        return prob_mapping
 
     def get_feature_stats(self, col: Optional[str] = None) -> pd.DataFrame:
         """Get feature statistics. If col is None, return stats for all features."""
@@ -921,7 +981,7 @@ class FastWoe:  # pylint: disable=invalid-name
         1. Numerical (using numbers.Number)
         2. Have >= numerical_threshold unique values
         """
-        numerical_features = []
+        numerical_features: list[str] = []
 
         numerical_features.extend(
             col
@@ -954,19 +1014,16 @@ class FastWoe:  # pylint: disable=invalid-name
 
         if self.binning_method == "kbins":
             return self._bin_with_kbins(X_col, col, mask_missing, X_fit)
-        else:  # tree method
-            # Determine if target is continuous (proportions) or binary
-            unique_targets = y.nunique()
-            unique_values = sorted(y.unique())
-            is_continuous = (
-                y.dtype in ["float32", "float64"]
-                and (y >= 0).all()
-                and (y <= 1).all()
-                and unique_targets > 2
-            )
-            return self._bin_with_tree(
-                X_col, col, y, mask_missing, X_fit, is_continuous
-            )
+        # Determine if target is continuous (proportions) or binary
+        unique_targets = y.nunique()
+        unique_values = sorted(y.unique())
+        is_continuous = (
+            y.dtype in ["float32", "float64"]
+            and (y >= 0).all()
+            and (y <= 1).all()
+            and unique_targets > 2
+        )
+        return self._bin_with_tree(X_col, col, y, mask_missing, X_fit, is_continuous)
 
     def _bin_with_kbins(
         self,
