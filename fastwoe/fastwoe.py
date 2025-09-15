@@ -468,9 +468,9 @@ class FastWoe:  # pylint: disable=invalid-name
                 )
             else:
                 raise ValueError(
-                    f'Target variable must be binary (0/1) or continuous proportions (0-1). '
+                    f"Target variable must be binary (0/1) or continuous proportions (0-1). "
                     f"Found {unique_targets} unique values: {unique_values[:10]}{'...' if len(unique_values) > 10 else ''}. "
-                    f'For continuous targets, ensure values are between 0 and 1.'
+                    f"For continuous targets, ensure values are between 0 and 1."
                 )
 
         # Store target type for later use in WOE calculation
@@ -493,7 +493,7 @@ class FastWoe:  # pylint: disable=invalid-name
         if numerical_features and self.warn_on_numerical:
             if self.binning_method == "kbins":
                 warnings.warn(
-                    f'Detected numerical features: {numerical_features}. '
+                    f"Detected numerical features: {numerical_features}. "
                     f"Applying automatic binning with {self.binner_kwargs['n_bins']} bins using "
                     f"'{self.binner_kwargs['strategy']}' strategy. Use get_binning_summary() to view details.",
                     UserWarning,
@@ -501,17 +501,17 @@ class FastWoe:  # pylint: disable=invalid-name
                 )
             elif self.binning_method == "tree":
                 warnings.warn(
-                    f'Detected numerical features: {numerical_features}. '
+                    f"Detected numerical features: {numerical_features}. "
                     f"Applying decision tree-based binning with max_depth={self.tree_kwargs['max_depth']}. "
-                    f'Use get_binning_summary() to view details.',
+                    f"Use get_binning_summary() to view details.",
                     UserWarning,
                     stacklevel=2,
                 )
             else:  # faiss_kmeans method
                 warnings.warn(
-                    f'Detected numerical features: {numerical_features}. '
+                    f"Detected numerical features: {numerical_features}. "
                     f"Applying FAISS KMeans clustering with k={self.faiss_kwargs['k']} clusters. "
-                    f'Use get_binning_summary() to view details.',
+                    f"Use get_binning_summary() to view details.",
                     UserWarning,
                     stacklevel=2,
                 )

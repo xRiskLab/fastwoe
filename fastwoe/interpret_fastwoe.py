@@ -401,9 +401,9 @@ class WeightOfEvidence(BaseEstimator):
                         true_label = true_labels.loc[x.name]
                     else:
                         raise ValueError(
-                            f'Cannot automatically extract true_label from true_labels. '
+                            f"Cannot automatically extract true_label from true_labels. "
                             f"Sample index {getattr(x, 'name', 'unknown')} not found in true_labels index. "
-                            f'Please use true_labels.iloc[position] or true_labels.loc[index] explicitly.'
+                            f"Please use true_labels.iloc[position] or true_labels.loc[index] explicitly."
                         )
                 else:
                     true_label = (
