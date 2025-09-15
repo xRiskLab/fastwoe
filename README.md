@@ -159,9 +159,9 @@ X_standardized = woe_encoder.transform_standardized(X_preprocessed, output='wald
 
 ### Numerical Feature Binning
 
-FastWoe supports four methods for binning numerical features:
+FastWoe supports three methods for binning numerical features:
 
-#### 1. Traditional Binning (Default)
+#### 1. Histogram-Based Binning
 ```python
 # Use KBinsDiscretizer with quantile strategy
 woe_encoder = FastWoe(
@@ -195,36 +195,7 @@ woe_encoder = FastWoe(
 )
 ```
 
-#### 3. Ensemble-Based Binning (New!)
-```python
-# Use ensemble methods for more robust binning
-from sklearn.ensemble import BaggingClassifier
-from sklearn.tree import ExtraTreeClassifier
-
-woe_encoder = FastWoe(
-    binning_method="ensemble",
-    tree_estimator=BaggingClassifier,
-    tree_kwargs={
-        "estimator": ExtraTreeClassifier(max_depth=2),
-        "n_estimators": 10,
-        "random_state": 42
-    }
-)
-
-# Or use RandomForestClassifier
-from sklearn.ensemble import RandomForestClassifier
-woe_encoder = FastWoe(
-    binning_method="ensemble",
-    tree_estimator=RandomForestClassifier,
-    tree_kwargs={
-        "n_estimators": 10,
-        "max_depth": 3,
-        "random_state": 42
-    }
-)
-```
-
-#### 4. FAISS KMeans Binning (New!)
+#### 3. FAISS KMeans Binning
 ```python
 # Use FAISS KMeans clustering for efficient binning
 # First install FAISS: pip install fastwoe[faiss]
@@ -245,7 +216,7 @@ woe_encoder = FastWoe(
         "k": 8,
         "niter": 50,
         "verbose": True,
-        "gpu": True          # Requires faiss-gpu installation
+        "gpu": True          # pip install faiss-gpu-cu12 for CUDA 12
     }
 )
 ```
@@ -263,12 +234,6 @@ woe_encoder = FastWoe(
 - **Non-Linear Relationships**: Captures complex patterns better than uniform/quantile binning
 - **Automatic Bin Count**: Number of bins determined by tree structure
 - **Flexible Configuration**: Use any tree estimator with custom hyperparameters
-
-**Benefits of Ensemble-Based Binning:**
-- **Robust Splits**: Combines multiple trees for more stable binning
-- **Reduced Overfitting**: Less sensitive to individual tree decisions
-- **Rich Feature Space**: Extracts splits from multiple tree structures
-- **Ensemble Diversity**: Works with BaggingClassifier, RandomForestClassifier, etc.
 
 ### Pipeline Integration
 ```python
@@ -293,10 +258,11 @@ pipeline.fit(data[['category', 'high_card_cat']], data['target'])
 #### Parameters
 - `encoder_kwargs` (dict): Additional parameters for sklearn's TargetEncoder
 - `random_state` (int): Random state for reproducibility
-- `binning_method` (str): Method for numerical binning - "kbins" (default), "tree", or "ensemble"
+- `binning_method` (str): Method for numerical binning - "kbins" (default), "tree", or "faiss_kmeans"
 - `binner_kwargs` (dict): Parameters for KBinsDiscretizer (when binning_method="kbins")
-- `tree_estimator` (estimator): Custom tree/ensemble estimator for binning (when binning_method="tree" or "ensemble")
-- `tree_kwargs` (dict): Parameters for tree/ensemble estimator
+- `tree_estimator` (estimator): Custom tree estimator for binning (when binning_method="tree")
+- `tree_kwargs` (dict): Parameters for tree estimator
+- `faiss_kwargs` (dict): Parameters for FAISS KMeans (when binning_method="faiss_kmeans")
 
 #### Key Methods
 - `fit(X, y)`: Fit the WOE encoder
