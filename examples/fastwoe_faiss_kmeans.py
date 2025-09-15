@@ -9,6 +9,7 @@ Requirements:
     pip install fastwoe[faiss]
 """
 
+import importlib.util
 import warnings
 
 import pandas as pd
@@ -32,12 +33,9 @@ except ImportError:
     print("Error: fastwoe not installed. Please install it first.")
     exit(1)
 
-try:
-    import faiss
+FAISS_AVAILABLE = importlib.util.find_spec("faiss") is not None
 
-    FAISS_AVAILABLE = True
-except ImportError:
-    FAISS_AVAILABLE = False
+if not FAISS_AVAILABLE:
     print("Error: FAISS not available. Please install with: pip install faiss-cpu")
     exit(1)
 

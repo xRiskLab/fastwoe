@@ -42,7 +42,7 @@ Where WOE represents the log-odds difference between a category and the overall 
 
 ## 🚀 Installation
 
-> [!IMPORTANT]  
+> [!IMPORTANT]
 > FastWoe requires Python 3.9+ and scikit-learn 1.3.0+ for TargetEncoder support.
 
 ### From PyPI (Recommended)
@@ -102,7 +102,7 @@ data = pd.DataFrame({
 # Step 1: Preprocess high-cardinality features (optional)
 preprocessor = WoePreprocessor(max_categories=10, min_count=5)
 X_preprocessed = preprocessor.fit_transform(
-    data[['category', 'high_card_cat']], 
+    data[['category', 'high_card_cat']],
     cat_features=['high_card_cat']  # Only preprocess this column
 )
 
@@ -135,7 +135,7 @@ print(preds.mean())
 
 ### Confidence Intervals
 
-> [!NOTE]  
+> [!NOTE]
 > Statistical confidence intervals help assess the reliability of WOE estimates, especially for categories with small sample sizes.
 
 ```python
@@ -310,7 +310,7 @@ pipeline.fit(data[['category', 'high_card_cat']], data['target'])
 
 The `WoePreprocessor` is a preprocessing step that reduces the cardinality of categorical features. It is used to handle high-cardinality categorical features.
 
-> [!WARNING]  
+> [!WARNING]
 > High-cardinality features (>50 categories) can lead to overfitting and unreliable WOE estimates. Always use WoePreprocessor for such features if you plan to use in downstream tasks.
 
 #### Parameters
@@ -329,7 +329,7 @@ The `WoePreprocessor` is a preprocessing step that reduces the cardinality of ca
 
 **Example: Using `top_p` parameter**
 ```python
-# Dataset with 100 categories: 
+# Dataset with 100 categories:
 # "A" (40%), "B" (30%), "C" (15%), "D" (10%), remaining 96 categories (5% total)
 
 preprocessor = WoePreprocessor(top_p=0.95, min_count=5)
@@ -414,7 +414,7 @@ uv run pytest
 
 Run tests without slow compatibility tests:
 ```bash
-uv run pytest -m "not slow"  
+uv run pytest -m "not slow"
 ```
 
 Run compatibility tests across Python/scikit-learn versions (requires `uv`):
@@ -427,7 +427,7 @@ Run specific test categories:
 # Only fast compatibility checks
 uv run pytest -m "compatibility and not slow"
 
-# Only slow cross-version tests  
+# Only slow cross-version tests
 uv run pytest -m "compatibility and slow"
 ```
 
@@ -445,7 +445,7 @@ uv pip install dist/fastwoe-*.whl
 
 Test installation in clean environment:
 ```bash
-# Create temporary environment  
+# Create temporary environment
 uv venv .test-env --python 3.9
 uv pip install --python .test-env/bin/python dist/fastwoe-*.whl
 .test-env/bin/python -c "import fastwoe; print(f'FastWoe {fastwoe.__version__} installed successfully!')"
@@ -474,7 +474,7 @@ uv run ruff check fastwoe/ tests/
 
 For a changelog, see [CHANGELOG](CHANGELOG.md).
 
-> [!NOTE]  
+> [!NOTE]
 > This package is in a beta release mode. The API is not considered stable for production use.
 
 ## 📄 License

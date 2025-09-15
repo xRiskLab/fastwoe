@@ -33,12 +33,12 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
-    
+
     - name: Cache uv dependencies
       uses: actions/cache@v3
       with:
@@ -47,12 +47,12 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-uv-${{ matrix.python-version }}-
           ${{ runner.os }}-uv-
-    
+
     - name: Install uv
       uses: astral-sh/setup-uv@v1
       with:
         version: "latest"
-    
+
     - name: Install dependencies
       run: |
         uv sync --dev
@@ -61,16 +61,16 @@ jobs:
         else
           uv add "scikit-learn"
         fi
-    
+
     - name: Run compatibility tests
       run: |
         echo "Testing Python ${{ matrix.python-version }} compatibility"
         uv run python -c "import fastwoe; print(f'fastwoe version: {fastwoe.__version__}')"
-    
+
     - name: Run full test suite
       run: |
         uv run python -m pytest tests/ -v --tb=short
-    
+
     - name: Upload test results
       uses: actions/upload-artifact@v4
       if: always()
@@ -86,29 +86,29 @@ jobs:
     runs-on: ubuntu-latest
     needs: compatibility-test
     if: always()
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Download all test results
       uses: actions/download-artifact@v4
       continue-on-error: true
       with:
         path: test-results/
-    
+
     - name: Generate compatibility report
       run: |
         echo "# Python Version Compatibility Report" > compatibility-report.md
         echo "" >> compatibility-report.md
         echo "Generated on: $(date)" >> compatibility-report.md
         echo "" >> compatibility-report.md
-        
+
         for result in test-results/*; do
           if [ -d "$result" ]; then
             version=$(basename "$result" | sed 's/test-results-//')
             echo "## Python $version" >> compatibility-report.md
             echo "" >> compatibility-report.md
-            
+
             if [ -d "$result/.pytest_cache" ]; then
               echo "✅ Tests completed successfully" >> compatibility-report.md
             else
@@ -117,9 +117,9 @@ jobs:
             echo "" >> compatibility-report.md
           fi
         done
-        
+
         cat compatibility-report.md
-    
+
     - name: Comment on PR
       if: github.event_name == 'pull_request'
       uses: actions/github-script@v6
@@ -127,10 +127,10 @@ jobs:
         script: |
           const fs = require('fs');
           const report = fs.readFileSync('compatibility-report.md', 'utf8');
-          
+
           github.rest.issues.createComment({
             issue_number: context.issue.number,
             owner: context.repo.owner,
             repo: context.repo.repo,
             body: report
-          }); 
+          });

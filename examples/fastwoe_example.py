@@ -582,7 +582,8 @@ if __name__ == "__main__":
     print("KEY INSIGHTS SUMMARY")
     print("=" * 80)
 
-    print("""
+    print(
+        """
     1. MATHEMATICAL EQUIVALENCE:
        - WOE differences = Logistic regression coefficients
        - Both measure the same log-odds relationships
@@ -608,4 +609,5 @@ if __name__ == "__main__":
        - WOE-based and dummy-encoded models yield identical performance
        - WOE transformation preserves all predictive information
        - Provides more interpretable and stable features
-    """)
+    """
+    )

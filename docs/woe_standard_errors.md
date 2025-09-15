@@ -30,8 +30,8 @@ This document explains:
 
 ### Log odds for a binary feature group:
 
-Let `n₁₁` = positives in group 1  
-Let `n₁₀` = negatives in group 1  
+Let `n₁₁` = positives in group 1
+Let `n₁₀` = negatives in group 1
 
 ```math
 θ₁ = log(n₁₁/n₁₀)
@@ -57,11 +57,11 @@ WOE₁ = θ₁ - θ_prior
 
 > [!NOTE]
 > **Basic Property of Variance:** The variance of a random variable remains unchanged when a constant is subtracted from it.
-> 
+>
 > ```math
 > Var(X - c) = Var(X)
 > ```
-> 
+>
 > This property is the cornerstone of our analysis. For more details on variance properties, see [this discussion](https://math.stackexchange.com/questions/3083350/wald-test-for-variance-of-normal-distribution).
 
 ### SE of log odds:
@@ -90,12 +90,12 @@ Var(WOE₁) = Var(θ₁)
 
 > [!IMPORTANT]
 > **Why Standard Errors Are Identical**
-> 
+>
 > Because subtracting a constant does not change variance:
 > ```math
 > Var(X - c) = Var(X)
 > ```
-> 
+>
 > The prior log odds `θ_prior` is a **fixed constant** calculated from the entire dataset. When we subtract this constant from the log odds to obtain WOE, the variability (and hence standard error) remains exactly the same.
 
 ---
@@ -118,7 +118,7 @@ Var(β) = Var(WOE₁) + Var(WOE₀)
 
 > [!TIP]
 > **Empirical Verification**
-> 
+>
 > Below we provide a simulation for the effect of constant in the variance calculation. We create 10,000 iterations by sampling from a binomial distribution and calculate the variance of log-odds and WOE.
 
 ```python
@@ -188,7 +188,7 @@ This means that the centering of log-odds through WOE transformation does not af
 
 > [!TIP]
 > **Connecting WOE to Logistic Regression**
-> 
+>
 > In this section, we provide examples from logistic regression to demonstrate that the standard error (SE) of the Weight of Evidence (WOE) is linked to the variability of log odds per row and is not influenced by the centering effect.
 
 ### Data
@@ -396,4 +396,4 @@ print(mapping[['category', 'woe', 'woe_se', 'count']])
 [![GitHub](https://img.shields.io/badge/GitHub-FastWoe-black?logo=github)](https://github.com/xRiskLab/fastwoe)
 [![PyPI](https://img.shields.io/badge/PyPI-fastwoe-blue?logo=pypi)](https://pypi.org/project/fastwoe/)
 
-</div> 
+</div>
