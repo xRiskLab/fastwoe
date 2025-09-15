@@ -890,6 +890,7 @@ class TestIntegration:
     def test_faiss_kmeans_binning_basic(self):
         """Test basic FAISS KMeans binning functionality."""
         import importlib.util
+
         if importlib.util.find_spec("faiss") is None:
             pytest.skip("FAISS not available, skipping FAISS KMeans tests")
 
@@ -933,6 +934,7 @@ class TestIntegration:
     def test_faiss_kmeans_binning_transform_consistency(self):
         """Test that FAISS KMeans binned features transform consistently."""
         import importlib.util
+
         if importlib.util.find_spec("faiss") is None:
             pytest.skip("FAISS not available, skipping FAISS KMeans tests")
 
@@ -961,6 +963,7 @@ class TestIntegration:
     def test_faiss_kmeans_binning_parameters(self):
         """Test FAISS KMeans binning with different parameters."""
         import importlib.util
+
         if importlib.util.find_spec("faiss") is None:
             pytest.skip("FAISS not available, skipping FAISS KMeans tests")
 
@@ -985,6 +988,7 @@ class TestIntegration:
     def test_faiss_kmeans_binning_missing_values(self):
         """Test FAISS KMeans binning with missing values."""
         import importlib.util
+
         if importlib.util.find_spec("faiss") is None:
             pytest.skip("FAISS not available, skipping FAISS KMeans tests")
 
@@ -1012,6 +1016,7 @@ class TestIntegration:
     def test_faiss_kmeans_binning_get_mapping(self):
         """Test getting mapping for FAISS KMeans binned feature."""
         import importlib.util
+
         if importlib.util.find_spec("faiss") is None:
             pytest.skip("FAISS not available, skipping FAISS KMeans tests")
 
@@ -1039,6 +1044,7 @@ class TestIntegration:
     def test_faiss_kmeans_binning_get_split_value_histogram(self):
         """Test get_split_value_histogram for FAISS KMeans binned feature."""
         import importlib.util
+
         if importlib.util.find_spec("faiss") is None:
             pytest.skip("FAISS not available, skipping FAISS KMeans tests")
 
@@ -1100,6 +1106,7 @@ class TestIntegration:
     def test_faiss_kmeans_binning_continuous_target(self):
         """Test FAISS KMeans binning with continuous target values (proportions)."""
         import importlib.util
+
         if importlib.util.find_spec("faiss") is None:
             pytest.skip("FAISS not available, skipping FAISS KMeans tests")
 
