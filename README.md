@@ -1,7 +1,7 @@
 # FastWoe: Fast Weight of Evidence (WOE) encoding and inference
 
-[![CI](https://github.com/xRiskLab/rfgboost/workflows/CI/badge.svg)](https://github.com/xRiskLab/fastwoe/actions)
-[![Compatibility](https://github.com/xRiskLab/rfgboost/workflows/Python%20Version%20Compatibility/badge.svg)](https://github.com/xRiskLab/fastwoe/actions)
+[![CI](https://github.com/xRiskLab/fastwoe/workflows/CI/badge.svg)](https://github.com/xRiskLab/fastwoe/actions)
+[![Compatibility](https://github.com/xRiskLab/fastwoe/workflows/Python%20Version%20Compatibility/badge.svg)](https://github.com/xRiskLab/fastwoe/actions)
 [![PyPI version](https://img.shields.io/pypi/v/fastwoe.svg)](https://pypi.org/project/fastwoe/)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![scikit-learn 1.3.0+](https://img.shields.io/badge/sklearn-1.3.0+-orange.svg)](https://scikit-learn.org/)
@@ -17,7 +17,7 @@ FastWoe is a Python library for efficient **Weight of Evidence (WOE)** encoding 
 - **Fast WOE Encoding**: Leverages scikit-learn's `TargetEncoder` for efficient computation
 - **Statistical Confidence Intervals**: Provides standard errors and confidence intervals for WOE values
 - **Cardinality Control**: Built-in preprocessing to handle high-cardinality categorical features
-- **Intelligent Numerical Binning**: Support for both traditional binning and decision tree-based binning
+- **Intelligent Numerical Binning**: Support for traditional binning, decision tree-based binning, and FAISS KMeans clustering
 - **Binning Summaries**: Feature-level binning statistics including Gini score and Information Value (IV)
 - **Compatible with scikit-learn**: Follows scikit-learn's preprocessing transformer interface
 - **Uncertainty Quantification**: Combines Alan Turing's factor principle with Maximum Likelihood theory (see [paper](docs/woe_st_errors.md))
@@ -51,6 +51,19 @@ pip install fastwoe
 ```
 
 📦 **View on PyPI**: [https://pypi.org/project/fastwoe/](https://pypi.org/project/fastwoe/)
+
+### Optional Dependencies
+
+#### FAISS KMeans Binning
+For FAISS KMeans clustering-based binning (see [Numerical Feature Binning](#-numerical-feature-binning)):
+```bash
+pip install fastwoe[faiss]
+```
+
+For GPU acceleration support:
+```bash
+pip install faiss-gpu  # Requires CUDA
+```
 
 ### From Source
 ```bash
@@ -146,7 +159,7 @@ X_standardized = woe_encoder.transform_standardized(X_preprocessed, output='wald
 
 ### Numerical Feature Binning
 
-FastWoe supports two methods for binning numerical features:
+FastWoe supports four methods for binning numerical features:
 
 #### 1. Traditional Binning (Default)
 ```python
@@ -210,6 +223,40 @@ woe_encoder = FastWoe(
     }
 )
 ```
+
+#### 4. FAISS KMeans Binning (New!)
+```python
+# Use FAISS KMeans clustering for efficient binning
+# First install FAISS: pip install fastwoe[faiss]
+woe_encoder = FastWoe(
+    binning_method="faiss_kmeans",
+    faiss_kwargs={
+        "k": 5,              # Number of clusters
+        "niter": 20,         # Number of iterations
+        "verbose": False,    # Show progress
+        "gpu": False         # Use GPU acceleration (requires faiss-gpu)
+    }
+)
+
+# Example with GPU acceleration
+woe_encoder = FastWoe(
+    binning_method="faiss_kmeans",
+    faiss_kwargs={
+        "k": 8,
+        "niter": 50,
+        "verbose": True,
+        "gpu": True          # Requires faiss-gpu installation
+    }
+)
+```
+
+**Benefits of FAISS KMeans Binning:**
+- **Efficient Clustering**: Uses Facebook's FAISS library for fast KMeans clustering
+- **Data-Driven Bins**: Creates bins based on feature value clusters, not quantiles
+- **GPU Acceleration**: Optional GPU support for large datasets
+- **Scalable**: Optimized for high-dimensional and large-scale data
+- **Meaningful Labels**: Generates interpretable bin labels based on cluster centroids
+- **Missing Value Handling**: Properly handles missing values in clustering
 
 **Benefits of Tree-Based Binning:**
 - **Target-Aware**: Splits are optimized for the target variable

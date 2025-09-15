@@ -825,7 +825,7 @@ class TestIntegration:
 
     def test_continuous_target_tree_binning(self):
         """Test tree binning with continuous target values (proportions)."""
-        from scipy.special import expit as sigmoid
+        from scipy.special import expit as sigmoid  # pylint: disable=no-name-in-module
 
         # Create synthetic aggregated-binomial data
         np.random.seed(42)
@@ -886,3 +886,277 @@ class TestIntegration:
 
         assert fw_binary.is_fitted_
         assert "x0" in fw_binary.mappings_
+
+    def test_faiss_kmeans_binning_basic(self):
+        """Test basic FAISS KMeans binning functionality."""
+        try:
+            import faiss
+        except ImportError:
+            pytest.skip("FAISS not available, skipping FAISS KMeans tests")
+
+        np.random.seed(42)
+        # Create data with high-cardinality numerical feature
+        X = pd.DataFrame(
+            {
+                "score": np.random.randint(300, 850, 200),  # High cardinality numerical
+                "age": np.random.randint(18, 80, 200),  # Another numerical
+                "category": np.random.choice(
+                    ["A", "B", "C"], 200
+                ),  # Low cardinality categorical
+            }
+        )
+        y = np.random.binomial(1, 0.3, 200)
+
+        woe = FastWoe(
+            binning_method="faiss_kmeans",
+            faiss_kwargs={"k": 5, "niter": 10, "verbose": False, "gpu": False},
+            numerical_threshold=10,
+            warn_on_numerical=True,
+        )
+
+        # Should trigger numerical detection and binning
+        with pytest.warns(UserWarning, match="Detected numerical features"):
+            woe.fit(X, y)
+
+        # Check that numerical features were detected
+        binning_summary = woe.get_binning_summary()
+        assert len(binning_summary) > 0
+        assert "score" in binning_summary["feature"].values
+        assert "age" in binning_summary["feature"].values
+        assert (
+            "category" not in binning_summary["feature"].values
+        )  # Should not be binned
+
+        # Check that FAISS KMeans method was used
+        faiss_features = binning_summary[binning_summary["method"] == "faiss_kmeans"]
+        assert len(faiss_features) == 2  # score and age
+
+    def test_faiss_kmeans_binning_transform_consistency(self):
+        """Test that FAISS KMeans binned features transform consistently."""
+        try:
+            import faiss
+        except ImportError:
+            pytest.skip("FAISS not available, skipping FAISS KMeans tests")
+
+        np.random.seed(42)
+        X = pd.DataFrame({"numerical_score": np.random.randint(100, 1000, 150)})
+        y = np.random.binomial(1, 0.4, 150)
+
+        woe = FastWoe(
+            binning_method="faiss_kmeans",
+            faiss_kwargs={"k": 4, "niter": 10, "verbose": False, "gpu": False},
+            numerical_threshold=10,
+            warn_on_numerical=True,
+        )
+        with pytest.warns(UserWarning):
+            woe.fit(X, y)
+
+        # Transform should work without errors
+        X_transformed = woe.transform(X)  # pylint: disable=invalid-name
+        assert X_transformed.shape == X.shape
+        assert not X_transformed["numerical_score"].isna().any()
+        assert np.isfinite(X_transformed["numerical_score"]).all()
+
+        # All values should be valid WOE scores
+        assert X_transformed["numerical_score"].dtype == "float64"
+
+    def test_faiss_kmeans_binning_parameters(self):
+        """Test FAISS KMeans binning with different parameters."""
+        try:
+            import faiss
+        except ImportError:
+            pytest.skip("FAISS not available, skipping FAISS KMeans tests")
+
+        np.random.seed(42)
+        X = pd.DataFrame({"feature": np.random.randint(1, 100, 100)})
+        y = np.random.binomial(1, 0.3, 100)
+
+        # Test with different k values
+        for k in [3, 5, 7]:
+            woe = FastWoe(
+                binning_method="faiss_kmeans",
+                faiss_kwargs={"k": k, "niter": 5, "verbose": False, "gpu": False},
+                numerical_threshold=10,
+                warn_on_numerical=False,
+            )
+            woe.fit(X, y)
+
+            # Check that correct number of bins was created
+            binning_summary = woe.get_binning_summary()
+            assert binning_summary.iloc[0]["n_bins"] == k
+
+    def test_faiss_kmeans_binning_missing_values(self):
+        """Test FAISS KMeans binning with missing values."""
+        try:
+            import faiss
+        except ImportError:
+            pytest.skip("FAISS not available, skipping FAISS KMeans tests")
+
+        np.random.seed(42)
+        X = pd.DataFrame(
+            {
+                "feature": [1, 2, 3, 4, 5, None, 6, 7, 8, 9, 10] * 10
+            }  # Include missing values
+        )
+        y = np.random.binomial(1, 0.3, 110)
+
+        woe = FastWoe(
+            binning_method="faiss_kmeans",
+            faiss_kwargs={"k": 3, "niter": 5, "verbose": False, "gpu": False},
+            numerical_threshold=5,
+            warn_on_numerical=False,
+        )
+        woe.fit(X, y)
+
+        # Transform should handle missing values
+        X_transformed = woe.transform(X)
+        assert X_transformed.shape == X.shape
+        assert not X_transformed["feature"].isna().any()
+
+    def test_faiss_kmeans_binning_get_mapping(self):
+        """Test getting mapping for FAISS KMeans binned feature."""
+        try:
+            import faiss
+        except ImportError:
+            pytest.skip("FAISS not available, skipping FAISS KMeans tests")
+
+        np.random.seed(42)
+        X = pd.DataFrame({"score": np.random.randint(300, 850, 200)})
+        y = np.random.binomial(1, 0.3, 200)
+
+        woe = FastWoe(
+            binning_method="faiss_kmeans",
+            faiss_kwargs={"k": 4, "niter": 10, "verbose": False, "gpu": False},
+            numerical_threshold=10,
+            warn_on_numerical=False,
+        )
+        woe.fit(X, y)
+
+        # Test get_mapping
+        mapping = woe.get_mapping("score")
+        assert isinstance(mapping, pd.DataFrame)
+        assert "category" in mapping.columns
+        assert "count" in mapping.columns
+        assert "event_rate" in mapping.columns
+        assert "woe" in mapping.columns
+        assert len(mapping) == 4  # Should have 4 bins
+
+    def test_faiss_kmeans_binning_get_split_value_histogram(self):
+        """Test get_split_value_histogram for FAISS KMeans binned feature."""
+        try:
+            import faiss
+        except ImportError:
+            pytest.skip("FAISS not available, skipping FAISS KMeans tests")
+
+        np.random.seed(42)
+        X = pd.DataFrame({"score": np.random.randint(300, 850, 200)})
+        y = np.random.binomial(1, 0.3, 200)
+
+        woe = FastWoe(
+            binning_method="faiss_kmeans",
+            faiss_kwargs={"k": 5, "niter": 10, "verbose": False, "gpu": False},
+            numerical_threshold=10,
+            warn_on_numerical=False,
+        )
+        woe.fit(X, y)
+
+        # Test array output
+        edges_array = woe.get_split_value_histogram("score", as_array=True)
+        assert isinstance(edges_array, np.ndarray)
+        assert edges_array.shape[0] == 6  # k+1 edges
+        assert np.isneginf(edges_array[0])  # First edge should be -inf
+        assert np.isinf(edges_array[-1])  # Last edge should be inf
+        assert np.all(
+            np.diff(edges_array[1:-1]) > 0
+        )  # Edges should be strictly increasing
+
+        # Test list output
+        edges_list = woe.get_split_value_histogram("score", as_array=False)
+        assert isinstance(edges_list, list)
+        assert len(edges_list) == 6
+        assert edges_list[0] == float("-inf")
+        assert edges_list[-1] == float("inf")
+
+    def test_faiss_kmeans_binning_import_error(self):
+        """Test that FAISS KMeans raises ImportError when FAISS is not available."""
+        # Mock the import to simulate FAISS not being available
+        import sys
+        from unittest.mock import patch
+
+        with patch.dict(sys.modules, {"faiss": None}):
+            woe = FastWoe(
+                binning_method="faiss_kmeans",
+                numerical_threshold=10,
+                warn_on_numerical=False,
+            )
+            X = pd.DataFrame({"feature": np.random.randint(1, 100, 50)})
+            y = np.random.binomial(1, 0.3, 50)
+
+            with pytest.raises(ImportError, match="FAISS is required for faiss_kmeans"):
+                woe.fit(X, y)
+
+    def test_faiss_kmeans_binning_invalid_method(self):
+        """Test that invalid binning method raises ValueError."""
+        with pytest.raises(
+            ValueError,
+            match="binning_method must be 'kbins', 'tree', or 'faiss_kmeans'",
+        ):
+            FastWoe(binning_method="invalid_method")
+
+    def test_faiss_kmeans_binning_continuous_target(self):
+        """Test FAISS KMeans binning with continuous target values (proportions)."""
+        try:
+            import faiss
+        except ImportError:
+            pytest.skip("FAISS not available, skipping FAISS KMeans tests")
+
+        from scipy.special import expit as sigmoid  # pylint: disable=no-name-in-module
+
+        # Create synthetic aggregated-binomial data
+        np.random.seed(42)
+        n_samples = 1000
+
+        # Generate features
+        X = np.random.normal(size=(n_samples, 1)).astype(np.float32)
+
+        # Generate continuous target (proportions between 0 and 1)
+        beta = np.random.normal(size=(1,)).astype(np.float32)
+        logit = X @ beta + np.random.normal(scale=0.5, size=n_samples).astype(
+            np.float32
+        )
+        p_true = sigmoid(logit)
+
+        # Create DataFrame
+        df = pd.DataFrame(X, columns=["x0"])
+        df["p_true"] = p_true
+
+        # Test with FAISS KMeans binning
+        fw = FastWoe(
+            binning_method="faiss_kmeans",
+            faiss_kwargs={"k": 4, "niter": 10, "verbose": False, "gpu": False},
+            numerical_threshold=10,
+            warn_on_numerical=False,
+        )
+        fw.fit(df[["x0"]], df["p_true"])
+
+        # Verify the fit worked
+        assert fw.is_fitted_
+        assert "x0" in fw.mappings_
+
+        # Test transform
+        X_transformed = fw.transform(df[["x0"]])
+        assert X_transformed.shape == (n_samples, 1)
+        assert not X_transformed.isna().any().any()
+
+        # Test binning summary
+        summary = fw.get_binning_summary()
+        assert len(summary) == 1
+        assert summary.iloc[0]["feature"] == "x0"
+        assert summary.iloc[0]["method"] == "faiss_kmeans"
+        assert summary.iloc[0]["n_bins"] == 4
+
+        # Test split values
+        splits = fw.get_split_value_histogram("x0")
+        assert len(splits) == 5  # k+1 edges
+        assert splits[0] == -np.inf
+        assert splits[-1] == np.inf

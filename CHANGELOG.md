@@ -1,6 +1,23 @@
 # Changelog
 
-## Version 0.1.2.post3 (Current)
+## Version 0.1.2.post4 (Current)
+
+- **Added**:
+  - **FAISS KMeans Binning**: New `faiss_kmeans` binning method for numerical features using FAISS clustering
+    - Efficient clustering-based binning using Facebook's FAISS library
+    - Optional dependency: install with `pip install fastwoe[faiss]`
+    - Configurable parameters: `k` (clusters), `niter` (iterations), `verbose`, `gpu`
+    - Creates meaningful bin labels based on cluster centroids
+    - Handles missing values appropriately
+    - GPU acceleration support for large datasets
+  - **Comprehensive Testing**: Added 9 test cases covering all FAISS KMeans functionality
+  - **Example Scripts**: Created `examples/fastwoe_faiss_kmeans.py` demonstrating usage and performance comparison
+- **Improved**:
+  - Enhanced `FastWoe` constructor with `faiss_kwargs` parameter for FAISS configuration
+  - Updated `pyproject.toml` with optional FAISS dependency group
+  - Consistent API integration with existing binning methods (`kbins`, `tree`, `faiss_kmeans`)
+
+## Version 0.1.2.post3
 
 - **Fixed**:
   - Resolved the continuous target calculation compatibility issue when calculating bin statistics and metrics.
@@ -58,7 +75,7 @@ woe_encoder = FastWoe(
 )
 ```
 
-## Version 0.1.1.post4
+## Version 0.1.1.post3
 
 - **Fixed**:
   - **sklearn Compatibility**: Simplified sklearn compatibility by always using `quantile_method="averaged_inverted_cdf"` parameter since FastWoe requires `scikit-learn>=1.3.0` where this parameter is always supported.

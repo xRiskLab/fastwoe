@@ -157,11 +157,14 @@ class FastWoe:  # pylint: disable=invalid-name
         Method for binning numerical features. Options:
         - "kbins": Use KBinsDiscretizer (default)
         - "tree": Use decision tree-based binning
+        - "faiss_kmeans": Use FAISS KMeans clustering for binning
     tree_estimator : estimator object, optional
         Custom tree estimator for binning (when binning_method="tree").
         Must implement fit() and have a tree_ attribute. Default: DecisionTreeClassifier.
     tree_kwargs : dict, optional
         Additional keyword arguments for the tree estimator.
+    faiss_kwargs : dict, optional
+        Additional keyword arguments for FAISS KMeans (when binning_method="faiss_kmeans").
 
     Attributes:
     ----------
@@ -186,6 +189,7 @@ class FastWoe:  # pylint: disable=invalid-name
         binning_method="kbins",
         tree_estimator=None,
         tree_kwargs=None,
+        faiss_kwargs=None,
     ):
         # Set up encoder kwargs - will be updated in fit() based on target type
         default_kwargs = {"smooth": 1e-5}
@@ -214,8 +218,10 @@ class FastWoe:  # pylint: disable=invalid-name
             self.binner_kwargs = {**default_binner_kwargs, **binner_kwargs}
 
         # Binning method configuration
-        if binning_method not in ["kbins", "tree"]:
-            raise ValueError("binning_method must be 'kbins' or 'tree'")
+        if binning_method not in ["kbins", "tree", "faiss_kmeans"]:
+            raise ValueError(
+                "binning_method must be 'kbins', 'tree', or 'faiss_kmeans'"
+            )
         self.binning_method = binning_method
 
         # Tree estimator configuration
@@ -233,6 +239,18 @@ class FastWoe:  # pylint: disable=invalid-name
             self.tree_kwargs = default_tree_kwargs
         else:
             self.tree_kwargs = {**default_tree_kwargs, **tree_kwargs}
+
+        # FAISS KMeans parameters
+        default_faiss_kwargs = {
+            "k": 5,
+            "niter": 20,
+            "verbose": False,
+            "gpu": False,
+        }
+        if faiss_kwargs is None:
+            self.faiss_kwargs = default_faiss_kwargs
+        else:
+            self.faiss_kwargs = {**default_faiss_kwargs, **faiss_kwargs}
 
         self.warn_on_numerical = warn_on_numerical
         self.numerical_threshold = (
@@ -481,10 +499,18 @@ class FastWoe:  # pylint: disable=invalid-name
                     UserWarning,
                     stacklevel=2,
                 )
-            else:  # tree method
+            elif self.binning_method == "tree":
                 warnings.warn(
                     f"Detected numerical features: {numerical_features}. "
                     f"Applying decision tree-based binning with max_depth={self.tree_kwargs['max_depth']}. "
+                    f"Use get_binning_summary() to view details.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            else:  # faiss_kmeans method
+                warnings.warn(
+                    f"Detected numerical features: {numerical_features}. "
+                    f"Applying FAISS KMeans clustering with k={self.faiss_kwargs['k']} clusters. "
                     f"Use get_binning_summary() to view details.",
                     UserWarning,
                     stacklevel=2,
@@ -493,7 +519,7 @@ class FastWoe:  # pylint: disable=invalid-name
         # Apply binning to numerical features
         X_processed = X.copy()
         for col in numerical_features:
-            X_processed[[col]] = self._bin_numerical_feature(X_processed, col, y)
+            X_processed[col] = self._bin_numerical_feature(X_processed, col, y)[col]
 
         self.y_prior_ = y.mean()
         odds_prior = self.y_prior_ / (1 - self.y_prior_)
@@ -608,7 +634,7 @@ class FastWoe:  # pylint: disable=invalid-name
                         X_processed.loc[~mask_missing, col] = binner.transform(
                             X_col[~mask_missing]
                         ).ravel()
-                    else:  # tree method
+                    elif binning_info.get("method") == "tree":
                         # Tree method - use bin edges for binning
                         bin_edges = np.array(binning_info["bin_edges"])
                         binned_values = np.digitize(
@@ -620,6 +646,38 @@ class FastWoe:  # pylint: disable=invalid-name
                             binned_values - 1, 0, len(bin_edges) - 2
                         )
                         X_processed.loc[~mask_missing, col] = binned_values
+                    elif binning_info.get("method") == "faiss_kmeans":
+                        # FAISS KMeans method - use FAISS model for prediction
+                        faiss_model = binner
+                        data = (
+                            X_col[~mask_missing][col]
+                            .values.astype(np.float32)
+                            .reshape(-1, 1)
+                        )
+                        _, labels = faiss_model.index.search(data, 1)
+                        cluster_labels = (
+                            labels.flatten() + 1
+                        )  # Convert to 1-based indexing
+
+                        # Map cluster labels to bin labels
+                        bin_edges = np.array(binning_info["bin_edges"])
+                        bin_labels = []
+                        for i in range(len(bin_edges) - 1):
+                            if i == 0:
+                                label = f"(-∞, {bin_edges[i + 1]:.1f}]"
+                            elif i == len(bin_edges) - 2:
+                                label = f"({bin_edges[i]:.1f}, ∞)"
+                            else:
+                                label = f"({bin_edges[i]:.1f}, {bin_edges[i + 1]:.1f}]"
+                            bin_labels.append(label)
+
+                        cluster_to_bin = dict(
+                            zip(range(1, len(bin_labels) + 1), bin_labels)
+                        )
+                        binned_labels = [
+                            cluster_to_bin[label] for label in cluster_labels
+                        ]
+                        X_processed.loc[~mask_missing, col] = binned_labels
 
                 # Convert to string categories with meaningful labels (same as fit)
                 if binning_info.get("method") == "kbins" and hasattr(
@@ -628,6 +686,11 @@ class FastWoe:  # pylint: disable=invalid-name
                     edges = binner.bin_edges_[0]
                 elif (
                     binning_info.get("method") == "tree" and "bin_edges" in binning_info
+                ):
+                    edges = np.array(binning_info["bin_edges"])
+                elif (
+                    binning_info.get("method") == "faiss_kmeans"
+                    and "bin_edges" in binning_info
                 ):
                     edges = np.array(binning_info["bin_edges"])
                 else:
@@ -647,11 +710,16 @@ class FastWoe:  # pylint: disable=invalid-name
                     # Map ordinal values to labels
                     non_missing_values = X_processed.loc[~mask_missing, col]
                     if len(non_missing_values) > 0:
-                        X_processed.loc[~mask_missing, col] = (
-                            non_missing_values.astype(int)
-                            .map(dict(enumerate(bin_labels)))
-                            .astype(str)
-                        )
+                        if binning_info.get("method") == "faiss_kmeans":
+                            # For FAISS KMeans, values are already bin labels, no conversion needed
+                            pass  # Values are already correct
+                        else:
+                            # For other methods, convert ordinal values to labels
+                            X_processed.loc[~mask_missing, col] = (
+                                non_missing_values.astype(int)
+                                .map(dict(enumerate(bin_labels)))
+                                .astype(str)
+                            )
 
                 # Handle missing values
                 if mask_missing.any():
@@ -703,6 +771,21 @@ class FastWoe:  # pylint: disable=invalid-name
                     bin_labels.append(label)
                 mapping = mapping.reindex(bin_labels)
             elif binning_info.get("method") == "tree" and "bin_edges" in binning_info:
+                edges = np.array(binning_info["bin_edges"])
+                bin_labels = []
+                for i in range(len(edges) - 1):
+                    if i == 0:
+                        label = f"(-∞, {edges[i + 1]:.1f}]"
+                    elif i == len(edges) - 2:
+                        label = f"({edges[i]:.1f}, ∞)"
+                    else:
+                        label = f"({edges[i]:.1f}, {edges[i + 1]:.1f}]"
+                    bin_labels.append(label)
+                mapping = mapping.reindex(bin_labels)
+            elif (
+                binning_info.get("method") == "faiss_kmeans"
+                and "bin_edges" in binning_info
+            ):
                 edges = np.array(binning_info["bin_edges"])
                 bin_labels = []
                 for i in range(len(edges) - 1):
@@ -1014,16 +1097,21 @@ class FastWoe:  # pylint: disable=invalid-name
 
         if self.binning_method == "kbins":
             return self._bin_with_kbins(X_col, col, mask_missing, X_fit)
-        # Determine if target is continuous (proportions) or binary
-        unique_targets = y.nunique()
-        unique_values = sorted(y.unique())
-        is_continuous = (
-            y.dtype in ["float32", "float64"]
-            and (y >= 0).all()
-            and (y <= 1).all()
-            and unique_targets > 2
-        )
-        return self._bin_with_tree(X_col, col, y, mask_missing, X_fit, is_continuous)
+        elif self.binning_method == "faiss_kmeans":
+            return self._bin_with_faiss_kmeans(X_col, col, mask_missing, X_fit)
+        else:  # tree method
+            # Determine if target is continuous (proportions) or binary
+            unique_targets = y.nunique()
+            unique_values = sorted(y.unique())
+            is_continuous = (
+                y.dtype in ["float32", "float64"]
+                and (y >= 0).all()
+                and (y <= 1).all()
+                and unique_targets > 2
+            )
+            return self._bin_with_tree(
+                X_col, col, y, mask_missing, X_fit, is_continuous
+            )
 
     def _bin_with_kbins(
         self,
@@ -1194,6 +1282,90 @@ class FastWoe:  # pylint: disable=invalid-name
 
         return X_binned
 
+    def _bin_with_faiss_kmeans(
+        self,
+        X_col: pd.DataFrame,
+        col: str,
+        mask_missing: pd.Series,
+        X_fit: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """Apply FAISS KMeans clustering to a numerical feature."""
+        try:
+            import faiss
+        except ImportError as e:
+            raise ImportError(
+                "FAISS is required for faiss_kmeans binning method. "
+                "Install it with: pip install faiss-cpu"
+            ) from e
+
+        # Prepare data for FAISS
+        data = X_fit[col].values.astype(np.float32).reshape(-1, 1)
+        d = data.shape[1]  # dimension
+        k = self.faiss_kwargs["k"]
+        niter = self.faiss_kwargs["niter"]
+        verbose = self.faiss_kwargs["verbose"]
+        gpu = self.faiss_kwargs["gpu"]
+
+        # Create FAISS KMeans
+        faiss_kmeans = faiss.Kmeans(d=d, k=k, niter=niter, verbose=verbose, gpu=gpu)
+        faiss_kmeans.train(data)
+
+        # Assign cluster labels
+        _, labels = faiss_kmeans.index.search(data, 1)
+        cluster_labels = labels.flatten() + 1  # Convert to 1-based indexing
+
+        # Create bin edges from cluster centroids
+        centroids = faiss_kmeans.centroids.flatten()
+        sorted_centroids = np.sort(centroids)
+
+        # Create bin edges: midpoints between consecutive centroids
+        bin_edges = np.zeros(len(sorted_centroids) + 1)
+        bin_edges[0] = -np.inf
+        bin_edges[-1] = np.inf
+
+        for i in range(len(sorted_centroids) - 1):
+            bin_edges[i + 1] = (sorted_centroids[i] + sorted_centroids[i + 1]) / 2
+
+        # Create bin labels
+        bin_labels = []
+        for i in range(len(bin_edges) - 1):
+            if i == 0:
+                label = f"(-∞, {bin_edges[i + 1]:.1f}]"
+            elif i == len(bin_edges) - 2:
+                label = f"({bin_edges[i]:.1f}, ∞)"
+            else:
+                label = f"({bin_edges[i]:.1f}, {bin_edges[i + 1]:.1f}]"
+            bin_labels.append(label)
+
+        # Apply binning
+        X_binned = X_col.copy()
+        if not mask_missing.all():  # If there are any non-missing values
+            # Ensure column is object type to accept strings
+            X_binned[col] = X_binned[col].astype("object")
+
+            # Map cluster labels to bin labels
+            cluster_to_bin = dict(zip(range(1, k + 1), bin_labels))
+            # Convert to pandas Series to use .map() method
+            cluster_series = pd.Series(cluster_labels)
+            X_binned.loc[~mask_missing, col] = cluster_series.map(cluster_to_bin)
+
+        # Handle missing values
+        if mask_missing.any():
+            X_binned.loc[mask_missing, col] = "Missing"
+
+        # Store FAISS model and info
+        self.binners_[col] = faiss_kmeans
+        self.binning_info_[col] = {
+            "values": X_col[col].nunique(),
+            "n_bins": k,
+            "missing": mask_missing.sum(),
+            "bin_edges": bin_edges.tolist(),
+            "method": "faiss_kmeans",
+            "centroids": sorted_centroids.tolist(),
+        }
+
+        return X_binned
+
     def _extract_tree_splits(self, tree, feature_name: str) -> np.ndarray:
         """Extract split points from a fitted decision tree."""
         if not hasattr(tree, "tree_"):
@@ -1308,6 +1480,11 @@ class FastWoe:  # pylint: disable=invalid-name
             edges = binner.bin_edges_[0].copy()
         elif binning_info.get("method") == "tree" and "bin_edges" in binning_info:
             # For tree method, get edges from binning_info
+            edges = np.array(binning_info["bin_edges"])
+        elif (
+            binning_info.get("method") == "faiss_kmeans" and "bin_edges" in binning_info
+        ):
+            # For FAISS KMeans method, get edges from binning_info
             edges = np.array(binning_info["bin_edges"])
         else:
             raise ValueError(
