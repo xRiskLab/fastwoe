@@ -18,5 +18,6 @@ repos:
     rev: v0.1.8
     hooks:
       - id: ruff-format
+        args: [--line-length=88]
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
