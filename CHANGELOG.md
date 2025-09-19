@@ -1,10 +1,23 @@
 # Changelog
 
-## Version 0.1.2.post6 (Current)
+## Version 0.1.2.post8 (Current)
+
+- **Fixed**:
+  - **NumPy 2.x Compatibility**: Removed `numpy<2.0` constraint to allow NumPy 2.x installation
+  - **FAISS NumPy 2.x Support**: Updated FAISS dependency to `>=1.12.0` for full NumPy 2.x compatibility
+  - **Dependency Resolution**: Fixed dependency conflicts when using `uv add "numpy>2.0.0"` with `fastwoe[faiss]`
+
+## Version 0.1.2.post7
+
+- **Fixed**:
+  - **Python 3.12 Support**: Updated `faiss-cpu` dependency to `>=1.12.0` to support Python 3.12
+  - **Compatibility Test**: Fixed failing compatibility test for Python 3.12 + latest sklearn
+
+## Version 0.1.2.post6
 
 - **Fixed**:
   - **FAISS Import Path**: Fixed `AttributeError: module 'faiss' has no attribute 'KMeans'` by using correct import path `faiss.extra_wrappers.Kmeans`
-  - **FAISS NumPy Compatibility**: Updated `faiss-cpu` dependency from `>=1.7.0` to `>=1.7.4` for better NumPy 2.x compatibility
+  - **FAISS NumPy Compatibility**: Updated `faiss-cpu` dependency from `>=1.7.0` to `>=1.12.0` for Python 3.12 support and better NumPy 2.x compatibility
 - **Added**:
   - **Comprehensive FAISS Documentation**: Added troubleshooting section with solutions for common FAISS import errors
   - **Compatibility Notes**: Clear guidance on FAISS version requirements for different NumPy versions

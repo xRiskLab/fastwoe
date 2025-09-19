@@ -65,8 +65,10 @@ For GPU acceleration support:
 pip install faiss-gpu  # Requires CUDA
 ```
 
+> **⚠️ Important**: If you get `ImportError: FAISS is required for faiss_kmeans binning method`, you need to install the `[faiss]` extras. See [FAISS Troubleshooting Guide](FAISS_TROUBLESHOOTING.md) for detailed solutions.
+
 > [!NOTE]
-> **FAISS Compatibility**: The `fastwoe[faiss]` installation automatically installs `faiss-cpu>=1.7.4` which is compatible with both NumPy 1.x and 2.x. If you encounter import errors with FAISS, ensure you're using a compatible NumPy version. For NumPy 2.x, use `faiss-cpu>=1.7.4`; for older NumPy versions, any `faiss-cpu>=1.7.0` should work.
+> **FAISS Compatibility**: The `fastwoe[faiss]` installation automatically installs `faiss-cpu>=1.12.0` which supports Python 3.7-3.12 and is compatible with both NumPy 1.x and 2.x. If you encounter import errors with FAISS, ensure you're using a compatible NumPy version. For NumPy 2.x, use `faiss-cpu>=1.12.0`; for older NumPy versions, any `faiss-cpu>=1.7.0` should work.
 
 ### From Source
 ```bash
@@ -456,8 +458,8 @@ If you encounter FAISS-related import errors, here are common solutions:
 
 **Error: `No module named 'numpy._core'`**
 - This occurs when FAISS was compiled against an older NumPy version
-- Solution: Upgrade to `faiss-cpu>=1.7.4` which supports both NumPy 1.x and 2.x
-- Run: `pip install --upgrade faiss-cpu>=1.7.4`
+- Solution: Upgrade to `faiss-cpu>=1.12.0` which supports Python 3.7-3.12 and both NumPy 1.x and 2.x
+- Run: `pip install --upgrade faiss-cpu>=1.12.0`
 
 **Error: `AttributeError: module 'faiss' has no attribute 'KMeans'`**
 - This occurs when using an older FAISS version with incorrect import paths
@@ -466,7 +468,7 @@ If you encounter FAISS-related import errors, here are common solutions:
 
 **Error: `A module that was compiled using NumPy 1.x cannot be run in NumPy 2.x`**
 - This occurs when FAISS was compiled against NumPy 1.x but you're using NumPy 2.x
-- Solution: Use `faiss-cpu>=1.7.4` which supports both NumPy versions
+- Solution: Use `faiss-cpu>=1.12.0` which supports Python 3.7-3.12 and both NumPy versions
 - Or downgrade NumPy: `pip install "numpy<2.0"`
 
 ### Verification
