@@ -1,6 +1,14 @@
 # Changelog
 
-## Version 0.1.2.post11 (Current)
+## Version 0.1.2.post12 (Current)
+
+- **Fixed**:
+  - **Compatibility Test Versions**: Updated to use scikit-learn 1.3.2 for Python 3.9 and scikit-learn 1.7.2 for Python 3.12
+  - **NumPy 2.0 Support**: scikit-learn 1.7.2 properly supports NumPy 2.0 without ComplexWarning import errors
+  - **Dependency Installation**: Fixed NumPy constraint installation to ensure correct versions are installed
+  - **Test Matrix**: Simplified compatibility test matrix to focus on critical combinations
+
+## Version 0.1.2.post11
 
 - **Fixed**:
   - **CI Workflow Separation**: Separated main CI tests from compatibility tests to prevent failures

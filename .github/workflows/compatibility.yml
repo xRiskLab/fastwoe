@@ -26,7 +26,7 @@ jobs:
             sklearn-version: '1.5.2'
           - python-version: '3.12'
             python-version-short: 'py312'
-            sklearn-version: '1.5.2'
+            sklearn-version: '1.7.2'
           - python-version: '3.13'
             python-version-short: 'py313'
             sklearn-version: 'latest'

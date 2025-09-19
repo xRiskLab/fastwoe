@@ -12,8 +12,8 @@ import pytest
 # Test combinations: [python_version, sklearn_version, description]
 # Focus on edge cases and critical combinations
 COMPATIBILITY_MATRIX = [
-    ("3.9", "1.3.0", "Min supported: Python 3.9 + sklearn 1.3.0"),
-    ("3.12", "1.5.2", "Python 3.12 + sklearn 1.5.2 + NumPy 2.0"),
+    ("3.9", "1.3.2", "Min supported: Python 3.9 + sklearn 1.3.2"),
+    ("3.12", "1.7.2", "Python 3.12 + sklearn 1.7.2 + NumPy 2.0"),
 ]
 
 
@@ -31,9 +31,9 @@ def run_cmd(cmd):
 def get_numpy_constraint(python_ver, sklearn_ver):
     """Get appropriate numpy version constraint."""
     if sklearn_ver in ["1.3.0", "1.3.2"] or python_ver == "3.9":
-        return "numpy<2.0"
-    elif sklearn_ver == "1.5.2":
-        # scikit-learn 1.5.2 should support NumPy 2.0
+        return "numpy>=1.21,<2.0"
+    elif sklearn_ver in ["1.5.2", "1.7.2"]:
+        # scikit-learn 1.5.2+ should support NumPy 2.0
         return "numpy>=1.21,<2.1"
     else:
         return "numpy>=1.21,<2.1"
@@ -125,14 +125,18 @@ print("SUCCESS")
 
         python_exe = f"{env_name}/bin/python"
 
-        # Install dependencies in specific order to avoid conflicts
-        deps = [numpy_constraint, "pandas>=1.3.0", "scipy>=1.7.0"]
-        deps.append(f"scikit-learn=={sklearn_ver}")
+        # Install NumPy first with constraint to ensure correct version
+        success, stdout, stderr = run_cmd(
+            f"uv pip install --python {python_exe} '{numpy_constraint}'"
+        )
+        if not success:
+            pytest.fail(f"Failed to install NumPy {numpy_constraint}: {stderr}")
 
-        # Install dependencies step by step to ensure correct versions
-        for dep in deps:
+        # Install other dependencies
+        other_deps = ["pandas>=1.3.0", "scipy>=1.7.0"]
+        for dep in other_deps:
             success, stdout, stderr = run_cmd(
-                f"uv pip install --python {python_exe} --no-deps '{dep}'"
+                f"uv pip install --python {python_exe} '{dep}'"
             )
             if not success:
                 pytest.fail(f"Failed to install {dep}: {stderr}")
