@@ -1,6 +1,21 @@
 # Changelog
 
-## Version 0.1.2.post9 (Current)
+## Version 0.1.2.post11 (Current)
+
+- **Fixed**:
+  - **CI Workflow Separation**: Separated main CI tests from compatibility tests to prevent failures
+  - **Main CI**: Now skips compatibility tests with `-m "not compatibility"` to avoid scikit-learn/NumPy conflicts
+  - **Compatibility Workflow**: Updated to use scikit-learn 1.5.2 for Python 3.12 + NumPy 2.0 support
+  - **Test Organization**: Main CI runs 107 core tests, compatibility workflow runs 4 compatibility tests separately
+
+## Version 0.1.2.post10
+
+- **Fixed**:
+  - **CI Compatibility Test**: Fixed dependency installation order and added version debugging
+  - **scikit-learn Version**: Ensured scikit-learn 1.4.2 is correctly installed for NumPy 2.0 compatibility
+  - **Installation Process**: Improved dependency resolution by installing all packages at once
+
+## Version 0.1.2.post9
 
 - **Fixed**:
   - **CI Compatibility Test**: Fixed Python 3.12 + NumPy 2.0 compatibility test by using scikit-learn 1.4.2 instead of latest

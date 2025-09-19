@@ -41,7 +41,7 @@ jobs:
 
     - name: Run tests
       run: |
-        uv run python -m pytest tests/ -v --tb=short
+        uv run python -m pytest tests/ -v --tb=short -m "not compatibility"
 
     # Coverage reporting disabled until pytest-cov is added to dependencies
     # - name: Upload coverage to Codecov

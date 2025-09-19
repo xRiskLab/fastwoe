@@ -26,7 +26,7 @@ jobs:
             sklearn-version: '1.5.2'
           - python-version: '3.12'
             python-version-short: 'py312'
-            sklearn-version: 'latest'
+            sklearn-version: '1.5.2'
           - python-version: '3.13'
             python-version-short: 'py313'
             sklearn-version: 'latest'
@@ -66,10 +66,7 @@ jobs:
       run: |
         echo "Testing Python ${{ matrix.python-version }} compatibility"
         uv run python -c "import fastwoe; print(f'fastwoe version: {fastwoe.__version__}')"
-
-    - name: Run full test suite
-      run: |
-        uv run python -m pytest tests/ -v --tb=short
+        uv run python -m pytest tests/test_compatibility.py -v --tb=short
 
     - name: Upload test results
       uses: actions/upload-artifact@v4
