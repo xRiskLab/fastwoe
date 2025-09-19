@@ -1,6 +1,23 @@
 # Changelog
 
-## Version 0.1.2.post12 (Current)
+## Version 0.1.2a (Current)
+
+**Alpha Release**: Stable dependency resolution and full Python 3.9-3.12 + NumPy 2.0 support
+
+- **Major Improvements**:
+  - **Simplified Dependencies**: Unified scikit-learn constraint `>=1.3.0,<1.7.0` (resolves to 1.6.1) across all Python versions
+  - **Universal Compatibility**: Works seamlessly with Python 3.9-3.12 and NumPy 2.0
+  - **Resolved Dependency Conflicts**: Eliminated `uv sync --dev` resolution errors
+  - **NumPy 2.0 Support**: Full compatibility without ComplexWarning import issues
+  - **FAISS Integration**: Verified working with latest FAISS + NumPy 2.0
+  - **Bug Fix**: Added proper NumPy array support in `FastWoe.transform()` method
+
+- **Testing**:
+  - All 107 core tests pass
+  - All 4 compatibility tests pass
+  - Verified across Python 3.9 (NumPy 1.x) and Python 3.12 (NumPy 2.0)
+
+## Version 0.1.2.post12
 
 - **Fixed**:
   - **Compatibility Test Versions**: Updated to use scikit-learn 1.3.2 for Python 3.9 and scikit-learn 1.7.2 for Python 3.12
