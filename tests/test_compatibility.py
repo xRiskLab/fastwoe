@@ -32,8 +32,8 @@ def get_numpy_constraint(python_ver, sklearn_ver):
     """Get appropriate numpy version constraint."""
     if sklearn_ver in ["1.3.0", "1.3.2"] or python_ver == "3.9":
         return "numpy>=1.21,<2.0"
-    elif sklearn_ver in ["1.5.2", "1.7.2"]:
-        # scikit-learn 1.5.2+ should support NumPy 2.0
+    elif sklearn_ver in ["1.7.2"]:
+        # scikit-learn 1.7.2+ should support NumPy 2.0
         return "numpy>=1.21,<2.1"
     else:
         return "numpy>=1.21,<2.1"
