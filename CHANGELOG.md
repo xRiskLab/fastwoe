@@ -1,6 +1,20 @@
 # Changelog
 
-## Version 0.1.2.post4 (Current)
+## Version 0.1.2.post5 (Current)
+
+- **Fixed**:
+  - **Numpy Array Support in Transform**: Fixed `AttributeError` when passing numpy arrays to `FastWoe.transform()`
+    - Added automatic conversion of numpy arrays to pandas DataFrames with generic column names
+    - Consistent behavior with `fit()` method which already supported numpy arrays
+    - Added appropriate warning messages for users about column name conversion
+    - Resolves issue where `encoder.transform(x_grid.reshape(-1, 1))` would crash with `'numpy.ndarray' object has no attribute 'index'`
+- **Added**:
+  - **Test Coverage**: Added comprehensive test cases for numpy array input to `transform()` method
+    - Tests both single and multi-feature numpy arrays
+    - Verifies proper conversion and output format
+    - Ensures no more AttributeError crashes
+
+## Version 0.1.2.post4
 
 - **Added**:
   - **FAISS KMeans Binning**: New `faiss_kmeans` binning method for numerical features using FAISS clustering

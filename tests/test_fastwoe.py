@@ -211,6 +211,55 @@ class TestFastWoe:
         with pytest.raises(TypeError):  # Will get TypeError because y_prior_ is None
             woe.transform(X)
 
+    def test_transform_numpy_array(self, sample_data):
+        """Test transform method with numpy array input."""
+        X = sample_data[["cat1", "cat2"]]
+        y = sample_data["target"]
+
+        # Test case 1: Fit with numpy array, transform with numpy array (should work perfectly)
+        X_numpy = X.values
+        woe1 = FastWoe()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            woe1.fit(X_numpy, y.values)
+            X_transformed = woe1.transform(X_numpy)  # pylint: disable=invalid-name
+
+        assert X_transformed.shape == X.shape
+        assert isinstance(X_transformed, pd.DataFrame)
+        assert X_transformed.dtypes["feature_0"] == "float64"
+        assert X_transformed.dtypes["feature_1"] == "float64"
+
+        # Test case 2: Single feature numpy array
+        X_single = X[["cat1"]].values
+        woe2 = FastWoe()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            woe2.fit(X_single, y.values)
+            X_single_transformed = woe2.transform(X_single)  # pylint: disable=invalid-name
+        assert X_single_transformed.shape == (X.shape[0], 1)
+        assert isinstance(X_single_transformed, pd.DataFrame)
+
+        # Test case 3: Test that transform no longer crashes with numpy array input
+        # (even if column names don't match, it should not raise AttributeError)
+        woe3 = FastWoe()
+        woe3.fit(X, y)  # Fit with DataFrame
+
+        # This should not crash with AttributeError anymore
+        X_test_numpy = np.random.randn(10, 2)  # Different data, different shape
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            # This will fail due to column name mismatch, but should not crash with AttributeError
+            try:
+                woe3.transform(X_test_numpy)
+            except KeyError:
+                # Expected due to column name mismatch, but no longer AttributeError
+                pass
+            except AttributeError as e:
+                # This should not happen anymore
+                pytest.fail(
+                    f"transform() should not raise AttributeError with numpy input: {e}"
+                )
+
     def test_fit_transform(self, sample_data):
         """Test fit_transform method."""
         X = sample_data[["cat1", "cat2"]]
@@ -623,14 +672,14 @@ class TestFastWoe:
 
         # Assert that the methods give different results
         # (they should differ because WOE=0 is the center, not 50% probability)
-        assert not np.array_equal(woe_predictions, prob_predictions), (
-            "WOE-based and probability-based predictions should differ"
-        )
+        assert not np.array_equal(
+            woe_predictions, prob_predictions
+        ), "WOE-based and probability-based predictions should differ"
 
         # Assert that average rates are different
-        assert abs(woe_avg_rate - prob_avg_rate) > 0.01, (
-            "Average prediction rates should differ by more than 1%"
-        )
+        assert (
+            abs(woe_avg_rate - prob_avg_rate) > 0.01
+        ), "Average prediction rates should differ by more than 1%"
 
     def test_predict_edge_cases(self):
         """Test predict method with edge cases."""

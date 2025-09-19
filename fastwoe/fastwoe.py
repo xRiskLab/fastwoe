@@ -596,14 +596,14 @@ class FastWoe:  # pylint: disable=invalid-name
         self.is_fitted_ = True
         return self
 
-    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+    def transform(self, X: Union[pd.DataFrame, np.ndarray]) -> pd.DataFrame:
         """
         Transform features to Weight of Evidence (WOE) values.
 
         Parameters
         ----------
-        X : pd.DataFrame
-            Input DataFrame with features to transform
+        X : Union[pd.DataFrame, np.ndarray]
+            Input DataFrame with features to transform. If numpy array, will be converted to DataFrame with generic column names.
 
         Returns:
         -------
@@ -612,6 +612,15 @@ class FastWoe:  # pylint: disable=invalid-name
             instead of categorical values. Column names are preserved.
 
         """
+        # Convert numpy arrays to pandas if needed
+        if isinstance(X, np.ndarray):
+            X = pd.DataFrame(X, columns=[f"feature_{i}" for i in range(X.shape[1])])
+            warnings.warn(
+                "Input X is a numpy array. Converting to pandas DataFrame with generic column names. "
+                "For better control, convert to DataFrame with meaningful column names before passing to transform().",
+                stacklevel=2,
+            )
+
         odds_prior = self.y_prior_ / (1 - self.y_prior_)
         woe_df = pd.DataFrame(index=X.index)
 

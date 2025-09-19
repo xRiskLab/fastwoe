@@ -87,6 +87,8 @@ pip install -e ".[dev]"
 
 ## 📖 Quick Start
 
+![FastWoe](https://github.com/xRiskLab/fastwoe/raw/main/ims/fastwoe.png)
+
 ```python
 import pandas as pd
 import numpy as np
