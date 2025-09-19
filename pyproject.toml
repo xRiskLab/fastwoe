@@ -24,7 +24,7 @@ name = "fastwoe"
 dynamic = ["version"]
 description = "Fast Weight of Evidence (WOE) encoding and inference"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.9,<3.13"
 authors = [
     {name = "xRiskLab", email = "contact@xrisklab.ai"}
 ]
