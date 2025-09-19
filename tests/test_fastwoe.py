@@ -672,14 +672,14 @@ class TestFastWoe:
 
         # Assert that the methods give different results
         # (they should differ because WOE=0 is the center, not 50% probability)
-        assert not np.array_equal(
-            woe_predictions, prob_predictions
-        ), "WOE-based and probability-based predictions should differ"
+        assert not np.array_equal(woe_predictions, prob_predictions), (
+            "WOE-based and probability-based predictions should differ"
+        )
 
         # Assert that average rates are different
-        assert (
-            abs(woe_avg_rate - prob_avg_rate) > 0.01
-        ), "Average prediction rates should differ by more than 1%"
+        assert abs(woe_avg_rate - prob_avg_rate) > 0.01, (
+            "Average prediction rates should differ by more than 1%"
+        )
 
     def test_predict_edge_cases(self):
         """Test predict method with edge cases."""
