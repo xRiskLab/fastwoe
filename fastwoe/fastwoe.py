@@ -1300,7 +1300,7 @@ class FastWoe:  # pylint: disable=invalid-name
     ) -> pd.DataFrame:
         """Apply FAISS KMeans clustering to a numerical feature."""
         try:
-            import faiss
+            import faiss  # noqa: F401
         except ImportError as e:
             raise ImportError(
                 "FAISS is required for faiss_kmeans binning method. "
@@ -1316,7 +1316,9 @@ class FastWoe:  # pylint: disable=invalid-name
         gpu = self.faiss_kwargs["gpu"]
 
         # Create FAISS KMeans
-        faiss_kmeans = faiss.Kmeans(d=d, k=k, niter=niter, verbose=verbose, gpu=gpu)
+        from faiss.extra_wrappers import Kmeans
+
+        faiss_kmeans = Kmeans(d=d, k=k, niter=niter, verbose=verbose, gpu=gpu)
         faiss_kmeans.train(data)
 
         # Assign cluster labels

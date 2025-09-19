@@ -1,6 +1,16 @@
 # Changelog
 
-## Version 0.1.2.post5 (Current)
+## Version 0.1.2.post6 (Current)
+
+- **Fixed**:
+  - **FAISS Import Path**: Fixed `AttributeError: module 'faiss' has no attribute 'KMeans'` by using correct import path `faiss.extra_wrappers.Kmeans`
+  - **FAISS NumPy Compatibility**: Updated `faiss-cpu` dependency from `>=1.7.0` to `>=1.7.4` for better NumPy 2.x compatibility
+- **Added**:
+  - **Comprehensive FAISS Documentation**: Added troubleshooting section with solutions for common FAISS import errors
+  - **Compatibility Notes**: Clear guidance on FAISS version requirements for different NumPy versions
+  - **Verification Code**: Added test snippet for users to verify FAISS installation
+
+## Version 0.1.2.post5
 
 - **Fixed**:
   - **Numpy Array Support in Transform**: Fixed `AttributeError` when passing numpy arrays to `FastWoe.transform()`
