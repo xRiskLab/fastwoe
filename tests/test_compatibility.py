@@ -13,7 +13,7 @@ import pytest
 # Focus on edge cases and critical combinations
 COMPATIBILITY_MATRIX = [
     ("3.9", "1.3.0", "Min supported: Python 3.9 + sklearn 1.3.0"),
-    ("3.12", "latest", "Latest: Python 3.12 + latest sklearn"),
+    ("3.12", "latest", "Latest: Python 3.12 + sklearn 1.4.2 + NumPy 2.0"),
 ]
 
 
@@ -32,6 +32,9 @@ def get_numpy_constraint(python_ver, sklearn_ver):
     """Get appropriate numpy version constraint."""
     if sklearn_ver in ["1.3.0", "1.3.2"] or python_ver == "3.9":
         return "numpy<2.0"
+    elif sklearn_ver == "latest":
+        # Use scikit-learn 1.4.2 which supports NumPy 2.0
+        return "numpy>=1.21,<2.1"
     else:
         return "numpy>=1.21,<2.1"
 
@@ -125,7 +128,8 @@ print("SUCCESS")
         # Install dependencies
         deps = [numpy_constraint, "pandas>=1.3.0", "scipy>=1.7.0"]
         if sklearn_ver == "latest":
-            deps.append("scikit-learn")
+            # Use scikit-learn 1.4.2 which supports NumPy 2.0
+            deps.append("scikit-learn==1.4.2")
         else:
             deps.append(f"scikit-learn=={sklearn_ver}")
 

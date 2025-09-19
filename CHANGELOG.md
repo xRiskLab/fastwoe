@@ -1,6 +1,13 @@
 # Changelog
 
-## Version 0.1.2.post8 (Current)
+## Version 0.1.2.post9 (Current)
+
+- **Fixed**:
+  - **CI Compatibility Test**: Fixed Python 3.12 + NumPy 2.0 compatibility test by using scikit-learn 1.4.2 instead of latest
+  - **ComplexWarning Import Error**: Resolved scikit-learn import error with NumPy 2.0 by pinning to compatible version
+  - **Test Matrix Update**: Updated compatibility test to use scikit-learn 1.4.2 which supports NumPy 2.0
+
+## Version 0.1.2.post8
 
 - **Fixed**:
   - **NumPy 2.x Compatibility**: Removed `numpy<2.0` constraint to allow NumPy 2.x installation
