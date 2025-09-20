@@ -86,31 +86,31 @@ jobs:
   #     # with:
   #     #   repository-url: https://upload.pypi.org/legacy/
 
-  create-release:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+  # create-release:
+  #   needs: build
+  #   runs-on: ubuntu-latest
+  #   permissions:
+  #     contents: write
+  #   steps:
+  #   - uses: actions/checkout@v4
+  #     with:
+  #       fetch-depth: 0
 
-    - name: Create GitHub Release
-      uses: ncipollo/release-action@v1
-      with:
-        tag: ${{ github.ref_name }}
-        name: Release ${{ github.ref_name }}
-        body: |
-          ## Changes
+  #   - name: Create GitHub Release
+  #     uses: ncipollo/release-action@v1
+  #     with:
+  #       tag: ${{ github.ref_name }}
+  #       name: Release ${{ github.ref_name }}
+  #       body: |
+  #         ## Changes
 
-          - See [CHANGELOG.md](CHANGELOG.md) for detailed changes
+  #         - See [CHANGELOG.md](CHANGELOG.md) for detailed changes
 
-          ## Installation
+  #         ## Installation
 
-          ```bash
-          pip install fastwoe==${{ github.ref_name }}
-          ```
-        draft: false
-        prerelease: false
-        token: ${{ secrets.GITHUB_TOKEN }}
+  #         ```bash
+  #         pip install fastwoe==${{ github.ref_name }}
+  #         ```
+  #       draft: false
+  #       prerelease: false
+  #       token: ${{ secrets.GITHUB_TOKEN }}
