@@ -178,7 +178,7 @@ FastWoe provides statistical rigor for Information Value calculations with confi
 The **Information Value (IV)** is defined as:
 
 $$
-IV = \sum_j \bigl( \text{bad\_rate}_j - \text{good\_rate}_j \bigr)\cdot WOE_j
+IV = \sum_j \bigl( p_{b,j} - p_{g,j} \bigr)\cdot WOE_j
 $$
 
 The **variance of IV** can be expressed as:
