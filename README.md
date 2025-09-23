@@ -184,13 +184,13 @@ $$
 The **variance of IV** can be expressed as:
 
 $$
-\operatorname{Var}(\mathrm{IV}) = \sum_{j=1}^{J} w_j^2 \cdot \operatorname{Var}(\mathrm{WoE}_j)
+\mathrm{Var}(IV) = \sum_{j=1}^{J} w_j^2 \cdot \mathrm{Var}(\mathrm{WoE}_j)
 $$
 
 Therefore, the **standard error of IV** is:
 
 $$
-\mathrm{SE}(\mathrm{IV}) =
+\mathrm{SE}(IV) =
 \sqrt{\sum_{j=1}^{J} (p_{b,j} - p_{g,j})^2 \cdot
 \left(\tfrac{1}{n_{j,g}} + \tfrac{1}{n_{j,b}}\right)}
 $$
