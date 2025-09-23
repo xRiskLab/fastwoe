@@ -16,6 +16,7 @@ FastWoe is a Python library for efficient **Weight of Evidence (WOE)** encoding 
 
 - **Fast WOE Encoding**: Leverages scikit-learn's `TargetEncoder` for efficient computation
 - **Statistical Confidence Intervals**: Provides standard errors and confidence intervals for WOE values
+- **IV Standard Errors**: Statistical significance testing for Information Value with confidence intervals
 - **Cardinality Control**: Built-in preprocessing to handle high-cardinality categorical features
 - **Intelligent Numerical Binning**: Support for traditional binning, decision tree-based binning, and FAISS KMeans clustering
 - **Binning Summaries**: Feature-level binning statistics including Gini score and Information Value (IV)
@@ -55,9 +56,14 @@ pip install fastwoe
 ### Optional Dependencies
 
 #### FAISS KMeans Binning
-For FAISS KMeans clustering-based binning (see [Numerical Feature Binning](#-numerical-feature-binning)):
+**Optional: FAISS for KMeans clustering-based binning** (see [Numerical Feature Binning](#-numerical-feature-binning)):
+
 ```bash
+# CPU version (recommended for most users)
 pip install fastwoe[faiss]
+
+# GPU version (for CUDA-enabled systems)
+pip install fastwoe[faiss-gpu]
 ```
 
 For GPU acceleration support:
@@ -68,7 +74,11 @@ pip install faiss-gpu  # Requires CUDA
 > **⚠️ Important**: If you get `ImportError: FAISS is required for faiss_kmeans binning method`, you need to install the `[faiss]` extras. See [FAISS Troubleshooting Guide](FAISS_TROUBLESHOOTING.md) for detailed solutions.
 
 > [!NOTE]
-> **FAISS Compatibility**: The `fastwoe[faiss]` installation automatically installs `faiss-cpu>=1.12.0` which supports Python 3.7-3.12 and is compatible with both NumPy 1.x and 2.x. If you encounter import errors with FAISS, ensure you're using a compatible NumPy version. For NumPy 2.x, use `faiss-cpu>=1.12.0`; for older NumPy versions, any `faiss-cpu>=1.7.0` should work.
+> **FAISS Support**: FAISS is optional and only required for `faiss_kmeans` binning method. Choose the appropriate version:
+> - **CPU version**: `pip install fastwoe[faiss]` or `pip install faiss-cpu>=1.12.0`
+> - **GPU version**: `pip install fastwoe[faiss-gpu]` or `pip install faiss-gpu-cu12>=1.12.0`
+>
+> Both versions support Python 3.7-3.12 and are compatible with NumPy 1.x and 2.x.
 
 ### From Source
 ```bash
@@ -158,6 +168,43 @@ feature_stats = woe_encoder.get_feature_stats()
 print(feature_stats)
 ```
 
+### Information Value (IV) Standard Errors
+
+FastWoe provides statistical rigor for Information Value calculations with confidence intervals and significance testing:
+
+```python
+# Get IV analysis with confidence intervals
+iv_analysis = woe_encoder.get_iv_analysis()
+print(iv_analysis)
+```
+
+**Output:**
+```
+          feature     iv  iv_se  iv_ci_lower  iv_ci_upper iv_significance
+    strong_feature 0.1901 0.0256       0.1398       0.2403     Significant
+      weak_feature 0.0040 0.0035       0.0000       0.0108 Not Significant
+```
+
+```python
+# Get IV analysis for a specific feature
+single_feature_iv = woe_encoder.get_iv_analysis('feature_name')
+
+# All feature statistics now include IV standard errors
+feature_stats = woe_encoder.get_feature_stats()
+# Contains: iv, iv_se, iv_ci_lower, iv_ci_upper columns
+```
+
+**Mathematical Framework:**
+
+$$ IV = \sum_j ( \text{bad\_rate}_j - \text{good\_rate}_j ) \cdot WOE_j $$
+
+$$ \text{Var}(IV) \approx
+\sum_j ( \text{bad\_rate}_j - \text{good\_rate}_j )^2 \cdot \text{Var}(WOE_j)
++ \sum_j WOE_j^2 \cdot \text{Var}(\text{bad\_rate}_j - \text{good\_rate}_j) $$
+
+> [!NOTE]
+> Read the paper on ArXiv: [An Information-Theoretic Framework for Credit Risk Modeling: Unifying Industry Practice with Statistical Theory for Fair and Interpretable Scorecards](https://arxiv.org/abs/2509.09855).
+
 ### Standardized WOE
 ```python
 # Get Wald scores (standardized log-odds) or use "woe" for raw WOE values
@@ -175,7 +222,7 @@ woe_encoder = FastWoe(
     binning_method="kbins",
     binner_kwargs={
         "n_bins": 5,
-        "strategy": "quantile",  # or "uniform", "kbins"
+        "strategy": "quantile",  # or "uniform", "kmeans"
         "encode": "ordinal"
     }
 )
@@ -205,7 +252,7 @@ woe_encoder = FastWoe(
 #### 3. FAISS KMeans Binning
 ```python
 # Use FAISS KMeans clustering for efficient binning
-# First install FAISS: pip install fastwoe[faiss]
+# First install FAISS: pip install fastwoe[faiss] (CPU) or fastwoe[faiss-gpu] (GPU)
 woe_encoder = FastWoe(
     binning_method="faiss_kmeans",
     faiss_kwargs={
@@ -404,6 +451,51 @@ uv run pytest -m "compatibility and not slow"
 uv run pytest -m "compatibility and slow"
 ```
 
+### Code Quality and Type Checking
+
+FastWoe uses several tools to maintain code quality:
+
+```bash
+# Format code
+make format
+
+# Run linting
+make lint
+
+# Run type checking (lenient mode for pandas/numpy)
+make typecheck
+
+# Run type checking (strict mode)
+make typecheck-strict
+
+# Run all checks (format, lint, typecheck)
+make check-all
+
+# CI-friendly checks (passes with expected pandas/numpy type issues)
+make ci-check
+```
+
+### Local GitHub Actions Testing
+
+Test your CI/CD workflows locally using [act](https://github.com/nektos/act):
+
+```bash
+# Test workflows locally (dry run)
+act --container-architecture linux/amd64 -W .github/workflows/ci.yml --dryrun
+
+# Test specific jobs
+act --container-architecture linux/amd64 -j lint -W .github/workflows/ci.yml --dryrun
+act --container-architecture linux/amd64 -j type-check -W .github/workflows/typecheck.yml --dryrun
+```
+
+See [Local Testing with Act](docs/dev/act-local-testing.md) for comprehensive documentation.
+
+**Type Checking Notes:**
+- FastWoe uses [pyrefly](https://pyrefly.org/) for type checking via `scripts/typecheck.py`
+- Many type errors are expected due to pandas/numpy dynamic typing
+- CI mode treats expected pandas/numpy type issues as success
+- Use `PYREFLY_STRICT=true` to fail on any type errors
+
 ### Building the Package
 
 Build wheel and source distribution:
@@ -458,8 +550,8 @@ If you encounter FAISS-related import errors, here are common solutions:
 
 **Error: `No module named 'numpy._core'`**
 - This occurs when FAISS was compiled against an older NumPy version
-- Solution: Upgrade to `faiss-cpu>=1.12.0` which supports Python 3.7-3.12 and both NumPy 1.x and 2.x
-- Run: `pip install --upgrade faiss-cpu>=1.12.0`
+- Solution: Upgrade to compatible FAISS version which supports Python 3.7-3.12 and both NumPy 1.x and 2.x
+- Run: `pip install --upgrade faiss-cpu>=1.12.0` or `pip install --upgrade faiss-gpu-cu12>=1.12.0`
 
 **Error: `AttributeError: module 'faiss' has no attribute 'KMeans'`**
 - This occurs when using an older FAISS version with incorrect import paths
@@ -468,7 +560,9 @@ If you encounter FAISS-related import errors, here are common solutions:
 
 **Error: `A module that was compiled using NumPy 1.x cannot be run in NumPy 2.x`**
 - This occurs when FAISS was compiled against NumPy 1.x but you're using NumPy 2.x
-- Solution: Use `faiss-cpu>=1.12.0` which supports Python 3.7-3.12 and both NumPy versions
+- Solution: Use compatible FAISS version which supports both NumPy versions:
+  - CPU: `pip install --upgrade faiss-cpu>=1.12.0`
+  - GPU: `pip install --upgrade faiss-gpu-cu12>=1.12.0`
 - Or downgrade NumPy: `pip install "numpy<2.0"`
 
 ### Verification

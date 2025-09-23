@@ -1,5 +1,7 @@
 """fast_somersd.py."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 import numpy as np
@@ -29,7 +31,7 @@ class SomersDResult:
 
 
 @njit
-def _fenwick_update(bit, i, delta):
+def _fenwick_update(bit: np.ndarray, i: int, delta: int) -> None:
     n = bit.size
     while i <= n:
         bit[i - 1] += delta
@@ -37,7 +39,7 @@ def _fenwick_update(bit, i, delta):
 
 
 @njit
-def _fenwick_query(bit, i):
+def _fenwick_query(bit: np.ndarray, i: int) -> int:
     s = 0
     while i > 0:
         s += bit[i - 1]
@@ -46,7 +48,9 @@ def _fenwick_query(bit, i):
 
 
 @njit
-def _somers_yx_core(y, x):
+def _somers_yx_core(
+    y: np.ndarray, x: np.ndarray
+) -> tuple[float, int, int, int, int, int]:
     """Compute Somers' D_{Y|X} (ties computed in Y)."""
     n = y.size
     if n < 2:
@@ -120,7 +124,9 @@ def _somers_yx_core(y, x):
 
 
 @njit
-def _somers_xy_core(y, x):
+def _somers_xy_core(
+    y: np.ndarray, x: np.ndarray
+) -> tuple[float, int, int, int, int, int]:
     """Compute Somers' D_{X|Y} (ties computed in X)."""
     n = y.size
     if n < 2:
@@ -196,23 +202,23 @@ def _somers_xy_core(y, x):
     return stat, concordant, discordant, Tx, P, denom
 
 
-def somersd_yx(y_true, y_pred):
+def somersd_yx(y_true: np.ndarray, y_pred: np.ndarray) -> SomersDResult:
     """Compute Somers' D_{Y|X} (ties in Y excluded from denominator)."""
     y = np.asarray(y_true, dtype=np.float64)
     x = np.asarray(y_pred, dtype=np.float64)
     mask = ~(np.isnan(y) | np.isnan(x))
     y = y[mask]
     x = x[mask]
-    stat, S, D, Ty, P, denom = _somers_yx_core(y, x)
+    stat, S, D, Ty, P, denom = _somers_yx_core(y, x)  # type: ignore[misc]
     return SomersDResult(stat, S, D, Ty, P, denom)
 
 
-def somersd_xy(y_true, y_pred):
+def somersd_xy(y_true: np.ndarray, y_pred: np.ndarray) -> SomersDResult:
     """Compute Somers' D_{X|Y} (ties in X excluded from denominator)."""
     y = np.asarray(y_true, dtype=np.float64)
     x = np.asarray(y_pred, dtype=np.float64)
     mask = ~(np.isnan(y) | np.isnan(x))
     y = y[mask]
     x = x[mask]
-    stat, S, D, Tx, P, denom = _somers_xy_core(y, x)
+    stat, S, D, Tx, P, denom = _somers_xy_core(y, x)  # type: ignore[misc]
     return SomersDResult(stat, S, D, Tx, P, denom)

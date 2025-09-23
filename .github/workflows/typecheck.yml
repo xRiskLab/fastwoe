@@ -1,0 +1,46 @@
+name: Type Checking
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  type-check:
+    runs-on: ubuntu-latest
+    # Only test on one Python version for type checking to speed up CI
+    # Type issues are generally consistent across Python versions
+    strategy:
+      matrix:
+        python-version: ["3.11"]  # Use 3.11 as it has good type checking support
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        version: "latest"
+
+    - name: Set up Python ${{ matrix.python-version }}
+      run: uv python install ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        uv sync --dev
+
+    - name: Verify installation
+      run: |
+        uv run python -c "import fastwoe; print('FastWoe installed')"
+        uv run python -c "import pyrefly; print('pyrefly installed')"
+
+    - name: Run CI checks (format, lint, typecheck)
+      run: |
+        make ci-check
+
+    - name: Run strict type checking (informational)
+      if: always()  # Run even if previous step fails
+      run: |
+        make typecheck-strict || echo "ℹ️  Strict mode found expected pandas/numpy type issues"
+      continue-on-error: true

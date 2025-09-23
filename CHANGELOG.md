@@ -1,6 +1,57 @@
 # Changelog
 
-## Version 0.1.2a (Current)
+## Version 0.1.3.post1 (Current)
+
+**Enhanced Statistical Analysis**: Added IV standard errors and Series support
+
+- **New Features**:
+  - **IV Standard Errors**: Added statistical rigor to Information Value calculations
+    - `get_iv_analysis()` method for detailed IV analysis with confidence intervals
+    - IV standard errors calculated using delta method with WOE variance propagation
+    - Statistical significance testing for IV values (confidence intervals)
+    - Enhanced `feature_stats_` with `iv_se`, `iv_ci_lower`, `iv_ci_upper` fields
+  - **Mathematical Framework**: Implements proper uncertainty quantification for IV
+    - Delta method for variance propagation: `Var(IV) ≈ Σ (bad_rate - good_rate)² * Var(WOE)`
+    - Sampling variance corrections for rate differences
+    - Normal approximation confidence intervals with lower bound ≥ 0
+
+- **Fixed**:
+  - **Series Input Support**: Resolved `'Series' object has no attribute 'columns'` error when passing Series to `fit()`/`transform()`
+  - **Enhanced Input Handling**: Both methods now accept `pd.Series`, `pd.DataFrame`, and `np.ndarray` uniformly
+  - **Automatic Conversion**: Series converted to single-column DataFrames with appropriate column names
+  - **Updated Type Hints**: Method signatures now include `pd.Series` support
+
+- **API Enhancements**:
+  - **New Method**: `get_iv_analysis(col=None, alpha=0.05)` for comprehensive IV statistics
+  - **Enhanced Feature Stats**: All feature statistics now include IV uncertainty measures
+  - **Statistical Significance**: Automatic classification of IV significance based on confidence intervals
+
+- **User Experience Improvements**:
+  - **Silent Numerical Binning**: Changed default `warn_on_numerical=False` since numerical feature binning is now a core feature
+  - **Cleaner Output**: No warnings by default for automatic binning (KBinsDiscretizer, FAISS KMeans, Decision Tree)
+  - **Optional Warnings**: Users can still enable warnings with `warn_on_numerical=True` if desired
+
+## Version 0.1.3
+
+**Stable Release**: Enhanced input handling and Series support
+
+- **Major Improvements**:
+  - **Series Input Support**: `FastWoe.fit()` and `FastWoe.transform()` now accept `pd.Series` inputs
+  - **Automatic Conversion**: Series are automatically converted to single-column DataFrames with appropriate column names
+  - **Enhanced Type Hints**: Updated method signatures to include `pd.Series` in Union types
+  - **Comprehensive Warnings**: Informative warnings guide users about automatic conversions
+
+- **Bug Fixes**:
+  - **Fixed Series AttributeError**: Resolved `'Series' object has no attribute 'columns'` error when passing Series to fit/transform
+  - **Consistent API**: Both fit and transform methods now handle Series, DataFrame, and numpy array inputs uniformly
+
+- **Testing**:
+  - All existing tests continue to pass
+  - Added comprehensive Series support verification
+  - Verified compatibility with named and unnamed Series
+  - Tested numerical Series with automatic binning
+
+## Version 0.1.2a
 
 **Alpha Release**: Stable dependency resolution and full Python 3.9-3.12 + NumPy 2.0 support
 

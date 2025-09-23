@@ -52,7 +52,6 @@ dependencies = [
     "rich>=13.7.0",
     "numba>=0.60.0",
     "packaging>=21.0",
-    "faiss-cpu>=1.12.0",
 ]
 
 [project.optional-dependencies]
@@ -70,6 +69,9 @@ examples = [
 ]
 faiss = [
     "faiss-cpu>=1.12.0",
+]
+faiss-gpu = [
+    "faiss-gpu-cu12>=1.12.0",
 ]
 
 [project.urls]
@@ -163,8 +165,11 @@ dev = [
     "matplotlib>=3.5.0",
     "seaborn>=0.11.0",
     "rich>=13.7.0", # Required for pretty printing
-    "pre-commit>=4.3.0",
+    "prek>=0.2.0",
+    "pyrefly>=0.1.0",
 ]
+
+
 
 [tool.pylint.messages_control]
 disable = [
@@ -187,3 +192,20 @@ max-line-length = 88
 [tool.pylint.basic]
 # Allow single letter variable names (common in ML: X, y)
 good-names = ["i", "j", "k", "ex", "Run", "_", "X", "y"]
+
+[tool.pyrefly]
+# Project configuration
+project_includes = ["fastwoe"]
+project_excludes = ["**/__pycache__", ".venv", "build", "dist", "tests", "examples", "fastwoe/fast_somersd.py"]
+python_version = "3.9"
+
+# Type checking behavior - use only supported options
+strict = false
+
+# Ignore problematic error types for pandas/numpy/numba/faiss code
+# These are necessary because type checkers struggle with:
+# - Dynamic pandas attributes and complex DataFrame operations
+# - NumPy array method inference
+# - FAISS C++ bindings (optional dependency)
+# - Complex generic type inference in data science libraries
+ignore_missing_imports = ["faiss", "faiss.extra_wrappers"]

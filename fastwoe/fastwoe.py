@@ -1,12 +1,48 @@
 """fastwoe.py."""
 
 import warnings
-from typing import Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 import numpy as np
 import pandas as pd
 from scipy.special import expit as sigmoid  # pylint: disable=no-name-in-module
-from scipy.stats import norm
+
+if TYPE_CHECKING:
+    # For type checking, create a simple protocol
+    from typing import Protocol
+
+    class NormProtocol(Protocol):
+        @staticmethod
+        def ppf(x: float) -> float: ...
+
+    norm: NormProtocol
+else:
+    # At runtime, import the real scipy.stats.norm
+    try:
+        from scipy.stats import norm  # type: ignore[import-untyped]
+    except ImportError:
+        # Fallback for environments without scipy
+        import math
+
+        class MockNorm:
+            @staticmethod
+            def ppf(x: float) -> float:
+                # Simple approximation for standard normal quantile function
+                if x <= 0:
+                    return float("-inf")
+                elif x >= 1:
+                    return float("inf")
+                elif x == 0.5:
+                    return 0.0
+                else:
+                    # Simple Box-Muller approximation
+                    return (
+                        math.sqrt(-2 * math.log(x))
+                        if x < 0.5
+                        else -math.sqrt(-2 * math.log(1 - x))
+                    )
+
+        norm = MockNorm()
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import KBinsDiscretizer, TargetEncoder
@@ -42,15 +78,16 @@ class WoePreprocessor(BaseEstimator, TransformerMixin):
         self.top_p = top_p
         self.min_count = min_count
         self.other_token = other_token
-        self.category_maps = {}
-        self.cat_features_ = None
+        self.category_maps: dict[str, set] = {}
+        self.cat_features_: Optional[list[str]] = None
 
     # pylint: disable=invalid-name, unused-argument
     def fit(self, X: pd.DataFrame, y=None, cat_features: Union[list[str], None] = None):
         """Fit the preprocessor to identify top categories."""
         self.cat_features_ = (
             cat_features
-            or X.select_dtypes(include=["object", "category"]).columns.tolist()
+            if cat_features is not None
+            else X.select_dtypes(include=["object", "category"]).columns.tolist()
         )
 
         for col in self.cat_features_:
@@ -71,15 +108,18 @@ class WoePreprocessor(BaseEstimator, TransformerMixin):
             vc_filtered = vc[vc >= self.min_count]
 
             # Fallback: if ALL categories are below min_count, keep the most frequent
+            # pyrefly: ignore  # missing-attribute
             if vc_filtered.empty:
                 top_cats = [vc.idxmax()]
             elif self.top_p is not None:
                 # Calculate cumulative as percentage of ORIGINAL total
                 cumulative = vc_filtered.cumsum() / vc.sum()
                 top_cats = cumulative[cumulative <= self.top_p].index.tolist() or [
+                    # pyrefly: ignore  # missing-attribute
                     vc_filtered.idxmax()
                 ]
             else:
+                # pyrefly: ignore  # missing-attribute
                 top_cats = vc_filtered.nlargest(self.max_categories).index.tolist()
 
             self.category_maps[col] = set(top_cats)
@@ -90,6 +130,7 @@ class WoePreprocessor(BaseEstimator, TransformerMixin):
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
         """Transform by replacing rare categories with other_token."""
         X_ = X.copy()
+        # pyrefly: ignore  # not-iterable
         for col in self.cat_features_:
             if col in X_.columns:
                 allowed = self.category_maps[col]
@@ -116,6 +157,7 @@ class WoePreprocessor(BaseEstimator, TransformerMixin):
     def get_reduction_summary(self, X: pd.DataFrame) -> pd.DataFrame:  # pylint: disable=invalid-name
         """Get summary of cardinality reduction per feature."""
         summary = []
+        # pyrefly: ignore  # not-iterable
         for col in self.cat_features_:
             if col in X.columns:
                 original_cats = X[col].nunique()
@@ -149,7 +191,7 @@ class FastWoe:  # pylint: disable=invalid-name
         Random state for reproducibility.
     binner_kwargs : dict, optional
         Additional keyword arguments for KBinsDiscretizer (when binning_method="kbins").
-    warn_on_numerical : bool, default=True
+    warn_on_numerical : bool, default=False
         Whether to warn when numerical features are automatically binned.
     numerical_threshold : int, default=20
         Minimum number of unique values to trigger binning for numerical features.
@@ -184,7 +226,7 @@ class FastWoe:  # pylint: disable=invalid-name
         encoder_kwargs=None,
         random_state=42,
         binner_kwargs=None,
-        warn_on_numerical=True,
+        warn_on_numerical=False,
         numerical_threshold=20,
         binning_method="kbins",
         tree_estimator=None,
@@ -192,9 +234,9 @@ class FastWoe:  # pylint: disable=invalid-name
         faiss_kwargs=None,
     ):
         # Set up encoder kwargs - will be updated in fit() based on target type
-        default_kwargs = {"smooth": 1e-5}
+        default_kwargs: dict[str, Any] = {"smooth": 1e-5}
         if encoder_kwargs is None:
-            self.encoder_kwargs = default_kwargs
+            self.encoder_kwargs: dict[str, Any] = default_kwargs
         else:
             # Merge user kwargs with defaults
             self.encoder_kwargs = {**default_kwargs, **encoder_kwargs}
@@ -258,13 +300,17 @@ class FastWoe:  # pylint: disable=invalid-name
         )
 
         self.random_state = random_state
-        self.encoders_ = {}
-        self.mappings_ = {}
-        self.feature_stats_ = {}
-        self.binners_ = {}  # Store fitted binners for numerical features
-        self.binning_info_ = {}  # Store binning summary info
-        self.y_prior_ = None
-        self.is_fitted_ = False
+        self.encoders_: dict[str, Any] = {}
+        self.mappings_: dict[str, pd.DataFrame] = {}
+        self.feature_stats_: dict[str, dict[str, Any]] = {}
+        self.binners_: dict[
+            str, Any
+        ] = {}  # Store fitted binners for numerical features
+        self.binning_info_: dict[str, dict[str, Any]] = {}  # Store binning summary info
+        self.y_prior_: Optional[float] = None
+        self.is_fitted_: bool = False
+        self.is_continuous_target: Optional[bool] = None
+        self.is_binary_target: Optional[bool] = None
 
     def _calculate_gini(self, y_true, y_pred):
         """Calculate Gini coefficient from AUC."""
@@ -279,6 +325,7 @@ class FastWoe:  # pylint: disable=invalid-name
             return np.nan
 
         # Remove any NaN values
+        # pyrefly: ignore  # unsupported-operation
         mask = ~(np.isnan(y_true) | np.isnan(y_pred))
         if not mask.any():
             return np.nan
@@ -368,6 +415,97 @@ class FastWoe:  # pylint: disable=invalid-name
                 iv += (bad_rate - good_rate) * row["woe"]
         return iv
 
+    def _calculate_iv_standard_error(self, mapping_df, total_good, total_bad):
+        """
+        Calculate standard error of Information Value using delta method.
+
+        Mathematical Framework:
+        ----------------------
+        IV = Σ_j (bad_rate_j - good_rate_j) * WOE_j
+
+        Using delta method:
+        Var(IV) ≈ Σ_j (bad_rate_j - good_rate_j)² * Var(WOE_j)
+                + Σ_j WOE_j² * Var(bad_rate_j - good_rate_j)
+
+        Parameters
+        ----------
+        mapping_df : DataFrame
+            Mapping table with WOE statistics
+        total_good : int
+            Total number of good observations
+        total_bad : int
+            Total number of bad observations
+
+        Returns:
+        -------
+        float
+            Standard error of IV
+        """
+        if total_good <= 0 or total_bad <= 0:
+            return np.nan
+
+        iv_variance = 0.0
+
+        for _, row in mapping_df.iterrows():
+            # Calculate bad and good rates for this bin
+            bin_bad = row["count"] * row["event_rate"]
+            bin_good = row["count"] * (1 - row["event_rate"])
+
+            bad_rate = bin_bad / total_bad
+            good_rate = bin_good / total_good
+
+            # Weight in IV formula: (bad_rate - good_rate)
+            iv_weight = bad_rate - good_rate
+
+            # WOE standard error from mapping
+            woe_se = row.get("woe_se", 0)
+            woe_value = row["woe"]
+
+            # Delta method: Var(IV) ≈ Σ weight² * Var(WOE)
+            iv_variance += (iv_weight**2) * (woe_se**2)
+
+            # Add sampling variance for the rates
+            if bin_bad > 0 and bin_good > 0:
+                # Sampling variance of bad_rate - good_rate
+                bad_rate_var = bad_rate * (1 - bad_rate) / total_bad
+                good_rate_var = good_rate * (1 - good_rate) / total_good
+                rate_diff_var = bad_rate_var + good_rate_var
+
+                # Add contribution: WOE² * Var(rate_diff)
+                iv_variance += (woe_value**2) * rate_diff_var
+
+        return np.sqrt(iv_variance)
+
+    def _calculate_iv_confidence_interval(self, iv_value, iv_se, alpha=0.05):
+        """
+        Calculate confidence interval for IV.
+
+        Parameters
+        ----------
+        iv_value : float
+            Information Value
+        iv_se : float
+            Standard error of IV
+        alpha : float, default=0.05
+            Significance level (0.05 for 95% CI)
+
+        Returns:
+        -------
+        tuple
+            (lower_bound, upper_bound) of the confidence interval
+        """
+        if np.isnan(iv_se) or np.isinf(iv_se):
+            return (np.nan, np.nan)
+
+        z_crit = norm.ppf(1 - alpha / 2)
+        margin = z_crit * iv_se
+
+        # IV is always non-negative, so lower bound should be at least 0
+        lower_bound = max(0, iv_value - margin)
+        upper_bound = iv_value + margin
+
+        return (lower_bound, upper_bound)
+
     def _calculate_feature_stats(self, col, X, y, mapping_df):
         """Calculate comprehensive statistics for a feature."""
         # Basic counts
@@ -376,14 +514,23 @@ class FastWoe:  # pylint: disable=invalid-name
         total_good = total_obs - total_bad
 
         # Calculate WOE values directly to avoid circular dependency during fit
+        if self.y_prior_ is None:
+            raise ValueError("Model must be fitted before calculating WOE values")
         odds_prior = self.y_prior_ / (1 - self.y_prior_)
         enc = self.encoders_[col]
         event_rate = enc.transform(X[[col]])
         if isinstance(event_rate, pd.DataFrame):
             event_rate = event_rate.values.flatten()
         event_rate = np.clip(event_rate, 1e-15, 1 - 1e-15)
-        odds_cat = event_rate / (1 - event_rate)
+        odds_cat = event_rate / (1 - event_rate)  # pyrefly: ignore
         woe_values = np.log(odds_cat / odds_prior)
+
+        # Calculate IV and its standard error
+        iv_value = self._calculate_iv(mapping_df, total_good, total_bad)
+        iv_se = self._calculate_iv_standard_error(mapping_df, total_good, total_bad)
+        iv_ci_lower, iv_ci_upper = self._calculate_iv_confidence_interval(
+            iv_value, iv_se
+        )
 
         return {
             "feature": col,
@@ -392,12 +539,19 @@ class FastWoe:  # pylint: disable=invalid-name
             "missing_count": X[col].isna().sum(),
             "missing_rate": X[col].isna().mean(),
             "gini": self._calculate_gini(y, woe_values),
-            "iv": self._calculate_iv(mapping_df, total_good, total_bad),
+            "iv": iv_value,
+            "iv_se": iv_se,
+            "iv_ci_lower": iv_ci_lower,
+            "iv_ci_upper": iv_ci_upper,
             "min_woe": mapping_df["woe"].min(),
             "max_woe": mapping_df["woe"].max(),
         }
 
-    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Union[pd.Series, np.ndarray]):
+    def fit(
+        self,
+        X: Union[pd.DataFrame, np.ndarray, pd.Series],
+        y: Union[pd.Series, np.ndarray],
+    ):
         """
         Fit the FastWoe encoder to features (both categorical and numerical).
 
@@ -410,8 +564,9 @@ class FastWoe:  # pylint: disable=invalid-name
 
         Parameters
         ----------
-        X : Union[pd.DataFrame, np.ndarray]
+        X : Union[pd.DataFrame, np.ndarray, pd.Series]
             Input features to encode. If numpy array, will be converted to DataFrame with generic column names.
+            If Series, will be converted to single-column DataFrame.
         y : Union[pd.Series, np.ndarray]
             Target variable. Supports:
             - Binary targets (0/1) for classification
@@ -423,12 +578,22 @@ class FastWoe:  # pylint: disable=invalid-name
         self : FastWoe
             The fitted encoder instance
         """
-        # Convert numpy arrays to pandas if needed
+        # Convert numpy arrays and Series to pandas DataFrame if needed
         if isinstance(X, np.ndarray):
-            X = pd.DataFrame(X, columns=[f"feature_{i}" for i in range(X.shape[1])])
+            column_names = [f"feature_{i}" for i in range(X.shape[1])]
+            X = pd.DataFrame(X, columns=column_names)  # type: ignore[arg-type]
             warnings.warn(
                 "Input X is a numpy array. Converting to pandas DataFrame with generic column names. "
                 "For better control, convert to DataFrame with meaningful column names before passing to fit().",
+                stacklevel=2,
+            )
+        elif isinstance(X, pd.Series):
+            # Convert Series to DataFrame with the Series name as column name
+            column_name = X.name if X.name is not None else "feature_0"
+            X = pd.DataFrame({column_name: X})
+            warnings.warn(
+                f"Input X is a pandas Series. Converting to DataFrame with column name '{column_name}'. "
+                "For better control, convert to DataFrame before passing to fit().",
                 stacklevel=2,
             )
 
@@ -521,7 +686,7 @@ class FastWoe:  # pylint: disable=invalid-name
         for col in numerical_features:
             X_processed[col] = self._bin_numerical_feature(X_processed, col, y)[col]
 
-        self.y_prior_ = y.mean()
+        self.y_prior_ = float(y.mean())
         odds_prior = self.y_prior_ / (1 - self.y_prior_)
         self.encoders_ = {}
         self.mappings_ = {}
@@ -575,7 +740,9 @@ class FastWoe:  # pylint: disable=invalid-name
                 {
                     "category": categories,
                     "count": count,
-                    "count_pct": count / len(X_processed) * 100,
+                    "count_pct": (
+                        count.astype(float) / len(X_processed) * 100
+                    ).tolist(),
                     "good_count": good_counts,
                     "bad_count": bad_counts,
                     "event_rate": event_rates,
@@ -596,14 +763,15 @@ class FastWoe:  # pylint: disable=invalid-name
         self.is_fitted_ = True
         return self
 
-    def transform(self, X: Union[pd.DataFrame, np.ndarray]) -> pd.DataFrame:
+    def transform(self, X: Union[pd.DataFrame, np.ndarray, pd.Series]) -> pd.DataFrame:
         """
         Transform features to Weight of Evidence (WOE) values.
 
         Parameters
         ----------
-        X : Union[pd.DataFrame, np.ndarray]
+        X : Union[pd.DataFrame, np.ndarray, pd.Series]
             Input DataFrame with features to transform. If numpy array, will be converted to DataFrame with generic column names.
+            If Series, will be converted to single-column DataFrame.
 
         Returns:
         -------
@@ -612,15 +780,28 @@ class FastWoe:  # pylint: disable=invalid-name
             instead of categorical values. Column names are preserved.
 
         """
-        # Convert numpy arrays to pandas if needed
+        # Convert numpy arrays and Series to pandas DataFrame if needed
         if isinstance(X, np.ndarray):
-            X = pd.DataFrame(X, columns=[f"feature_{i}" for i in range(X.shape[1])])
+            column_names = [f"feature_{i}" for i in range(X.shape[1])]
+            # pyrefly: ignore  # bad-argument-type
+            X = pd.DataFrame(X, columns=column_names)
             warnings.warn(
                 "Input X is a numpy array. Converting to pandas DataFrame with generic column names. "
                 "For better control, convert to DataFrame with meaningful column names before passing to transform().",
                 stacklevel=2,
             )
+        elif isinstance(X, pd.Series):
+            # Convert Series to DataFrame with the Series name as column name
+            column_name = X.name if X.name is not None else "feature_0"
+            X = pd.DataFrame({column_name: X})
+            warnings.warn(
+                f"Input X is a pandas Series. Converting to DataFrame with column name '{column_name}'. "
+                "For better control, convert to DataFrame before passing to transform().",
+                stacklevel=2,
+            )
 
+        if self.y_prior_ is None:
+            raise ValueError("Model must be fitted before transforming data")
         odds_prior = self.y_prior_ / (1 - self.y_prior_)
         woe_df = pd.DataFrame(index=X.index)
 
@@ -632,8 +813,14 @@ class FastWoe:  # pylint: disable=invalid-name
                 binner = self.binners_[col]
                 binning_info = self.binning_info_[col]
                 X_col = X_processed[[col]].copy()
-                mask_missing = X_col[col].isna()
+                if hasattr(X_col[col], "isna"):
+                    # pyrefly: ignore  # missing-attribute
+                    mask_missing = X_col[col].isna()
+                else:
+                    # For numpy arrays, use pd.isna
+                    mask_missing = pd.isna(X_col[col])
 
+                # pyrefly: ignore  # missing-attribute
                 if not mask_missing.all():  # If there are any non-missing values
                     # Ensure column is object type to accept strings
                     X_processed[col] = X_processed[col].astype("object")
@@ -646,8 +833,13 @@ class FastWoe:  # pylint: disable=invalid-name
                     elif binning_info.get("method") == "tree":
                         # Tree method - use bin edges for binning
                         bin_edges = np.array(binning_info["bin_edges"])
+                        col_data = X_col[~mask_missing][col]
+                        if hasattr(col_data, "values"):
+                            col_values = col_data.values
+                        else:
+                            col_values = np.array(col_data)
                         binned_values = np.digitize(
-                            X_col[~mask_missing][col].values,
+                            col_values,
                             bin_edges[1:-1],
                             right=False,
                         )
@@ -658,11 +850,12 @@ class FastWoe:  # pylint: disable=invalid-name
                     elif binning_info.get("method") == "faiss_kmeans":
                         # FAISS KMeans method - use FAISS model for prediction
                         faiss_model = binner
-                        data = (
-                            X_col[~mask_missing][col]
-                            .values.astype(np.float32)
-                            .reshape(-1, 1)
-                        )
+                        col_data = X_col[~mask_missing][col]
+                        if hasattr(col_data, "values"):
+                            col_values = col_data.values
+                        else:
+                            col_values = np.array(col_data)
+                        data = col_values.astype(np.float32).reshape(-1, 1)
                         _, labels = faiss_model.index.search(data, 1)
                         cluster_labels = (
                             labels.flatten() + 1
@@ -731,6 +924,7 @@ class FastWoe:  # pylint: disable=invalid-name
                             )
 
                 # Handle missing values
+                # pyrefly: ignore  # missing-attribute
                 if mask_missing.any():
                     X_processed.loc[mask_missing, col] = "Missing"
 
@@ -741,7 +935,7 @@ class FastWoe:  # pylint: disable=invalid-name
             if isinstance(event_rate, pd.DataFrame):
                 event_rate = event_rate.values.flatten()
             event_rate = np.clip(event_rate, 1e-15, 1 - 1e-15)
-            odds_cat = event_rate / (1 - event_rate)
+            odds_cat = event_rate / (1 - event_rate)  # pyrefly: ignore
             woe = np.log(odds_cat / odds_prior)
             woe_df[col] = woe  # Keep original column name
 
@@ -749,6 +943,7 @@ class FastWoe:  # pylint: disable=invalid-name
 
     def fit_transform(self, X: pd.DataFrame, y=None, **_fit_params) -> pd.DataFrame:
         """Fit and transform in one step."""
+        # pyrefly: ignore  # bad-argument-type
         return self.fit(X, y).transform(X)
 
     def get_mapping(self, feature: str) -> pd.DataFrame:
@@ -855,6 +1050,7 @@ class FastWoe:  # pylint: disable=invalid-name
             # So SE(p) = SE(WOE) * p * (1-p)
             probabilities = mapping["event_rate"].values
             woe_se = mapping["woe_se"].values
+            # pyrefly: ignore  # unsupported-operation
             prob_se = woe_se * probabilities * (1 - probabilities)
             prob_mapping["probability_se"] = prob_se
 
@@ -870,9 +1066,73 @@ class FastWoe:  # pylint: disable=invalid-name
     def get_feature_summary(self) -> pd.DataFrame:
         """Get a summary table of all features ranked by predictive power."""
         stats_df = self.get_feature_stats()
+        # pyrefly: ignore  # bad-return
         return stats_df.sort_values("gini", ascending=False)[
             ["feature", "gini", "iv", "n_categories"]
         ].round(4)
+
+    def get_iv_analysis(
+        self, col: Optional[str] = None, alpha: float = 0.05
+    ) -> pd.DataFrame:
+        """
+        Get detailed Information Value analysis with confidence intervals.
+
+        Parameters
+        ----------
+        col : str, optional
+            Feature name. If None, returns analysis for all features.
+        alpha : float, default=0.05
+            Significance level for confidence intervals (0.05 for 95% CI)
+
+        Returns:
+        -------
+        pd.DataFrame
+            DataFrame with IV statistics including standard errors and confidence intervals
+        """
+        if not self.is_fitted_:
+            raise ValueError("FastWoe must be fitted before getting IV analysis")
+
+        if col is not None:
+            if col not in self.feature_stats_:
+                raise ValueError(f"Feature '{col}' not found in fitted features")
+            stats = self.feature_stats_[col]
+            return pd.DataFrame(
+                [
+                    {
+                        "feature": stats["feature"],
+                        "iv": stats["iv"],
+                        "iv_se": stats["iv_se"],
+                        "iv_ci_lower": stats["iv_ci_lower"],
+                        "iv_ci_upper": stats["iv_ci_upper"],
+                        "iv_significance": "Significant"
+                        if stats["iv_ci_lower"] > 0
+                        else "Not Significant",
+                        "n_categories": stats["n_categories"],
+                        "gini": stats["gini"],
+                    }
+                ]
+            )
+        else:
+            # Return analysis for all features
+            analysis_data = []
+            for _feature_name, stats in self.feature_stats_.items():
+                analysis_data.append(
+                    {
+                        "feature": stats["feature"],
+                        "iv": stats["iv"],
+                        "iv_se": stats["iv_se"],
+                        "iv_ci_lower": stats["iv_ci_lower"],
+                        "iv_ci_upper": stats["iv_ci_upper"],
+                        "iv_significance": "Significant"
+                        if stats["iv_ci_lower"] > 0
+                        else "Not Significant",
+                        "n_categories": stats["n_categories"],
+                        "gini": stats["gini"],
+                    }
+                )
+
+            df = pd.DataFrame(analysis_data)
+            return df.sort_values("iv", ascending=False).round(4)
 
     def predict_proba(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
         """
@@ -886,9 +1146,13 @@ class FastWoe:  # pylint: disable=invalid-name
                 UserWarning,
                 stacklevel=2,
             )
-            X = pd.DataFrame(X, columns=[f"feature_{i}" for i in range(X.shape[1])])
+            column_names = [f"feature_{i}" for i in range(X.shape[1])]
+            # pyrefly: ignore  # bad-argument-type
+            X = pd.DataFrame(X, columns=column_names)
 
         X_woe = self.transform(X)
+        if self.y_prior_ is None:
+            raise ValueError("Model must be fitted before predicting probabilities")
         odds_prior = self.y_prior_ / (1 - self.y_prior_)
         woe_score = X_woe.sum(axis=1) + np.log(odds_prior)
 
@@ -929,7 +1193,9 @@ class FastWoe:  # pylint: disable=invalid-name
                 UserWarning,
                 stacklevel=2,
             )
-            X = pd.DataFrame(X, columns=[f"feature_{i}" for i in range(X.shape[1])])
+            column_names = [f"feature_{i}" for i in range(X.shape[1])]
+            # pyrefly: ignore  # bad-argument-type
+            X = pd.DataFrame(X, columns=column_names)
 
         # Get WOE-transformed features
         X_woe = self.transform(X)
@@ -965,6 +1231,10 @@ class FastWoe:  # pylint: disable=invalid-name
         woe_score_upper = woe_ci_upper.sum(axis=1)
 
         # Convert to probability scale
+        if self.y_prior_ is None:
+            raise ValueError(
+                "Model must be fitted before predicting confidence intervals"
+            )
         odds_prior = self.y_prior_ / (1 - self.y_prior_)
         logit_lower = woe_score_lower + np.log(odds_prior)
         logit_upper = woe_score_upper + np.log(odds_prior)
@@ -976,7 +1246,11 @@ class FastWoe:  # pylint: disable=invalid-name
         return np.column_stack([prob_lower, prob_upper])
 
     def transform_standardized(
-        self, X: pd.DataFrame, output="woe", col_name: Optional[str] = None
+        self,
+        X: pd.DataFrame,
+        output="woe",
+        col_name: Optional[str] = None,
+        # pyrefly: ignore  # bad-return
     ) -> pd.DataFrame:
         """
         Transform features to standardized WOE scores or Wald statistics.
@@ -1034,6 +1308,10 @@ class FastWoe:  # pylint: disable=invalid-name
                 if output == "woe":
                     z_col[i] = woe_val / woe_se if woe_se > 0 else 0
                 elif output == "wald":
+                    if self.y_prior_ is None:
+                        raise ValueError(
+                            "Model must be fitted before calculating Wald statistics"
+                        )
                     prior_log_odds = np.log(self.y_prior_ / (1 - self.y_prior_))
                     final_log_odds = woe_val + prior_log_odds
                     z_col[i] = final_log_odds / woe_se if woe_se > 0 else 0
@@ -1060,7 +1338,9 @@ class FastWoe:  # pylint: disable=invalid-name
                 UserWarning,
                 stacklevel=2,
             )
-            X = pd.DataFrame(X, columns=[f"feature_{i}" for i in range(X.shape[1])])
+            column_names = [f"feature_{i}" for i in range(X.shape[1])]
+            # pyrefly: ignore  # bad-argument-type
+            X = pd.DataFrame(X, columns=column_names)
 
         woe_score = self.transform(X).sum(axis=1)
         return (woe_score > 0).astype(int).values
@@ -1092,8 +1372,14 @@ class FastWoe:  # pylint: disable=invalid-name
         """
         # Handle missing values
         X_col = X[[col]].copy()
-        mask_missing = X_col[col].isna()
+        if hasattr(X_col[col], "isna"):
+            # pyrefly: ignore  # missing-attribute
+            mask_missing = X_col[col].isna()
+        else:
+            # For numpy arrays, use pd.isna
+            mask_missing = pd.isna(X_col[col])
 
+        # pyrefly: ignore  # missing-attribute
         if mask_missing.any():
             # Check if we have enough non-missing values
             X_fit = X_col[~mask_missing]
@@ -1105,8 +1391,10 @@ class FastWoe:  # pylint: disable=invalid-name
             X_fit = X_col
 
         if self.binning_method == "kbins":
+            # pyrefly: ignore  # bad-argument-type
             return self._bin_with_kbins(X_col, col, mask_missing, X_fit)
         elif self.binning_method == "faiss_kmeans":
+            # pyrefly: ignore  # bad-argument-type
             return self._bin_with_faiss_kmeans(X_col, col, mask_missing, X_fit)
         else:  # tree method
             # Determine if target is continuous (proportions) or binary
@@ -1119,7 +1407,15 @@ class FastWoe:  # pylint: disable=invalid-name
                 and unique_targets > 2
             )
             return self._bin_with_tree(
-                X_col, col, y, mask_missing, X_fit, is_continuous
+                # pyrefly: ignore  # bad-argument-type
+                X_col,
+                col,
+                y,
+                # pyrefly: ignore  # bad-argument-type
+                mask_missing,
+                # pyrefly: ignore  # bad-argument-type
+                X_fit,
+                is_continuous,
             )
 
     def _bin_with_kbins(
@@ -1165,6 +1461,7 @@ class FastWoe:  # pylint: disable=invalid-name
         if not mask_missing.all():  # If there are any non-missing values
             # Ensure column is object type to accept strings
             X_binned[col] = X_binned[col].astype("object")
+            # pyrefly: ignore  # missing-attribute
             X_binned.loc[~mask_missing, col] = binner.transform(X_fit).ravel()
 
         # Convert to string categories with meaningful labels
@@ -1239,7 +1536,13 @@ class FastWoe:  # pylint: disable=invalid-name
         split_points = self._extract_tree_splits(tree, col)
 
         # Create bin edges from split points
-        bin_edges = self._create_bin_edges_from_splits(split_points, X_fit[col].values)
+        col_data = X_fit[col]
+        if hasattr(col_data, "values"):
+            col_values = col_data.values
+        else:
+            col_values = np.array(col_data)
+        # pyrefly: ignore  # bad-argument-type
+        bin_edges = self._create_bin_edges_from_splits(split_points, col_values)
 
         # Create bin labels
         bin_labels = []
@@ -1259,7 +1562,13 @@ class FastWoe:  # pylint: disable=invalid-name
             X_binned[col] = X_binned[col].astype("object")
 
             # Bin the non-missing values
-            binned_values = np.digitize(X_fit[col].values, bin_edges[1:-1], right=False)
+            col_data = X_fit[col]
+            if hasattr(col_data, "values"):
+                col_values = col_data.values
+            else:
+                col_values = np.array(col_data)
+            # pyrefly: ignore  # no-matching-overload
+            binned_values = np.digitize(col_values, bin_edges[1:-1], right=False)
             # digitize returns 1-based indices, but we want 0-based
             binned_values = np.clip(binned_values - 1, 0, len(bin_labels) - 1)
 
@@ -1304,11 +1613,17 @@ class FastWoe:  # pylint: disable=invalid-name
         except ImportError as e:
             raise ImportError(
                 "FAISS is required for faiss_kmeans binning method. "
-                "Install it with: pip install faiss-cpu"
+                "Install CPU version: pip install faiss-cpu "
+                "or GPU version: pip install faiss-gpu-cu12"
             ) from e
 
         # Prepare data for FAISS
-        data = X_fit[col].values.astype(np.float32).reshape(-1, 1)
+        col_data = X_fit[col]
+        if hasattr(col_data, "values"):
+            col_values = col_data.values
+        else:
+            col_values = np.array(col_data)
+        data = col_values.astype(np.float32).reshape(-1, 1)
         d = data.shape[1]  # dimension
         k = self.faiss_kwargs["k"]
         niter = self.faiss_kwargs["niter"]
@@ -1322,11 +1637,17 @@ class FastWoe:  # pylint: disable=invalid-name
         faiss_kmeans.train(data)
 
         # Assign cluster labels
+        # pyrefly: ignore  # missing-argument
         _, labels = faiss_kmeans.index.search(data, 1)
         cluster_labels = labels.flatten() + 1  # Convert to 1-based indexing
 
         # Create bin edges from cluster centroids
-        centroids = faiss_kmeans.centroids.flatten()
+        centroids_raw = faiss_kmeans.centroids
+        if centroids_raw is None:
+            raise ValueError(
+                "FAISS KMeans centroids are None - clustering may have failed"
+            )
+        centroids = centroids_raw.flatten()
         sorted_centroids = np.sort(centroids)
 
         # Create bin edges: midpoints between consecutive centroids

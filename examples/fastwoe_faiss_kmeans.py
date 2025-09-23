@@ -6,7 +6,9 @@ This example shows how to use the new FAISS KMeans binning method
 and compares it with the traditional KBinsDiscretizer approach.
 
 Requirements:
-    pip install fastwoe[faiss]
+    pip install fastwoe[faiss]      # CPU version
+    # or
+    pip install fastwoe[faiss-gpu]  # GPU version
 """
 
 import importlib.util
@@ -36,7 +38,9 @@ except ImportError:
 FAISS_AVAILABLE = importlib.util.find_spec("faiss") is not None
 
 if not FAISS_AVAILABLE:
-    print("Error: FAISS not available. Please install with: pip install faiss-cpu")
+    print("Error: FAISS not available. Please install with:")
+    print("  CPU version: pip install faiss-cpu")
+    print("  GPU version: pip install faiss-gpu-cu12")
     exit(1)
 
 
@@ -87,7 +91,7 @@ def demonstrate_faiss_kmeans():
             "gpu": False,  # Use CPU (set to True if you have GPU)
         },
         numerical_threshold=10,
-        warn_on_numerical=True,
+        warn_on_numerical=False,
     )
 
     # Fit and transform
@@ -134,7 +138,7 @@ def compare_with_kbins():
             "encode": "ordinal",
         },
         numerical_threshold=10,
-        warn_on_numerical=True,
+        warn_on_numerical=False,
     )
 
     # Fit and transform
@@ -286,7 +290,9 @@ def main():
     _decorated_header(50, "FastWoe FAISS KMeans Binning Example")
 
     if not FAISS_AVAILABLE:
-        print("FAISS is not available. Please install it with: pip install faiss-cpu")
+        print("FAISS is not available. Please install it with:")
+        print("  CPU version: pip install faiss-cpu")
+        print("  GPU version: pip install faiss-gpu-cu12")
         return
 
     # Demonstrate FAISS KMeans

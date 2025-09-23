@@ -208,7 +208,9 @@ class TestFastWoe:
         X = sample_data[["cat1", "cat2"]]
         woe = FastWoe()
 
-        with pytest.raises(TypeError):  # Will get TypeError because y_prior_ is None
+        with pytest.raises(
+            ValueError, match="Model must be fitted before transforming data"
+        ):
             woe.transform(X)
 
     def test_transform_numpy_array(self, sample_data):
@@ -316,6 +318,142 @@ class TestFastWoe:
         # Test all features stats
         all_stats = woe.get_feature_stats()
         assert len(all_stats) == 2  # Two features
+
+    def test_iv_standard_errors(self, sample_data):
+        """Test IV standard error calculations."""
+        X = sample_data[["cat1", "cat2"]]
+        y = sample_data["target"]
+
+        woe = FastWoe()
+        woe.fit(X, y)
+
+        # Test that feature stats include IV standard errors
+        stats = woe.get_feature_stats()
+        required_iv_cols = ["iv", "iv_se", "iv_ci_lower", "iv_ci_upper"]
+        for col in required_iv_cols:
+            assert col in stats.columns, f"Missing column: {col}"
+
+        # Test IV standard errors are non-negative
+        assert (stats["iv_se"] >= 0).all(), "IV standard errors should be non-negative"
+
+        # Test confidence intervals are properly ordered
+        assert (stats["iv_ci_lower"] <= stats["iv"]).all(), "Lower CI should be <= IV"
+        assert (stats["iv"] <= stats["iv_ci_upper"]).all(), "IV should be <= Upper CI"
+        assert (stats["iv_ci_lower"] >= 0).all(), "Lower CI should be >= 0"
+
+    def test_get_iv_analysis(self, sample_data):
+        """Test get_iv_analysis method."""
+        X = sample_data[["cat1", "cat2"]]
+        y = sample_data["target"]
+
+        woe = FastWoe()
+        woe.fit(X, y)
+
+        # Test IV analysis for all features
+        iv_analysis = woe.get_iv_analysis()
+        assert isinstance(iv_analysis, pd.DataFrame)
+        assert len(iv_analysis) == 2  # Two features
+
+        expected_cols = [
+            "feature",
+            "iv",
+            "iv_se",
+            "iv_ci_lower",
+            "iv_ci_upper",
+            "iv_significance",
+        ]
+        for col in expected_cols:
+            assert col in iv_analysis.columns, f"Missing column: {col}"
+
+        # Test significance classification
+        significance_values = iv_analysis["iv_significance"].unique()
+        valid_significance = {"Significant", "Not Significant"}
+        assert set(significance_values).issubset(valid_significance)
+
+        # Test single feature IV analysis
+        single_iv = woe.get_iv_analysis("cat1")
+        assert isinstance(single_iv, pd.DataFrame)
+        assert len(single_iv) == 1
+        assert single_iv["feature"].iloc[0] == "cat1"
+
+        # Test error for non-existent feature
+        with pytest.raises(ValueError, match="Feature 'nonexistent' not found"):
+            woe.get_iv_analysis("nonexistent")
+
+        # Test error when not fitted
+        unfitted_woe = FastWoe()
+        with pytest.raises(ValueError, match="FastWoe must be fitted"):
+            unfitted_woe.get_iv_analysis()
+
+    def test_iv_confidence_intervals(self):
+        """Test IV confidence interval calculations with known data."""
+        # Create data with strong predictive feature
+        np.random.seed(42)
+        n_samples = 1000
+
+        # Strong predictor with clear separation
+        X = pd.DataFrame(
+            {
+                "strong_feature": np.random.choice(
+                    ["Low", "High"], n_samples, p=[0.6, 0.4]
+                )
+            }
+        )
+
+        # Create target with strong correlation
+        y = np.zeros(n_samples)
+        high_mask = X["strong_feature"] == "High"
+        y[high_mask] = np.random.choice(
+            [0, 1], high_mask.sum(), p=[0.2, 0.8]
+        )  # 80% positive
+        y[~high_mask] = np.random.choice(
+            [0, 1], (~high_mask).sum(), p=[0.8, 0.2]
+        )  # 20% positive
+        y = pd.Series(y, dtype=int)
+
+        woe = FastWoe()
+        woe.fit(X, y)
+
+        # Get IV analysis
+        iv_analysis = woe.get_iv_analysis("strong_feature")
+
+        # With strong correlation, IV should be significant
+        assert iv_analysis["iv_significance"].iloc[0] == "Significant"
+        assert iv_analysis["iv"].iloc[0] > 0.1  # Should have substantial IV
+        assert iv_analysis["iv_se"].iloc[0] > 0  # Should have positive standard error
+        assert iv_analysis["iv_ci_lower"].iloc[0] > 0  # Lower bound should be positive
+
+    def test_iv_mathematical_properties(self):
+        """Test mathematical properties of IV standard errors."""
+        # Create simple test case
+        np.random.seed(123)
+        X = pd.DataFrame({"feature": ["A", "B"] * 100})
+        y = pd.Series([0, 1] * 100)  # Perfect separation
+
+        woe = FastWoe()
+        woe.fit(X, y)
+
+        # Get mapping to check WOE standard errors
+        mapping = woe.get_mapping("feature")
+
+        # Check that WOE standard errors exist and are reasonable
+        assert "woe_se" in mapping.columns
+        assert (mapping["woe_se"] > 0).all()  # Should be positive
+
+        # Get IV analysis
+        iv_stats = woe.get_iv_analysis("feature")
+        iv_se = iv_stats["iv_se"].iloc[0]
+
+        # IV standard error should be positive for non-trivial cases
+        assert iv_se >= 0
+
+        # Test confidence interval width is reasonable (2 * 1.96 * SE for 95% CI)
+        ci_width = iv_stats["iv_ci_upper"].iloc[0] - iv_stats["iv_ci_lower"].iloc[0]
+        expected_width = 2 * 1.96 * iv_se
+        # Allow for small numerical differences and lower bound truncation at 0
+        assert (
+            abs(ci_width - expected_width) < 0.01
+        )  # Should be close to theoretical width
 
     def test_predict_proba(self, sample_data):
         """Test predict_proba method."""
@@ -644,7 +782,9 @@ class TestFastWoe:
         X = sample_data[["cat1", "cat2"]]
         woe = FastWoe()
 
-        with pytest.raises(TypeError):  # Will get TypeError because y_prior_ is None
+        with pytest.raises(
+            ValueError, match="Model must be fitted before transforming data"
+        ):
             woe.predict(X)
 
     def test_predict_vs_predict_proba_difference(self, sample_data):
