@@ -170,7 +170,32 @@ print(feature_stats)
 
 ### Information Value (IV) Standard Errors
 
-FastWoe provides statistical rigor for Information Value calculations with confidence intervals and significance testing:
+> [!NOTE]
+> Read the paper on ArXiv: [An Information-Theoretic Framework for Credit Risk Modeling: Unifying Industry Practice with Statistical Theory for Fair and Interpretable Scorecards](https://arxiv.org/abs/2509.09855).
+
+FastWoe provides statistical rigor for Information Value calculations with confidence intervals and significance testing.
+
+The **Information Value (IV)** is defined as:
+
+$$
+IV = \sum_j \bigl( \text{bad\_rate}_j - \text{good\_rate}_j \bigr)\cdot WOE_j
+$$
+
+The **variance of IV** can be expressed as:
+
+$$
+\operatorname{Var}(\mathrm{IV}) = \sum_{j=1}^{J} w_j^2 \cdot \operatorname{Var}(\mathrm{WoE}_j)
+$$
+
+Therefore, the **standard error of IV** is:
+
+$$
+\mathrm{SE}(\mathrm{IV}) =
+\sqrt{\sum_{j=1}^{J} (p_{b,j} - p_{g,j})^2 \cdot
+\left(\tfrac{1}{n_{j,g}} + \tfrac{1}{n_{j,b}}\right)}
+$$
+
+We can calculate the standard error of IV for each feature using the `get_iv_analysis` method.
 
 ```python
 # Get IV analysis with confidence intervals
@@ -185,6 +210,8 @@ print(iv_analysis)
       weak_feature 0.0040 0.0035       0.0000       0.0108 Not Significant
 ```
 
+Additionally, we can calculate the standard error of IV for a specific feature using the `get_iv_analysis` method.
+
 ```python
 # Get IV analysis for a specific feature
 single_feature_iv = woe_encoder.get_iv_analysis('feature_name')
@@ -193,21 +220,6 @@ single_feature_iv = woe_encoder.get_iv_analysis('feature_name')
 feature_stats = woe_encoder.get_feature_stats()
 # Contains: iv, iv_se, iv_ci_lower, iv_ci_upper columns
 ```
-
-**Mathematical Framework:**
-
-$$
-IV = \sum_j \bigl( \text{bad\\_rate}_j - \text{good\\_rate}_j \bigr)\cdot WOE_j
-$$
-
-$$
-\operatorname{Var}(IV) \approx
-\sum_j \bigl( \text{bad\\_rate}_j - \text{good\\_rate}_j \bigr)^2 \cdot \operatorname{Var}(WOE_j)
-+ \sum_j WOE_j^2 \cdot \operatorname{Var}\!\bigl( \text{bad\\_rate}_j - \text{good\\_rate}_j \bigr)
-$$
-
-> [!NOTE]
-> Read the paper on ArXiv: [An Information-Theoretic Framework for Credit Risk Modeling: Unifying Industry Practice with Statistical Theory for Fair and Interpretable Scorecards](https://arxiv.org/abs/2509.09855).
 
 ### Standardized WOE
 ```python
