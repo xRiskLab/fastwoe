@@ -196,11 +196,15 @@ feature_stats = woe_encoder.get_feature_stats()
 
 **Mathematical Framework:**
 
-$$ IV = \sum_j ( \text{bad\_rate}_j - \text{good\_rate}_j ) \cdot WOE_j $$
+$$
+IV = \sum_j \bigl( \text{bad\\_rate}_j - \text{good\\_rate}_j \bigr)\cdot WOE_j
+$$
 
-$$ \text{Var}(IV) \approx
-\sum_j ( \text{bad\_rate}_j - \text{good\_rate}_j )^2 \cdot \text{Var}(WOE_j)
-+ \sum_j WOE_j^2 \cdot \text{Var}(\text{bad\_rate}_j - \text{good\_rate}_j) $$
+$$
+\operatorname{Var}(IV) \approx
+\sum_j \bigl( \text{bad\\_rate}_j - \text{good\\_rate}_j \bigr)^2 \cdot \operatorname{Var}(WOE_j)
++ \sum_j WOE_j^2 \cdot \operatorname{Var}\!\bigl( \text{bad\\_rate}_j - \text{good\\_rate}_j \bigr)
+$$
 
 > [!NOTE]
 > Read the paper on ArXiv: [An Information-Theoretic Framework for Credit Risk Modeling: Unifying Industry Practice with Statistical Theory for Fair and Interpretable Scorecards](https://arxiv.org/abs/2509.09855).
