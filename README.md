@@ -181,18 +181,10 @@ $$
 IV = \sum_j \bigl( p_{b,j} - p_{g,j} \bigr)\cdot WOE_j
 $$
 
-The **variance of IV** can be expressed as:
+The **standard error of IV** can be expressed as:
 
 $$
-\mathrm{Var}(IV) = \sum_{j=1}^{J} w_j^2 \cdot \mathrm{Var}(\mathrm{WoE}_j)
-$$
-
-Therefore, the **standard error of IV** is:
-
-$$
-\mathrm{SE}(IV) =
-\sqrt{\sum_{j=1}^{J} (p_{b,j} - p_{g,j})^2 \cdot
-\left(\tfrac{1}{n_{j,g}} + \tfrac{1}{n_{j,b}}\right)}
+\mathrm{SE}(IV) = \sqrt{\sum_{j=1}^{J} w_j^2 \cdot \mathrm{Var}(\mathrm{WoE}_j)}
 $$
 
 We can calculate the standard error of IV for each feature using the `get_iv_analysis` method.
