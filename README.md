@@ -175,18 +175,6 @@ print(feature_stats)
 
 FastWoe provides statistical rigor for Information Value calculations with confidence intervals and significance testing.
 
-The **Information Value (IV)** is defined as:
-
-$$
-IV = \sum_j \bigl( p_{b,j} - p_{g,j} \bigr)\cdot WOE_j
-$$
-
-The **standard error of IV** can be expressed as:
-
-$$
-\mathrm{SE}(IV) = \sqrt{\sum_{j=1}^{J} w_j^2 \cdot \mathrm{Var}(\mathrm{WoE}_j)}
-$$
-
 We can calculate the standard error of IV for each feature using the `get_iv_analysis` method.
 
 ```python
