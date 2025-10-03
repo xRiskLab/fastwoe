@@ -12,11 +12,18 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-import statsmodels.api as sm
 from scipy import stats
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import train_test_split
+
+try:
+    import statsmodels.api as sm
+
+    STATSMODELS_AVAILABLE = True
+except ImportError:
+    STATSMODELS_AVAILABLE = False
+    print("Warning: statsmodels not available. Some features will be disabled.")
 
 warnings.filterwarnings("ignore")
 

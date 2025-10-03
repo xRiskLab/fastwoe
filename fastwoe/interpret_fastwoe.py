@@ -357,13 +357,14 @@ class WeightOfEvidence(BaseEstimator):
                 }
 
             # Get true label from true_labels if provided
-            true_label = (
-                true_labels.iloc[sample_idx]
-                if true_labels is not None and hasattr(true_labels, "iloc")
-                else true_labels[sample_idx]
-                if true_labels is not None
-                else None
-            )
+            if true_labels is not None and hasattr(true_labels, "iloc"):
+                # true_labels is a pandas Series
+                true_label = true_labels.iloc[sample_idx]  # type: ignore
+            elif true_labels is not None:
+                # true_labels is a numpy array or list
+                true_label = true_labels[sample_idx]
+            else:
+                true_label = None
 
             # Get explanation using the core method
             explanation = self._explain_single_sample(
@@ -527,8 +528,8 @@ class WeightOfEvidence(BaseEstimator):
                 return str(class_value)
 
         # Handle numpy integers
-        if hasattr(class_value, "item"):
-            class_value = class_value.item()
+        if hasattr(class_value, "item") and callable(class_value.item):
+            class_value = class_value.item()  # type: ignore
 
         # Now handle as integer index
         if isinstance(class_value, (int, float)):
@@ -687,13 +688,14 @@ class WeightOfEvidence(BaseEstimator):
                     # pyrefly: ignore  # no-matching-overload
                     for k, v in zip(self.feature_names, sample)
                 }
-            true_label = (
-                true_labels.iloc[sample_idx]
-                if true_labels is not None and hasattr(true_labels, "iloc")
-                else true_labels[sample_idx]
-                if true_labels is not None
-                else None
-            )
+            if true_labels is not None and hasattr(true_labels, "iloc"):
+                # true_labels is a pandas Series
+                true_label = true_labels.iloc[sample_idx]  # type: ignore
+            elif true_labels is not None:
+                # true_labels is a numpy array or list
+                true_label = true_labels[sample_idx]
+            else:
+                true_label = None
             explanation = self._explain_single_sample_ci(
                 # pyrefly: ignore  # bad-argument-type
                 sample,

@@ -66,6 +66,7 @@ examples = [
     "seaborn>=0.11.0",
     "jupyter>=1.0.0",
     "statsmodels>=0.13.0",
+    "fisher_scoring>=2.0.5",
 ]
 faiss = [
     "faiss-cpu>=1.12.0",
@@ -113,6 +114,7 @@ ignore = [
     "N806",   # Variable in function should be lowercase (allow X, y for ML)
     "N803",   # Argument name should be lowercase (allow X_train, y_train for ML)
     "UP035",  # typing.Dict and typing.List are still needed for Python 3.9 compatibility
+    "UP006",  # ignore Dict spelling for Python 3.9 compatibility
     "F841",   # unused variable (equivalent to pylint W0612)
     "SLF001", # protected access (equivalent to pylint protected-access)
     "C901",   # too complex (common C013 equivalent)

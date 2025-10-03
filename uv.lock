@@ -789,6 +789,7 @@ dev = [
     { name = "ruff" },
 ]
 examples = [
+    { name = "fisher-scoring" },
     { name = "jupyter" },
     { name = "matplotlib", version = "3.9.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "matplotlib", version = "3.10.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
@@ -823,6 +824,7 @@ requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = ">=22.0.0" },
     { name = "faiss-cpu", marker = "extra == 'faiss'", specifier = ">=1.12.0" },
     { name = "faiss-gpu-cu12", marker = "extra == 'faiss-gpu'", specifier = ">=1.12.0" },
+    { name = "fisher-scoring", marker = "extra == 'examples'", specifier = ">=2.0.5" },
     { name = "jupyter", marker = "extra == 'examples'", specifier = ">=1.0.0" },
     { name = "matplotlib", marker = "extra == 'examples'", specifier = ">=3.5.0" },
     { name = "numba", specifier = ">=0.60.0" },
@@ -853,6 +855,20 @@ dev = [
     { name = "ruff", specifier = ">=0.11.13" },
     { name = "seaborn", specifier = ">=0.11.0" },
     { name = "twine", specifier = ">=6.1.0" },
+]
+
+[[package]]
+name = "fisher-scoring"
+version = "2.0.5.post1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "scikit-learn" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d7/a4/aae533cd46749a2914446dc0e9bafc6b279c8e590474a284881d5df781bd/fisher_scoring-2.0.5.post1.tar.gz", hash = "sha256:596c0f9d170d8d512de2de98c848d967440ac3550878260303d315006e24dbf3", size = 32429 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0e/b0/ee8c175e34c7112b2ef9e5c8cfdf9df4b4af17fed982beaf3a581f82879a/fisher_scoring-2.0.5.post1-py3-none-any.whl", hash = "sha256:62bb22646048125787d7f51023f897cea6a92bae0950237e90077618190ffc38", size = 29748 },
 ]
 
 [[package]]

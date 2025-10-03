@@ -1,6 +1,50 @@
 # Changelog
 
-## Version 0.1.3.post1 (Current)
+## Version 0.1.4 (Current)
+
+**Multiclass Support & Enhanced Tree Binning**: Major feature additions and API improvements
+
+- **New Features**:
+  - **Multiclass WOE Support**: Added one-vs-rest Weight of Evidence encoding for multiclass targets
+    - Automatic detection of multiclass targets (3+ unique values, not continuous proportions)
+    - One-vs-rest binary encoding for each class against all others
+    - Multiple output columns per feature: `feature_class_0`, `feature_class_1`, etc.
+    - Support for both integer and string class labels
+    - Class-specific priors stored in `y_prior_` dictionary
+  - **Enhanced Tree Binning**: Improved decision tree-based numerical feature binning
+    - Fixed NaN values in last bin issue with proper right-inclusive binning `(a, b]`
+    - Added `get_tree_estimator(feature)` method to access underlying scikit-learn trees
+    - Optimized default parameters for credit scoring: `max_depth=3`, `random_state=42`
+    - Simplified default tree parameters (removed `min_samples_leaf`, `min_samples_split`)
+  - **Unified Binner Parameters**: Streamlined API with single `binner_kwargs` parameter
+    - Replaced separate `tree_kwargs` and `faiss_kwargs` with unified approach
+    - Backward compatibility maintained for existing parameter names
+    - Cleaner API: `FastWoe(binning_method="tree", binner_kwargs={"max_depth": 2})`
+
+- **API Changes**:
+  - **Default Binning Method**: Changed from `"kbins"` to `"tree"` for numerical features
+  - **New Method**: `get_tree_estimator(feature)` to access fitted decision tree estimators
+  - **Enhanced Target Detection**: Automatic multiclass detection with `is_multiclass_target` attribute
+  - **Class Information**: Added `classes_` and `n_classes_` attributes for multiclass targets
+
+- **Fixed**:
+  - **Tree Binning NaN Bug**: Resolved issue where last bin always contained NaN values
+  - **Binning Logic**: Implemented proper right-inclusive binning `(a, b]` instead of `np.digitize`
+  - **Split Point Handling**: Improved `_create_bin_edges_from_splits` to handle duplicate splits
+  - **Test Coverage**: Added comprehensive tests for multiclass and tree binning edge cases
+
+- **Documentation & Examples**:
+  - **New Example**: `examples/fastwoe_multiclass.py` demonstrating multiclass WOE usage
+  - **Comprehensive Tests**: Added `TestMulticlassWoe` class with 9 test methods
+  - **Updated Documentation**: Clarified multiclass WOE concept and usage patterns
+
+- **Performance & Reliability**:
+  - **Credit Scoring Optimization**: Default tree parameters optimized for 4-8 bins per feature
+  - **Reproducible Results**: `random_state=42` as default for consistent binning
+  - **Memory Efficiency**: Improved handling of multiclass target encoding
+  - **Error Handling**: Enhanced validation for multiclass target types
+
+## Version 0.1.3.post1
 
 **Enhanced Statistical Analysis**: Added IV standard errors and Series support
 

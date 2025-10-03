@@ -8,13 +8,14 @@
 [![PyPI downloads](https://img.shields.io/pypi/dm/fastwoe.svg)](https://pypi.org/project/fastwoe/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-FastWoe is a Python library for efficient **Weight of Evidence (WOE)** encoding of categorical features and statistical inference. It's designed for machine learning practitioners seeking robust, interpretable feature engineering and likelihood-ratio-based inference for binary classification problems.
+FastWoe is a Python library for efficient **Weight of Evidence (WOE)** encoding of categorical features and statistical inference. It's designed for machine learning practitioners seeking robust, interpretable feature engineering and likelihood-ratio-based inference for binary and multiclass classification problems.
 
 ![FastWoe](https://github.com/xRiskLab/fastwoe/raw/main/ims/title.png)
 
 ## 🌟 Key Features
 
 - **Fast WOE Encoding**: Leverages scikit-learn's `TargetEncoder` for efficient computation
+- **Multiclass Support**: One-vs-rest WOE encoding for targets with 3+ classes
 - **Statistical Confidence Intervals**: Provides standard errors and confidence intervals for WOE values
 - **IV Standard Errors**: Statistical significance testing for Information Value with confidence intervals
 - **Cardinality Control**: Built-in preprocessing to handle high-cardinality categorical features
@@ -134,6 +135,83 @@ print(X_woe.head())
 mapping = woe_encoder.get_mapping('category')
 print("\nWOE Mapping for 'category':")
 print(mapping[['category', 'count', 'event_rate', 'woe', 'woe_se']])
+```
+
+## 🎯 Multiclass Support
+
+FastWoe now supports **multiclass classification** using a one-vs-rest approach! For targets with 3+ classes, FastWoe automatically creates separate WOE encodings for each class against all others.
+
+### Multiclass Example
+
+```python
+import pandas as pd
+import numpy as np
+from fastwoe import FastWoe
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report
+
+# Create multiclass data
+X = pd.DataFrame({
+    'job': ['teacher', 'engineer', 'artist', 'doctor'] * 25,
+    'age_group': ['<30', '30-50', '50+'] * 33 + ['<30'],
+    'income': np.random.normal(50000, 20000, 100),
+})
+y = pd.Series([0, 1, 2, 0, 1] * 20)  # 3 classes
+
+# Fit FastWoe with multiclass target
+woe_encoder = FastWoe()
+woe_encoder.fit(X, y)
+
+# Transform data - creates multiple columns per feature
+X_woe = woe_encoder.transform(X)
+print(f"Original features: {X.shape[1]}")
+print(f"WOE features: {X_woe.shape[1]}")  # 3x more columns
+print(f"Column names: {list(X_woe.columns)}")
+# Output: ['job_class_0', 'job_class_1', 'job_class_2', 'age_group_class_0', ...]
+
+# Get probabilities for all classes
+probs = woe_encoder.predict_proba(X)
+print(f"Probabilities shape: {probs.shape}")  # (n_samples, n_classes)
+
+# Get class-specific probabilities
+class_0_probs = woe_encoder.predict_proba_class(X, class_label=0)
+class_1_probs = woe_encoder.predict_proba_class(X, class_label=1)
+
+# Get confidence intervals for specific class
+class_0_ci = woe_encoder.predict_ci_class(X, class_label=0)
+print(f"Class 0 CI shape: {class_0_ci.shape}")  # (n_samples, 2) [lower, upper]
+
+# Train a classifier on WOE features
+rf = RandomForestClassifier(n_estimators=100, random_state=42)
+rf.fit(X_woe, y)
+predictions = rf.predict(X_woe)
+
+print("\nClassification Report:")
+print(classification_report(y, predictions))
+```
+
+### Multiclass Features
+
+- **One-vs-Rest Encoding**: Each class gets separate WOE scores against all others
+- **Class-Specific Methods**: `predict_proba_class()` and `predict_ci_class()` for individual classes
+- **Softmax Probabilities**: `predict_proba()` returns probabilities that sum to 1 across classes
+- **Comprehensive Statistics**: All existing methods work with multiclass (IV analysis, feature stats, etc.)
+- **String Labels**: Supports both integer and string class labels
+
+### Class-Specific Predictions
+
+```python
+# Method 1: Extract from full results
+all_probs = woe_encoder.predict_proba(X)
+class_0_probs = all_probs[:, 0]  # Extract class 0
+
+# Method 2: Use class-specific methods (recommended)
+class_0_probs = woe_encoder.predict_proba_class(X, class_label=0)
+class_0_ci = woe_encoder.predict_ci_class(X, class_label=0)
+
+# Practical usage examples
+high_risk_mask = woe_encoder.predict_proba_class(X, class_label=0) > 0.5
+high_confidence_mask = woe_encoder.predict_ci_class(X, class_label=2)[:, 0] > 0.3
 ```
 
 ## 🔧 Advanced Usage

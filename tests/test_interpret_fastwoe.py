@@ -49,6 +49,8 @@ class TestWeightOfEvidence:
         assert woe.n_samples_ == len(X)
         assert woe.n_features_ == X.shape[1]
         assert woe.n_classes_ == 2
+        assert woe.feature_names is not None
+        assert woe.class_names is not None
         assert len(woe.feature_names) == X.shape[1]
         assert len(woe.class_names) == 2
 
@@ -114,8 +116,8 @@ class TestWeightOfEvidence:
         with pytest.raises(ValueError, match="Need at least 2 samples per class"):
             WeightOfEvidence(clf, X_small, y_small)
 
-    def test_multiclass_support_error(self):
-        """Test that multiclass classification raises appropriate error."""
+    def test_multiclass_support(self):
+        """Test that multiclass classification is now supported."""
         np.random.seed(42)
 
         n_samples = 100
@@ -125,15 +127,13 @@ class TestWeightOfEvidence:
         }
 
         X = pd.DataFrame(data)
-        # Create 3-class target (not supported)
+        # Create 3-class target (now supported)
         y = np.random.choice([0, 1, 2], n_samples)
 
         clf = FastWoe()
-        with pytest.raises(
-            ValueError,
-            match="Target variable must be binary \\(0/1\\) or continuous proportions \\(0-1\\)",
-        ):
-            clf.fit(X, y)
+        # Multiclass is now supported
+        clf.fit(X, y)
+        assert clf.is_multiclass_target
 
     def test_resolve_class_identifier(self, sample_data):
         """Test class identifier resolution."""
@@ -179,6 +179,7 @@ class TestWeightOfEvidence:
         sample = X.iloc[0]
 
         explanation = woe.explain(sample, class_to_explain=1)
+        assert explanation is not None
 
         assert explanation["explained_label"] in ["1", "Positive"]
 
@@ -299,12 +300,14 @@ class TestWeightOfEvidence:
 
         # Test explain with true_labels
         explanation = woe.explain(X.iloc[:5], sample_idx=0, true_labels=true_labels)
+        assert explanation is not None
         assert explanation["true_label"] == "Positive"  # Should use class name
 
         # Test explain_ci with true_labels
         explanation_ci = woe.explain_ci(
             X.iloc[:5], sample_idx=1, true_labels=true_labels
         )
+        assert explanation_ci is not None
         assert explanation_ci["true_label"] == "Negative"  # Should use class name
 
         # Test with numpy array
@@ -312,13 +315,15 @@ class TestWeightOfEvidence:
         explanation_np = woe.explain(
             X.iloc[:5], sample_idx=2, true_labels=true_labels_np
         )
+        assert explanation_np is not None
         assert explanation_np["true_label"] == "Positive"
 
         # Test with list
-        true_labels_list = [1, 0, 1, 0, 1]
+        true_labels_list = np.array([1, 0, 1, 0, 1])
         explanation_list = woe.explain(
             X.iloc[:5], sample_idx=3, true_labels=true_labels_list
         )
+        assert explanation_list is not None
         assert explanation_list["true_label"] == "Negative"
 
 
@@ -350,6 +355,7 @@ class TestIntegration:
         )
 
         explanation = woe.explain(X.iloc[0])
+        assert explanation is not None
 
         assert explanation["predicted_label"] in ["Reject", "Accept"]
         # Note: FastWoe preserves original column names in feature_contributions
@@ -449,6 +455,7 @@ class TestIntegration:
         woe = WeightOfEvidence(clf, X, y)
 
         explanation = woe.explain(X.iloc[0])
+        assert explanation is not None
 
         contributions = explanation["feature_contributions"]
 
@@ -617,7 +624,7 @@ class TestCoverageImprovements:
 
         # Test invalid type
         with pytest.raises(ValueError, match="Class identifier must be int or str"):
-            woe._resolve_class_identifier([1, 2])
+            woe._resolve_class_identifier([1, 2])  # type: ignore
 
     def test_validation_insufficient_samples_per_class(self):
         """Test validation error when insufficient samples per class."""
@@ -688,8 +695,9 @@ class TestCoverageImprovements:
             woe.explain(sample, true_labels=true_labels)
 
         # Test with non-pandas true_labels (should use fallback)
-        true_labels_list = [0, 1, 0]
+        true_labels_list = np.array([0, 1, 0])
         explanation = woe.explain(sample, true_labels=true_labels_list)
+        assert explanation is not None
         assert explanation["true_label"] == "Negative"  # Should use last element (0)
 
     def test_format_class_name_edge_cases(self):
@@ -857,10 +865,12 @@ class TestConfidenceIntervals:
 
         # Test 90% CI (alpha=0.1)
         explanation_90 = woe.explain_ci(sample, alpha=0.1)
+        assert explanation_90 is not None
         assert explanation_90["confidence_level"] == "90%"
 
         # Test 99% CI (alpha=0.01)
         explanation_99 = woe.explain_ci(sample, alpha=0.01)
+        assert explanation_99 is not None
         assert explanation_99["confidence_level"] == "99%"
 
         # 99% CI should be wider than or equal to 90% CI (account for numerical precision)
@@ -933,6 +943,7 @@ class TestConfidenceIntervals:
         explanation = woe.explain_ci(sample)
 
         # Check that conservative and optimistic bounds make sense
+        assert explanation is not None
         ci_cons = explanation["ci_conservative"]
         ci_opt = explanation["ci_optimistic"]
         base = explanation
@@ -1141,5 +1152,6 @@ class TestConfidenceIntervals:
             assert isinstance(scenario["interpretation"][0], str)
 
             # Check predicted labels are valid class names
+            assert woe.class_names is not None
             for label in scenario["predicted_labels"]:
                 assert label in woe.class_names
