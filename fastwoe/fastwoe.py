@@ -52,6 +52,7 @@ else:
         norm = MockNorm()
 
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import KBinsDiscretizer, TargetEncoder
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
@@ -116,18 +117,18 @@ class WoePreprocessor(BaseEstimator, TransformerMixin):
             vc_filtered = vc[vc >= self.min_count]
 
             # Fallback: if ALL categories are below min_count, keep the most frequent
-            # pyrefly: ignore  # missing-attribute
+            # type: ignore[missing-attribute]
             if vc_filtered.empty:
                 top_cats = [vc.idxmax()]
             elif self.top_p is not None:
                 # Calculate cumulative as percentage of ORIGINAL total
                 cumulative = vc_filtered.cumsum() / vc.sum()
                 top_cats = cumulative[cumulative <= self.top_p].index.tolist() or [
-                    # pyrefly: ignore  # missing-attribute
+                    # type: ignore[missing-attribute]
                     vc_filtered.idxmax()
                 ]
             else:
-                # pyrefly: ignore  # missing-attribute
+                # type: ignore[missing-attribute]
                 top_cats = vc_filtered.nlargest(self.max_categories).index.tolist()
 
             self.category_maps[col] = set(top_cats)
@@ -138,7 +139,7 @@ class WoePreprocessor(BaseEstimator, TransformerMixin):
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
         """Transform by replacing rare categories with other_token."""
         X_ = X.copy()
-        # pyrefly: ignore  # not-iterable
+        # type: ignore[not-iterable]
         for col in self.cat_features_:
             if col in X_.columns:
                 allowed = self.category_maps[col]
@@ -165,7 +166,7 @@ class WoePreprocessor(BaseEstimator, TransformerMixin):
     def get_reduction_summary(self, X: pd.DataFrame) -> pd.DataFrame:  # pylint: disable=invalid-name
         """Get summary of cardinality reduction per feature."""
         summary = []
-        # pyrefly: ignore  # not-iterable
+        # type: ignore[not-iterable]
         for col in self.cat_features_:
             if col in X.columns:
                 original_cats = X[col].nunique()
@@ -215,6 +216,12 @@ class FastWoe:  # pylint: disable=invalid-name
         Additional keyword arguments for the tree estimator.
     faiss_kwargs : dict, optional
         Additional keyword arguments for FAISS KMeans (when binning_method="faiss_kmeans").
+    monotonic_cst : dict, optional
+        Monotonic constraints for numerical features. Maps feature names to constraint values:
+        - 1: increasing constraint (higher values → higher risk)
+        - -1: decreasing constraint (higher values → lower risk)
+        - 0: no constraint
+        Only supported for tree binning method. Example: {"income": 1, "age": -1}
 
     Attributes:
     ----------
@@ -226,6 +233,8 @@ class FastWoe:  # pylint: disable=invalid-name
         Per-feature statistics (Gini, IV, etc.).
     y_prior_ : float
         Mean target in fit data.
+    monotonic_cst : dict
+        Monotonic constraints for features.
 
     """
 
@@ -240,6 +249,7 @@ class FastWoe:  # pylint: disable=invalid-name
         tree_estimator=None,
         tree_kwargs=None,
         faiss_kwargs=None,
+        monotonic_cst=None,
     ):
         # Set up encoder kwargs - will be updated in fit() based on target type
         default_kwargs: dict[str, Any] = {"smooth": 1e-5}
@@ -284,6 +294,43 @@ class FastWoe:  # pylint: disable=invalid-name
         self.is_fitted_: bool = False
         self.is_continuous_target: Optional[bool] = None
         self.is_binary_target: Optional[bool] = None
+
+        # Monotonic constraints: dict mapping feature names to constraint values
+        # 1 = increasing, -1 = decreasing, 0 = no constraint
+        self.monotonic_cst: dict[str, int] = monotonic_cst or {}
+
+        # Validate monotonic constraints
+        if self.monotonic_cst:
+            self._validate_monotonic_constraints()
+
+    def _validate_monotonic_constraints(self):
+        """Validate monotonic constraints parameter."""
+        if not isinstance(self.monotonic_cst, dict):
+            raise TypeError("monotonic_cst must be a dictionary")
+
+        for feature_name, constraint in self.monotonic_cst.items():
+            if not isinstance(feature_name, str):
+                raise TypeError(
+                    f"Feature names in monotonic_cst must be strings, got {type(feature_name)}"
+                )
+            if not isinstance(constraint, int):
+                raise TypeError(
+                    f"Constraint values must be integers, got {type(constraint)} for feature '{feature_name}'"
+                )
+            if constraint not in [-1, 0, 1]:
+                raise ValueError(
+                    f"Constraint value must be -1, 0, or 1, got {constraint} for feature '{feature_name}'"
+                )
+
+        # Check if monotonic constraints are used with unsupported binning methods
+        if self.binning_method not in ["tree", "kbins", "faiss_kmeans"]:
+            unsupported_features = list(self.monotonic_cst.keys())
+            warnings.warn(
+                f"Monotonic constraints are supported with tree (native), kbins (isotonic regression), and faiss_kmeans (isotonic regression) binning methods. "
+                f"Constraints for features {unsupported_features} will be ignored.",
+                UserWarning,
+                stacklevel=2,
+            )
 
     def _setup_binner_kwargs(
         self, binning_method, binner_kwargs, tree_kwargs, faiss_kwargs, random_state
@@ -353,7 +400,7 @@ class FastWoe:  # pylint: disable=invalid-name
             return np.nan
 
         # Remove any NaN values
-        # pyrefly: ignore  # unsupported-operation
+        # type: ignore[unsupported-operation]
         mask = ~(np.isnan(y_true) | np.isnan(y_pred))
         if not mask.any():
             return np.nan
@@ -398,6 +445,73 @@ class FastWoe:  # pylint: disable=invalid-name
             variance = 1.0 / good_count + 1.0 / bad_count
 
         return np.sqrt(variance)
+
+    def _apply_isotonic_constraints(self, mapping_df, constraint_value):
+        """
+        Apply isotonic regression to enforce monotonic constraints on WOE values.
+
+        Parameters
+        ----------
+        mapping_df : pd.DataFrame
+            Mapping table with WOE statistics
+        constraint_value : int
+            Monotonic constraint: 1 (increasing), -1 (decreasing), 0 (no constraint)
+
+        Returns:
+        -------
+        pd.DataFrame
+            Updated mapping table with monotonic WOE values
+        """
+        if constraint_value == 0:
+            return mapping_df
+
+        # Extract bin centers and WOE values
+        bin_centers = []
+        woe_values = []
+
+        for _, row in mapping_df.iterrows():
+            bin_str = row.name  # Category name contains bin range
+            if "(" in bin_str and "," in bin_str:
+                try:
+                    # Extract numeric range from bin string like "(20.0, 40.0]"
+                    start = float(bin_str.split("(")[1].split(",")[0])
+                    end = float(bin_str.split(",")[1].split("]")[0])
+                    center = (start + end) / 2
+                    bin_centers.append(center)
+                    woe_values.append(row["woe"])
+                except (ValueError, IndexError):
+                    # If we can't parse the bin, use the original WOE value
+                    bin_centers.append(len(bin_centers))  # Use index as fallback
+                    woe_values.append(row["woe"])
+            else:
+                # For non-numeric bins, use index
+                bin_centers.append(len(bin_centers))
+                woe_values.append(row["woe"])
+
+        if len(bin_centers) < 2:
+            return mapping_df  # Need at least 2 points for isotonic regression
+
+        bin_centers = np.array(bin_centers)
+        woe_values = np.array(woe_values)
+
+        # Apply isotonic regression
+        if constraint_value == 1:  # Increasing constraint
+            # For increasing: higher values should have higher WOE
+            iso_reg = IsotonicRegression(increasing=True, out_of_bounds="clip")
+        else:  # constraint_value == -1, Decreasing constraint
+            # For decreasing: higher values should have lower WOE
+            iso_reg = IsotonicRegression(increasing=False, out_of_bounds="clip")
+
+        # Fit isotonic regression
+        iso_reg.fit(bin_centers.reshape(-1, 1), woe_values)
+        monotonic_woe = iso_reg.predict(bin_centers.reshape(-1, 1))
+
+        # Update the mapping DataFrame with monotonic WOE values
+        mapping_df_updated = mapping_df.copy()
+        for i, (_, row) in enumerate(mapping_df.iterrows()):
+            mapping_df_updated.loc[row.name, "woe"] = monotonic_woe[i]
+
+        return mapping_df_updated
 
     def _calculate_woe_ci(self, woe_value, se_value, alpha=0.05):
         """
@@ -567,7 +681,7 @@ class FastWoe:  # pylint: disable=invalid-name
             if isinstance(event_rate, pd.DataFrame):
                 event_rate = event_rate.values.flatten()
             event_rate = np.clip(event_rate, 1e-15, 1 - 1e-15)
-            odds_cat = event_rate / (1 - event_rate)  # pyrefly: ignore
+            odds_cat = event_rate / (1 - event_rate)  # type: ignore
             woe_values = np.log(odds_cat / odds_prior)
 
         # Calculate IV and its standard error
@@ -831,6 +945,17 @@ class FastWoe:  # pylint: disable=invalid-name
                         }
                     ).set_index("category")
 
+                    # Apply isotonic constraints for KBins and FAISS methods
+                    if col in self.monotonic_cst and self.binning_method in [
+                        "kbins",
+                        "faiss_kmeans",
+                    ]:
+                        constraint_value = self.monotonic_cst[col]
+                        if constraint_value != 0:
+                            mapping_df = self._apply_isotonic_constraints(
+                                mapping_df, constraint_value
+                            )
+
                     self.mappings_[col][class_label] = mapping_df
 
                     # Calculate feature-level statistics for this class
@@ -905,6 +1030,17 @@ class FastWoe:  # pylint: disable=invalid-name
                     }
                 ).set_index("category")
 
+                # Apply isotonic constraints for KBins and FAISS methods
+                if col in self.monotonic_cst and self.binning_method in [
+                    "kbins",
+                    "faiss_kmeans",
+                ]:
+                    constraint_value = self.monotonic_cst[col]
+                    if constraint_value != 0:
+                        mapping_df = self._apply_isotonic_constraints(
+                            mapping_df, constraint_value
+                        )
+
                 self.mappings_[col] = mapping_df
 
                 # Calculate feature-level statistics
@@ -935,7 +1071,7 @@ class FastWoe:  # pylint: disable=invalid-name
         # Convert numpy arrays and Series to pandas DataFrame if needed
         if isinstance(X, np.ndarray):
             column_names = [f"feature_{i}" for i in range(X.shape[1])]
-            # pyrefly: ignore  # bad-argument-type
+            # type: ignore[bad-argument-type]
             X = pd.DataFrame(X, columns=column_names)
             warnings.warn(
                 "Input X is a numpy array. Converting to pandas DataFrame with generic column names. "
@@ -955,6 +1091,8 @@ class FastWoe:  # pylint: disable=invalid-name
         if not self.is_fitted_:
             raise ValueError("Model must be fitted before transforming data")
 
+        # Calculate odds_prior for non-multiclass targets
+        odds_prior = None
         if not self.is_multiclass_target:
             odds_prior = self.y_prior_ / (1 - self.y_prior_)
         woe_df = pd.DataFrame(index=X.index)
@@ -968,13 +1106,13 @@ class FastWoe:  # pylint: disable=invalid-name
                 binning_info = self.binning_info_[col]
                 X_col = X_processed[[col]].copy()
                 if hasattr(X_col[col], "isna"):
-                    # pyrefly: ignore  # missing-attribute
+                    # type: ignore[missing-attribute]
                     mask_missing = X_col[col].isna()
                 else:
                     # For numpy arrays, use pd.isna
                     mask_missing = pd.isna(X_col[col])
 
-                # pyrefly: ignore  # missing-attribute
+                # type: ignore[missing-attribute]
                 if not mask_missing.all():  # If there are any non-missing values
                     # Ensure column is object type to accept strings
                     X_processed[col] = X_processed[col].astype("object")
@@ -1076,7 +1214,7 @@ class FastWoe:  # pylint: disable=invalid-name
                         )
 
                 # Handle missing values
-                # pyrefly: ignore  # missing-attribute
+                # type: ignore[missing-attribute]
                 if mask_missing.any():
                     X_processed.loc[mask_missing, col] = "Missing"
 
@@ -1105,7 +1243,7 @@ class FastWoe:  # pylint: disable=invalid-name
                 if isinstance(event_rate, pd.DataFrame):
                     event_rate = event_rate.values.flatten()
                 event_rate = np.clip(event_rate, 1e-15, 1 - 1e-15)
-                odds_cat = event_rate / (1 - event_rate)  # pyrefly: ignore
+                odds_cat = event_rate / (1 - event_rate)  # type: ignore
                 woe = np.log(odds_cat / odds_prior)
                 woe_df[col] = woe  # Keep original column name
 
@@ -1113,7 +1251,7 @@ class FastWoe:  # pylint: disable=invalid-name
 
     def fit_transform(self, X: pd.DataFrame, y=None, **_fit_params) -> pd.DataFrame:
         """Fit and transform in one step."""
-        # pyrefly: ignore  # bad-argument-type
+        # type: ignore[bad-argument-type]
         return self.fit(X, y).transform(X)
 
     def get_mapping(
@@ -1235,7 +1373,7 @@ class FastWoe:  # pylint: disable=invalid-name
             # So SE(p) = SE(WOE) * p * (1-p)
             probabilities = mapping["event_rate"].values
             woe_se = mapping["woe_se"].values
-            # pyrefly: ignore  # unsupported-operation
+            # type: ignore[unsupported-operation]
             prob_se = woe_se * probabilities * (1 - probabilities)
             prob_mapping["probability_se"] = prob_se
 
@@ -1279,7 +1417,7 @@ class FastWoe:  # pylint: disable=invalid-name
     def get_feature_summary(self) -> pd.DataFrame:
         """Get a summary table of all features ranked by predictive power."""
         stats_df = self.get_feature_stats()
-        # pyrefly: ignore  # bad-return
+        # type: ignore[bad-return]
         return stats_df.sort_values("gini", ascending=False)[
             ["feature", "gini", "iv", "n_categories"]
         ].round(4)
@@ -1421,7 +1559,7 @@ class FastWoe:  # pylint: disable=invalid-name
                 stacklevel=2,
             )
             column_names = [f"feature_{i}" for i in range(X.shape[1])]
-            # pyrefly: ignore  # bad-argument-type
+            # type: ignore[bad-argument-type]
             X = pd.DataFrame(X, columns=column_names)
 
         X_woe = self.transform(X)
@@ -1497,7 +1635,7 @@ class FastWoe:  # pylint: disable=invalid-name
                 stacklevel=2,
             )
             column_names = [f"feature_{i}" for i in range(X.shape[1])]
-            # pyrefly: ignore  # bad-argument-type
+            # type: ignore[bad-argument-type]
             X = pd.DataFrame(X, columns=column_names)
 
         # Get WOE-transformed features
@@ -1713,7 +1851,7 @@ class FastWoe:  # pylint: disable=invalid-name
         X: pd.DataFrame,
         output="woe",
         col_name: Optional[str] = None,
-        # pyrefly: ignore  # bad-return
+        # type: ignore[bad-return]
     ) -> pd.DataFrame:
         """
         Transform features to standardized WOE scores or Wald statistics.
@@ -1811,7 +1949,7 @@ class FastWoe:  # pylint: disable=invalid-name
                 stacklevel=2,
             )
             column_names = [f"feature_{i}" for i in range(X.shape[1])]
-            # pyrefly: ignore  # bad-argument-type
+            # type: ignore[bad-argument-type]
             X = pd.DataFrame(X, columns=column_names)
 
         if self.is_multiclass_target:
@@ -1852,13 +1990,13 @@ class FastWoe:  # pylint: disable=invalid-name
         # Handle missing values
         X_col = X[[col]].copy()
         if hasattr(X_col[col], "isna"):
-            # pyrefly: ignore  # missing-attribute
+            # type: ignore[missing-attribute]
             mask_missing = X_col[col].isna()
         else:
             # For numpy arrays, use pd.isna
             mask_missing = pd.isna(X_col[col])
 
-        # pyrefly: ignore  # missing-attribute
+        # type: ignore[missing-attribute]
         if mask_missing.any():
             # Check if we have enough non-missing values
             X_fit = X_col[~mask_missing]
@@ -1870,10 +2008,10 @@ class FastWoe:  # pylint: disable=invalid-name
             X_fit = X_col
 
         if self.binning_method == "kbins":
-            # pyrefly: ignore  # bad-argument-type
+            # type: ignore[bad-argument-type]
             return self._bin_with_kbins(X_col, col, mask_missing, X_fit)
         elif self.binning_method == "faiss_kmeans":
-            # pyrefly: ignore  # bad-argument-type
+            # type: ignore[bad-argument-type]
             return self._bin_with_faiss_kmeans(X_col, col, mask_missing, X_fit)
         else:  # tree method
             # Determine if target is continuous (proportions) or binary
@@ -1886,13 +2024,13 @@ class FastWoe:  # pylint: disable=invalid-name
                 and unique_targets > 2
             )
             return self._bin_with_tree(
-                # pyrefly: ignore  # bad-argument-type
+                # type: ignore[bad-argument-type]
                 X_col,
                 col,
                 y,
-                # pyrefly: ignore  # bad-argument-type
+                # type: ignore[bad-argument-type]
                 mask_missing,
-                # pyrefly: ignore  # bad-argument-type
+                # type: ignore[bad-argument-type]
                 X_fit,
                 is_continuous,
             )
@@ -1932,7 +2070,7 @@ class FastWoe:  # pylint: disable=invalid-name
         if not mask_missing.all():  # If there are any non-missing values
             # Ensure column is object type to accept strings
             X_binned[col] = X_binned[col].astype("object")
-            # pyrefly: ignore  # missing-attribute
+            # type: ignore[missing-attribute]
             X_binned.loc[~mask_missing, col] = binner.transform(X_fit).ravel()
 
         # Convert to string categories with meaningful labels
@@ -1971,6 +2109,7 @@ class FastWoe:  # pylint: disable=invalid-name
             "missing": mask_missing.sum(),
             "bin_edges": edges.tolist() if hasattr(binner, "bin_edges_") else None,
             "method": "kbins",
+            "monotonic_constraint": self.monotonic_cst.get(col, 0),
         }
 
         return X_binned
@@ -1989,15 +2128,26 @@ class FastWoe:  # pylint: disable=invalid-name
         # pylint: disable=redefined-outer-name
         if self.tree_estimator is None:
             if is_continuous:
-                tree_estimator = DecisionTreeRegressor
+                tree_estimator_class = DecisionTreeRegressor
             else:
-                tree_estimator = DecisionTreeClassifier
-        else:
-            tree_estimator = self.tree_estimator
+                tree_estimator_class = DecisionTreeClassifier
 
-        # Create and fit the tree
-        tree_kwargs = self.tree_kwargs.copy()
-        tree = tree_estimator(**tree_kwargs)
+            # Create and fit the tree
+            tree_kwargs = self.tree_kwargs.copy()
+
+            # Add monotonic constraints if specified for this feature
+            if col in self.monotonic_cst:
+                constraint_value = self.monotonic_cst[col]
+                if constraint_value != 0:  # Only add if not "no constraint"
+                    tree_kwargs["monotonic_cst"] = [constraint_value]
+
+            tree = tree_estimator_class(**tree_kwargs)
+        else:
+            # Custom tree estimator provided - it's already an instance
+            tree = self.tree_estimator
+
+            # Note: We can't modify parameters of an already instantiated estimator
+            # The monotonic constraints should be set when creating the custom estimator
 
         # Fit tree on non-missing data
         y_fit = y[~mask_missing] if mask_missing.any() else y
@@ -2012,7 +2162,7 @@ class FastWoe:  # pylint: disable=invalid-name
             col_values = col_data.values
         else:
             col_values = np.array(col_data)
-        # pyrefly: ignore  # bad-argument-type
+        # type: ignore[bad-argument-type]
         bin_edges = self._create_bin_edges_from_splits(split_points, col_values)
 
         # Create bin labels
@@ -2076,6 +2226,7 @@ class FastWoe:  # pylint: disable=invalid-name
             "bin_edges": bin_edges.tolist(),
             "method": "tree",
             "split_points": split_points.tolist() if len(split_points) > 0 else [],
+            "monotonic_constraint": self.monotonic_cst.get(col, 0),
         }
 
         return X_binned
@@ -2120,9 +2271,7 @@ class FastWoe:  # pylint: disable=invalid-name
 
         # Assign cluster labels
         n_samples = data.shape[0]
-        distances = np.zeros((n_samples, 1), dtype=np.float32)
-        labels = np.zeros((n_samples, 1), dtype=np.int64)
-        faiss_kmeans.index.search(n_samples, data, 1, distances, labels)
+        distances, labels = faiss_kmeans.index.search(data, 1)
         cluster_labels = labels.flatten() + 1  # Convert to 1-based indexing
 
         # Create bin edges from cluster centroids
@@ -2178,6 +2327,7 @@ class FastWoe:  # pylint: disable=invalid-name
             "bin_edges": bin_edges.tolist(),
             "method": "faiss_kmeans",
             "centroids": sorted_centroids.tolist(),
+            "monotonic_constraint": self.monotonic_cst.get(col, 0),
         }
 
         return X_binned
@@ -2254,6 +2404,7 @@ class FastWoe:  # pylint: disable=invalid-name
                     "n_bins": info["n_bins"],
                     "missing": info["missing"],
                     "method": info.get("method", "unknown"),
+                    "monotonic_constraint": info.get("monotonic_constraint", 0),
                 }
                 for col, info in self.binning_info_.items()
             ]

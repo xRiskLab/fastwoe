@@ -167,7 +167,7 @@ class WeightOfEvidence(BaseEstimator):
             feature_names = self._infer_feature_names(X_train, classifier)
 
         if feature_names and not isinstance(X_train, pd.DataFrame):
-            # pyrefly: ignore  # bad-argument-type
+            # type: ignore[bad-argument-type]
             self._original_X_train = pd.DataFrame(X_train, columns=list(feature_names))
         elif isinstance(X_train, pd.DataFrame):
             self._original_X_train = X_train
@@ -202,10 +202,10 @@ class WeightOfEvidence(BaseEstimator):
                 # Use original feature names
                 feature_names = list(self._original_X_train.columns)
                 if len(x.shape) == 1:
-                    # pyrefly: ignore  # bad-argument-type
+                    # type: ignore[bad-argument-type]
                     return pd.DataFrame([x], columns=feature_names)
                 else:
-                    # pyrefly: ignore  # bad-argument-type
+                    # type: ignore[bad-argument-type]
                     return pd.DataFrame(x, columns=feature_names)
             else:
                 # Fallback to generic names
@@ -226,12 +226,12 @@ class WeightOfEvidence(BaseEstimator):
                 raise ValueError(f"Class index {class_id} out of range")
             return class_id
         elif isinstance(class_id, str):
-            # pyrefly: ignore  # unsupported-operation
+            # type: ignore[unsupported-operation]
             if class_id not in self.class_names:
                 raise ValueError(
                     f"Class name '{class_id}' not found in {self.class_names}"
                 )
-            # pyrefly: ignore  # missing-attribute
+            # type: ignore[missing-attribute]
             return self.class_names.index(class_id)
         else:
             # Raise error if class identifier is not int or str
@@ -268,19 +268,19 @@ class WeightOfEvidence(BaseEstimator):
             )
 
         # Check feature names
-        # pyrefly: ignore  # bad-argument-type
+        # type: ignore[bad-argument-type]
         if len(self.feature_names) != self.n_features_:
             raise ValueError(
-                # pyrefly: ignore  # bad-argument-type
+                # type: ignore[bad-argument-type]
                 f"feature_names length ({len(self.feature_names)}) must match "
                 f"n_features ({self.n_features_})"
             )
 
         # Check class names
-        # pyrefly: ignore  # bad-argument-type
+        # type: ignore[bad-argument-type]
         if len(self.class_names) != self.n_classes_:
             raise ValueError(
-                # pyrefly: ignore  # bad-argument-type
+                # type: ignore[bad-argument-type]
                 f"class_names length ({len(self.class_names)}) must match "
                 f"n_classes ({self.n_classes_})"
             )
@@ -352,7 +352,7 @@ class WeightOfEvidence(BaseEstimator):
                 sample = x[sample_idx]
                 sample_dict = {
                     k: v.item() if hasattr(v, "item") else v
-                    # pyrefly: ignore  # no-matching-overload
+                    # type: ignore[no-matching-overload]
                     for k, v in zip(self.feature_names, sample)
                 }
 
@@ -368,10 +368,10 @@ class WeightOfEvidence(BaseEstimator):
 
             # Get explanation using the core method
             explanation = self._explain_single_sample(
-                # pyrefly: ignore  # bad-argument-type
+                # type: ignore[bad-argument-type]
                 sample,
                 class_to_explain,
-                # pyrefly: ignore  # bad-argument-type
+                # type: ignore[bad-argument-type]
                 true_label,
             )
 
@@ -427,7 +427,7 @@ class WeightOfEvidence(BaseEstimator):
                         if hasattr(true_labels, "__getitem__")
                         else true_labels
                     )
-            # pyrefly: ignore  # bad-argument-type
+            # type: ignore[bad-argument-type]
             explanation = self._explain_single_sample(x, class_to_explain, true_label)
             if not return_dict:
                 if isinstance(x, pd.Series):
@@ -438,7 +438,7 @@ class WeightOfEvidence(BaseEstimator):
                 elif isinstance(x, np.ndarray):
                     sample_dict = {
                         k: v.item() if hasattr(v, "item") else v
-                        # pyrefly: ignore  # no-matching-overload
+                        # type: ignore[no-matching-overload]
                         for k, v in zip(self.feature_names, x)
                     }
                 else:
@@ -497,11 +497,11 @@ class WeightOfEvidence(BaseEstimator):
 
         # Determine class to explain
         if class_to_explain is None:
-            # pyrefly: ignore  # bad-assignment
+            # type: ignore[bad-assignment]
             class_to_explain = prediction
 
         # Convert to index if needed
-        # pyrefly: ignore  # bad-argument-type
+        # type: ignore[bad-argument-type]
         class_idx = self._resolve_class_identifier(class_to_explain)
 
         return {
@@ -626,13 +626,16 @@ class WeightOfEvidence(BaseEstimator):
         _, counts = np.unique(self.y_train_, return_counts=True)
         class_dist = counts / len(self.y_train_)
 
+        # type: ignore[no-matching-overload]
+        features_str = ", ".join(self.feature_names)
+        # type: ignore[no-matching-overload]
+        classes_str = ", ".join(self.class_names)
+
         return f"""
             Weight of Evidence Explainer (FastWoe)
             ==========================================
-            # pyrefly: ignore  # no-matching-overload
-            Features: {self.n_features_} ({", ".join(self.feature_names)})
-            # pyrefly: ignore  # no-matching-overload
-            Classes: {self.n_classes_} ({", ".join(self.class_names)})
+            Features: {self.n_features_} ({features_str})
+            Classes: {self.n_classes_} ({classes_str})
             Training samples: {self.n_samples_}
             Class distribution: {[round(float(v), 3) for v in class_dist]}"""
 
@@ -685,7 +688,7 @@ class WeightOfEvidence(BaseEstimator):
                 sample = x[sample_idx]
                 sample_dict = {
                     k: v.item() if hasattr(v, "item") else v
-                    # pyrefly: ignore  # no-matching-overload
+                    # type: ignore[no-matching-overload]
                     for k, v in zip(self.feature_names, sample)
                 }
             if true_labels is not None and hasattr(true_labels, "iloc"):
@@ -697,10 +700,10 @@ class WeightOfEvidence(BaseEstimator):
             else:
                 true_label = None
             explanation = self._explain_single_sample_ci(
-                # pyrefly: ignore  # bad-argument-type
+                # type: ignore[bad-argument-type]
                 sample,
                 class_to_explain,
-                # pyrefly: ignore  # bad-argument-type
+                # type: ignore[bad-argument-type]
                 true_label,
                 alpha,
             )
@@ -740,10 +743,10 @@ class WeightOfEvidence(BaseEstimator):
                     else true_labels
                 )
             explanation = self._explain_single_sample_ci(
-                # pyrefly: ignore  # bad-argument-type
+                # type: ignore[bad-argument-type]
                 x,
                 class_to_explain,
-                # pyrefly: ignore  # bad-argument-type
+                # type: ignore[bad-argument-type]
                 true_label,
                 alpha,
             )
@@ -756,7 +759,7 @@ class WeightOfEvidence(BaseEstimator):
                 elif isinstance(x, np.ndarray):
                     sample_dict = {
                         k: v.item() if hasattr(v, "item") else v
-                        # pyrefly: ignore  # no-matching-overload
+                        # type: ignore[no-matching-overload]
                         for k, v in zip(self.feature_names, x)
                     }
                 else:
@@ -798,8 +801,8 @@ class WeightOfEvidence(BaseEstimator):
         eps = 1e-15
         ci_lower_safe = np.clip(ci_lower_probs, eps, 1 - eps)
         ci_upper_safe = np.clip(ci_upper_probs, eps, 1 - eps)
-        logit_lower = np.log(ci_lower_safe / (1 - ci_lower_safe))  # pyrefly: ignore
-        logit_upper = np.log(ci_upper_safe / (1 - ci_upper_safe))  # pyrefly: ignore
+        logit_lower = np.log(ci_lower_safe / (1 - ci_lower_safe))  # type: ignore
+        logit_upper = np.log(ci_upper_safe / (1 - ci_upper_safe))  # type: ignore
         woe_lower = logit_lower - np.log(odds_prior)
         woe_upper = logit_upper - np.log(odds_prior)
         ci_conservative = {
@@ -957,7 +960,7 @@ class WeightOfEvidence(BaseEstimator):
                 feature_names = list(self._original_X_train.columns)
             else:
                 feature_names = self.feature_names
-            # pyrefly: ignore  # bad-argument-type, no-matching-overload
+            # type: ignore[bad-argument-type], no-matching-overload
             X_df = pd.DataFrame(X, columns=list(feature_names))
         else:
             X_df = X.copy()
@@ -988,8 +991,8 @@ class WeightOfEvidence(BaseEstimator):
         ci_lower_safe = np.clip(ci_lower_probs, eps, 1 - eps)
         ci_upper_safe = np.clip(ci_upper_probs, eps, 1 - eps)
 
-        logit_lower = np.log(ci_lower_safe / (1 - ci_lower_safe))  # pyrefly: ignore
-        logit_upper = np.log(ci_upper_safe / (1 - ci_upper_safe))  # pyrefly: ignore
+        logit_lower = np.log(ci_lower_safe / (1 - ci_lower_safe))  # type: ignore
+        logit_upper = np.log(ci_upper_safe / (1 - ci_upper_safe))  # type: ignore
 
         # Remove prior to get WOE bounds
         woe_lower = logit_lower - np.log(odds_prior)
@@ -1067,13 +1070,13 @@ class WeightOfEvidence(BaseEstimator):
 
         # Add probabilities if requested
         if return_probabilities:
-            # pyrefly: ignore  # unsupported-operation
+            # type: ignore[unsupported-operation]
             result["base_estimate"]["probabilities"] = base_probabilities
-            # pyrefly: ignore  # unsupported-operation
+            # type: ignore[unsupported-operation]
             result["lower_bound"]["probabilities"] = np.column_stack(
                 [1 - ci_lower_probs, ci_lower_probs]
             )
-            # pyrefly: ignore  # unsupported-operation
+            # type: ignore[unsupported-operation]
             result["upper_bound"]["probabilities"] = np.column_stack(
                 [1 - ci_upper_probs, ci_upper_probs]
             )

@@ -33,7 +33,7 @@ jobs:
     - name: Verify installation
       run: |
         uv run python -c "import fastwoe; print('FastWoe installed')"
-        uv run python -c "import pyrefly; print('pyrefly installed')"
+        uv run python -c "import ty; print('ty installed')"
 
     - name: Run CI checks (format, lint, typecheck)
       run: |

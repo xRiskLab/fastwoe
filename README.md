@@ -20,6 +20,7 @@ FastWoe is a Python library for efficient **Weight of Evidence (WOE)** encoding 
 - **IV Standard Errors**: Statistical significance testing for Information Value with confidence intervals
 - **Cardinality Control**: Built-in preprocessing to handle high-cardinality categorical features
 - **Intelligent Numerical Binning**: Support for traditional binning, decision tree-based binning, and FAISS KMeans clustering
+- **Monotonic Constraints**: Enforce business logic constraints for credit scoring and regulatory compliance
 - **Binning Summaries**: Feature-level binning statistics including Gini score and Information Value (IV)
 - **Compatible with scikit-learn**: Follows scikit-learn's preprocessing transformer interface
 - **Uncertainty Quantification**: Combines Alan Turing's factor principle with Maximum Likelihood theory (see [paper](docs/woe_st_errors.md))
@@ -379,6 +380,85 @@ pipeline = Pipeline([
 pipeline.fit(data[['category', 'high_card_cat']], data['target'])
 ```
 
+## 🎯 Monotonic Constraints for Credit Scoring
+
+FastWoe supports **monotonic constraints** for numerical features, ensuring that WOE values follow business logic requirements. This is particularly important for credit scoring and regulatory compliance.
+
+### When to Use Monotonic Constraints
+
+- **Credit Scoring**: Higher income should lead to lower risk
+- **Age-based Risk**: Higher age might lead to higher risk (depending on context)
+- **Credit Score**: Higher credit scores should lead to lower risk
+- **Regulatory Compliance**: When business rules require monotonic relationships
+
+### Example Usage
+
+```python
+import pandas as pd
+import numpy as np
+from fastwoe import FastWoe
+
+# Create sample credit scoring data
+np.random.seed(42)
+n_samples = 1000
+
+# Income: higher income -> lower risk (decreasing constraint)
+income = np.random.lognormal(mean=10, sigma=0.5, size=n_samples)
+income_risk = 1 / (1 + np.exp((income - np.median(income)) / 20))
+
+# Age: higher age -> higher risk (increasing constraint)
+age = np.random.normal(35, 12, n_samples)
+age_risk = 1 / (1 + np.exp(-(age - 35) / 8))
+
+# Credit score: higher score -> lower risk (decreasing constraint)
+credit_score = np.random.normal(650, 100, n_samples)
+credit_score = np.clip(credit_score, 300, 850)
+credit_risk = 1 / (1 + np.exp((credit_score - 650) / 50))
+
+# Combine risks
+combined_risk = (income_risk + age_risk + credit_risk) / 3
+y = (combined_risk > 0.5).astype(int)
+
+X = pd.DataFrame({
+    'income': income,
+    'age': age,
+    'credit_score': credit_score
+})
+
+# Apply monotonic constraints
+woe_encoder = FastWoe(
+    binning_method="tree",
+    monotonic_cst={
+        "income": -1,        # Decreasing: higher income -> lower risk
+        "age": 1,            # Increasing: higher age -> higher risk
+        "credit_score": -1   # Decreasing: higher score -> lower risk
+    },
+    numerical_threshold=10
+)
+
+woe_encoder.fit(X, y)
+
+# Check that constraints were applied
+summary = woe_encoder.get_binning_summary()
+print(summary[['feature', 'monotonic_constraint']])
+```
+
+### Constraint Values
+
+- `1`: Increasing constraint (higher values → higher risk)
+- `-1`: Decreasing constraint (higher values → lower risk)
+- `0`: No constraint (default)
+
+### Important Notes
+
+- **Tree method**: Uses native scikit-learn monotonic constraints
+- **KBins & FAISS methods**: Uses isotonic regression to enforce constraints
+- Constraints ensure WOE values follow the specified monotonic pattern
+- Performance may be slightly different but more interpretable
+- Essential for regulatory compliance in credit scoring
+
+For a complete example, see [examples/monotonic_constraints_example.py](examples/monotonic_constraints_example.py).
+
 ## 📋 API Reference
 
 ### FastWoe Class
@@ -391,6 +471,7 @@ pipeline.fit(data[['category', 'high_card_cat']], data['target'])
 - `tree_estimator` (estimator): Custom tree estimator for binning (when binning_method="tree")
 - `tree_kwargs` (dict): Parameters for tree estimator
 - `faiss_kwargs` (dict): Parameters for FAISS KMeans (when binning_method="faiss_kmeans")
+- `monotonic_cst` (dict): Monotonic constraints for numerical features. Maps feature names to constraint values: 1 (increasing), -1 (decreasing), 0 (no constraint). Supported with all binning methods: tree (native), kbins/faiss_kmeans (isotonic regression).
 
 #### Key Methods
 - `fit(X, y)`: Fit the WOE encoder
@@ -565,10 +646,10 @@ act --container-architecture linux/amd64 -j type-check -W .github/workflows/type
 See [Local Testing with Act](docs/dev/act-local-testing.md) for comprehensive documentation.
 
 **Type Checking Notes:**
-- FastWoe uses [pyrefly](https://pyrefly.org/) for type checking via `scripts/typecheck.py`
+- FastWoe uses [ty](https://github.com/astral-sh/ty) for type checking via `make typecheck`
 - Many type errors are expected due to pandas/numpy dynamic typing
 - CI mode treats expected pandas/numpy type issues as success
-- Use `PYREFLY_STRICT=true` to fail on any type errors
+- Use `make typecheck-strict` to fail on any type errors
 
 ### Building the Package
 

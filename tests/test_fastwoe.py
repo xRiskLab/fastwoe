@@ -1435,13 +1435,14 @@ class TestTreeBinning:
 
         binning_params = {
             "binning_method": "tree",
-            "tree_estimator": DecisionTreeRegressor,
+            "tree_estimator": DecisionTreeRegressor(max_depth=2, min_samples_leaf=20),
             "binner_kwargs": {"max_depth": 2, "min_samples_leaf": 20},
         }
         woe_model = FastWoe(**binning_params)
         woe_model.fit(self.X, self.y)
 
         # Check that custom estimator is used
+        # sourcery skip: no-loop-in-tests
         for feature in self.X.columns:
             tree = woe_model.get_tree_estimator(feature)
             assert isinstance(tree, DecisionTreeRegressor)
@@ -1925,3 +1926,505 @@ class TestMulticlassWoe:
             "feature1_class_class_2",
         ]
         assert list(X_transformed.columns) == expected_columns
+
+
+class TestMonotonicConstraints:
+    """Test cases for monotonic constraints functionality."""
+
+    def test_init_with_monotonic_constraints(self):
+        """Test initialization with monotonic constraints."""
+        # Test valid constraints
+        woe = FastWoe(monotonic_cst={"income": 1, "age": -1, "score": 0})
+        assert woe.monotonic_cst == {"income": 1, "age": -1, "score": 0}
+
+        # Test empty constraints
+        woe = FastWoe(monotonic_cst={})
+        assert woe.monotonic_cst == {}
+
+        # Test None constraints
+        woe = FastWoe(monotonic_cst=None)
+        assert woe.monotonic_cst == {}
+
+    def test_monotonic_constraints_validation(self):
+        """Test validation of monotonic constraints."""
+        # Test invalid constraint values
+        with pytest.raises(ValueError, match="Constraint value must be -1, 0, or 1"):
+            FastWoe(monotonic_cst={"income": 2})
+
+        with pytest.raises(ValueError, match="Constraint value must be -1, 0, or 1"):
+            FastWoe(monotonic_cst={"income": -2})
+
+        # Test invalid constraint types
+        with pytest.raises(TypeError, match="Constraint values must be integers"):
+            FastWoe(monotonic_cst={"income": "1"})
+
+        with pytest.raises(TypeError, match="Constraint values must be integers"):
+            FastWoe(monotonic_cst={"income": 1.0})
+
+        # Test invalid feature name types
+        with pytest.raises(
+            TypeError, match="Feature names in monotonic_cst must be strings"
+        ):
+            FastWoe(monotonic_cst={123: 1})
+
+        # Test invalid constraint dict type
+        with pytest.raises(TypeError, match="monotonic_cst must be a dictionary"):
+            FastWoe(monotonic_cst="invalid")
+
+    def test_monotonic_constraints_warning_for_unsupported_methods(self):
+        """Test warning when using monotonic constraints with unsupported binning methods."""
+        # Test with an invalid binning method (should raise ValueError)
+        with pytest.raises(ValueError, match="binning_method must be"):
+            FastWoe(binning_method="invalid_method", monotonic_cst={"income": 1})
+
+    def test_monotonic_constraints_tree_binning(self):
+        """Test monotonic constraints with tree binning."""
+        # Create synthetic data with clear monotonic relationship
+        np.random.seed(42)
+        n_samples = 1000
+
+        # Income: higher income -> lower risk (decreasing)
+        income = np.random.normal(50, 15, n_samples)
+        income_risk = 1 / (1 + np.exp((income - 50) / 10))  # Decreasing relationship
+
+        # Age: higher age -> higher risk (increasing)
+        age = np.random.normal(35, 10, n_samples)
+        age_risk = 1 / (1 + np.exp(-(age - 35) / 5))  # Increasing relationship
+
+        # Combine risks
+        combined_risk = (income_risk + age_risk) / 2
+        y = (combined_risk > 0.5).astype(int)
+
+        X_df = pd.DataFrame({"income": income, "age": age})
+
+        # Test with monotonic constraints
+        woe = FastWoe(
+            binning_method="tree",
+            monotonic_cst={
+                "income": -1,
+                "age": 1,
+            },  # income decreases risk, age increases risk
+            numerical_threshold=10,
+        )
+
+        woe.fit(X_df, y)
+
+        # Check that constraints were applied
+        assert woe.binning_info_["income"]["monotonic_constraint"] == -1
+        assert woe.binning_info_["age"]["monotonic_constraint"] == 1
+
+        # Check that binning summary includes monotonic constraints
+        summary = woe.get_binning_summary()
+        assert "monotonic_constraint" in summary.columns
+        assert (
+            summary[summary["feature"] == "income"]["monotonic_constraint"].iloc[0]
+            == -1
+        )
+        assert summary[summary["feature"] == "age"]["monotonic_constraint"].iloc[0] == 1
+
+    def test_monotonic_constraints_no_constraint(self):
+        """Test that constraint value 0 means no constraint."""
+        np.random.seed(42)
+        n_samples = 500
+
+        # Create data without clear monotonic relationship
+        X = np.random.normal(0, 1, (n_samples, 1))
+        y = np.random.binomial(1, 0.5, n_samples)
+
+        X_df = pd.DataFrame(X, columns=["feature"])
+
+        woe = FastWoe(
+            binning_method="tree",
+            monotonic_cst={"feature": 0},  # No constraint
+            numerical_threshold=10,
+        )
+
+        woe.fit(X_df, y)
+
+        # Check that no constraint was applied
+        assert woe.binning_info_["feature"]["monotonic_constraint"] == 0
+
+    def test_monotonic_constraints_partial_features(self):
+        """Test monotonic constraints applied only to specified features."""
+        np.random.seed(42)
+        n_samples = 500
+
+        X_df = pd.DataFrame(
+            {
+                "income": np.random.normal(50, 15, n_samples),
+                "age": np.random.normal(35, 10, n_samples),
+                "score": np.random.normal(0, 1, n_samples),
+            }
+        )
+        y = np.random.binomial(1, 0.5, n_samples)
+
+        woe = FastWoe(
+            binning_method="tree",
+            monotonic_cst={"income": 1},  # Only income has constraint
+            numerical_threshold=10,
+        )
+
+        woe.fit(X_df, y)
+
+        # Check constraints
+        assert woe.binning_info_["income"]["monotonic_constraint"] == 1
+        assert woe.binning_info_["age"]["monotonic_constraint"] == 0  # No constraint
+        assert woe.binning_info_["score"]["monotonic_constraint"] == 0  # No constraint
+
+    def test_monotonic_constraints_with_custom_tree_estimator(self):
+        """Test monotonic constraints with custom tree estimator."""
+        from sklearn.tree import DecisionTreeClassifier
+
+        np.random.seed(42)
+        n_samples = 500
+
+        X_df = pd.DataFrame({"feature": np.random.normal(0, 1, n_samples)})
+        y = np.random.binomial(1, 0.5, n_samples)
+
+        # Custom tree estimator
+        custom_tree = DecisionTreeClassifier(max_depth=2, random_state=42)
+
+        woe = FastWoe(
+            binning_method="tree",
+            tree_estimator=custom_tree,
+            monotonic_cst={"feature": 1},
+            numerical_threshold=10,
+        )
+
+        woe.fit(X_df, y)
+
+        # Check that constraint was applied
+        assert woe.binning_info_["feature"]["monotonic_constraint"] == 1
+
+    def test_monotonic_constraints_continuous_target(self):
+        """Test monotonic constraints with continuous target."""
+        np.random.seed(42)
+        n_samples = 500
+
+        # Create continuous target with monotonic relationship
+        income = np.random.normal(50, 15, n_samples)
+        y_continuous = np.clip(1 / (1 + np.exp((income - 50) / 10)), 0, 1)  # Decreasing
+
+        X_df = pd.DataFrame({"income": income})
+
+        woe = FastWoe(
+            binning_method="tree",
+            monotonic_cst={"income": -1},  # Decreasing constraint
+            numerical_threshold=10,
+        )
+
+        woe.fit(X_df, y_continuous)
+
+        # Check that constraint was applied
+        assert woe.binning_info_["income"]["monotonic_constraint"] == -1
+
+    def test_monotonic_constraints_backward_compatibility(self):
+        """Test that existing code without monotonic constraints still works."""
+        np.random.seed(42)
+        n_samples = 500
+
+        X_df = pd.DataFrame({"feature": np.random.normal(0, 1, n_samples)})
+        y = np.random.binomial(1, 0.5, n_samples)
+
+        # Old code without monotonic_cst parameter
+        woe = FastWoe(binning_method="tree", numerical_threshold=10)
+        woe.fit(X_df, y)
+
+        # Should work without issues
+        assert woe.is_fitted_
+        assert "feature" in woe.binning_info_
+        assert woe.binning_info_["feature"]["monotonic_constraint"] == 0
+
+    def test_monotonic_constraints_kbins_isotonic(self):
+        """Test monotonic constraints with KBins using isotonic regression."""
+        np.random.seed(42)
+        n_samples = 1000
+
+        # Create data with clear monotonic relationship
+        income = np.random.lognormal(mean=10, sigma=0.5, size=n_samples)
+        income_risk = 1 / (1 + np.exp((income - np.median(income)) / 20))  # Decreasing
+        y = (income_risk > 0.5).astype(int)
+
+        X_df = pd.DataFrame({"income": income})
+
+        woe = FastWoe(
+            binning_method="kbins",
+            monotonic_cst={"income": -1},  # Decreasing constraint
+            numerical_threshold=10,
+            binner_kwargs={"n_bins": 5, "strategy": "quantile"},
+        )
+
+        woe.fit(X_df, y)
+
+        # Check that constraint was applied
+        assert woe.binning_info_["income"]["monotonic_constraint"] == -1
+        assert woe.binning_info_["income"]["method"] == "kbins"
+
+        # Check that WOE values follow decreasing pattern
+        mapping = woe.get_mapping("income")
+        woe_values = mapping["woe"].values
+
+        # Extract bin centers for verification
+        bin_centers = []
+        for _, row in mapping.iterrows():
+            bin_str = row["category"]
+            if "(" in bin_str and "," in bin_str:
+                try:
+                    start = float(bin_str.split("(")[1].split(",")[0])
+                    end = float(bin_str.split(",")[1].split("]")[0])
+                    center = (start + end) / 2
+                    bin_centers.append(center)
+                except (ValueError, IndexError):
+                    bin_centers.append(len(bin_centers))
+            else:
+                bin_centers.append(len(bin_centers))
+
+        # Verify monotonic decreasing pattern
+        if len(bin_centers) >= 2:
+            sorted_indices = np.argsort(bin_centers)
+            sorted_woe = woe_values[sorted_indices]
+            # Check that WOE values are non-increasing (monotonic decreasing)
+            for i in range(1, len(sorted_woe)):
+                assert sorted_woe[i] <= sorted_woe[i - 1] + 1e-10, (
+                    f"WOE not monotonic decreasing: {sorted_woe}"
+                )
+
+    def test_monotonic_constraints_faiss_isotonic(self):
+        """Test monotonic constraints with FAISS KMeans using isotonic regression."""
+        np.random.seed(42)
+        n_samples = 500
+
+        # Create data with clear monotonic relationship
+        age = np.random.normal(35, 10, n_samples)
+        age_risk = 1 / (1 + np.exp(-(age - 35) / 8))  # Increasing
+        y = (age_risk > 0.5).astype(int)
+
+        X_df = pd.DataFrame({"age": age})
+
+        woe = FastWoe(
+            binning_method="faiss_kmeans",
+            monotonic_cst={"age": 1},  # Increasing constraint
+            numerical_threshold=10,
+            faiss_kwargs={"k": 4, "niter": 10},
+        )
+
+        try:
+            woe.fit(X_df, y)
+
+            # Check that constraint was applied
+            assert woe.binning_info_["age"]["monotonic_constraint"] == 1
+            assert woe.binning_info_["age"]["method"] == "faiss_kmeans"
+
+            # Check that WOE values follow increasing pattern
+            mapping = woe.get_mapping("age")
+            woe_values = mapping["woe"].values
+
+            # Extract bin centers for verification
+            bin_centers = []
+            for _, row in mapping.iterrows():
+                bin_str = row["category"]
+                if "(" in bin_str and "," in bin_str:
+                    try:
+                        start = float(bin_str.split("(")[1].split(",")[0])
+                        end = float(bin_str.split(",")[1].split("]")[0])
+                        center = (start + end) / 2
+                        bin_centers.append(center)
+                    except (ValueError, IndexError):
+                        bin_centers.append(len(bin_centers))
+                else:
+                    bin_centers.append(len(bin_centers))
+
+            # Verify monotonic increasing pattern
+            if len(bin_centers) >= 2:
+                sorted_indices = np.argsort(bin_centers)
+                sorted_woe = woe_values[sorted_indices]
+                # Check that WOE values are non-decreasing (monotonic increasing)
+                for i in range(1, len(sorted_woe)):
+                    assert sorted_woe[i] >= sorted_woe[i - 1] - 1e-10, (
+                        f"WOE not monotonic increasing: {sorted_woe}"
+                    )
+
+        except ImportError:
+            pytest.skip("FAISS not available, skipping FAISS KMeans test")
+
+    def test_monotonic_constraints_multiclass_kbins(self):
+        """Test monotonic constraints with multiclass targets and KBins."""
+        np.random.seed(42)
+        n_samples = 500
+
+        # Create multiclass data
+        income = np.random.lognormal(mean=10, sigma=0.5, size=n_samples)
+        y_multiclass = np.random.choice([0, 1, 2], size=n_samples, p=[0.4, 0.4, 0.2])
+
+        X_df = pd.DataFrame({"income": income})
+
+        woe = FastWoe(
+            binning_method="kbins",
+            monotonic_cst={"income": -1},  # Decreasing constraint
+            numerical_threshold=10,
+            binner_kwargs={"n_bins": 4, "strategy": "quantile"},
+        )
+
+        woe.fit(X_df, y_multiclass)
+
+        # Check that constraint was applied for all classes
+        assert woe.binning_info_["income"]["monotonic_constraint"] == -1
+
+        # Check that WOE values follow decreasing pattern for each class
+        for class_label in woe.classes_:
+            mapping = woe.get_mapping("income", class_label)
+            woe_values = mapping["woe"].values
+
+            # Extract bin centers
+            bin_centers = []
+            for _, row in mapping.iterrows():
+                bin_str = row["category"]
+                if "(" in bin_str and "," in bin_str:
+                    try:
+                        start = float(bin_str.split("(")[1].split(",")[0])
+                        end = float(bin_str.split(",")[1].split("]")[0])
+                        center = (start + end) / 2
+                        bin_centers.append(center)
+                    except (ValueError, IndexError):
+                        bin_centers.append(len(bin_centers))
+                else:
+                    bin_centers.append(len(bin_centers))
+
+            # Verify monotonic decreasing pattern
+            if len(bin_centers) >= 2:
+                sorted_indices = np.argsort(bin_centers)
+                sorted_woe = woe_values[sorted_indices]
+                for i in range(1, len(sorted_woe)):
+                    assert sorted_woe[i] <= sorted_woe[i - 1] + 1e-10, (
+                        f"Class {class_label} WOE not monotonic decreasing: {sorted_woe}"
+                    )
+
+    def test_monotonic_constraints_continuous_target_kbins(self):
+        """Test monotonic constraints with continuous target and KBins."""
+        np.random.seed(42)
+        n_samples = 500
+
+        # Create continuous target with monotonic relationship
+        income = np.random.lognormal(mean=10, sigma=0.5, size=n_samples)
+        y_continuous = np.clip(
+            1 / (1 + np.exp((income - np.median(income)) / 20)), 0, 1
+        )
+
+        X_df = pd.DataFrame({"income": income})
+
+        woe = FastWoe(
+            binning_method="kbins",
+            monotonic_cst={"income": -1},  # Decreasing constraint
+            numerical_threshold=10,
+            binner_kwargs={"n_bins": 4, "strategy": "quantile"},
+        )
+
+        woe.fit(X_df, y_continuous)
+
+        # Check that constraint was applied
+        assert woe.binning_info_["income"]["monotonic_constraint"] == -1
+
+        # Check that WOE values follow decreasing pattern
+        mapping = woe.get_mapping("income")
+        woe_values = mapping["woe"].values
+
+        # Extract bin centers
+        bin_centers = []
+        for _, row in mapping.iterrows():
+            bin_str = row["category"]
+            if "(" in bin_str and "," in bin_str:
+                try:
+                    start = float(bin_str.split("(")[1].split(",")[0])
+                    end = float(bin_str.split(",")[1].split("]")[0])
+                    center = (start + end) / 2
+                    bin_centers.append(center)
+                except (ValueError, IndexError):
+                    bin_centers.append(len(bin_centers))
+            else:
+                bin_centers.append(len(bin_centers))
+
+        # Verify monotonic decreasing pattern
+        if len(bin_centers) >= 2:
+            sorted_indices = np.argsort(bin_centers)
+            sorted_woe = woe_values[sorted_indices]
+            for i in range(1, len(sorted_woe)):
+                assert sorted_woe[i] <= sorted_woe[i - 1] + 1e-10, (
+                    f"WOE not monotonic decreasing: {sorted_woe}"
+                )
+
+    def test_monotonic_constraints_mixed_methods(self):
+        """Test monotonic constraints with different binning methods."""
+        np.random.seed(42)
+        n_samples = 500
+
+        X_df = pd.DataFrame(
+            {
+                "income": np.random.lognormal(mean=10, sigma=0.5, size=n_samples),
+                "age": np.random.normal(35, 10, n_samples),
+                "score": np.random.normal(0, 1, n_samples),
+            }
+        )
+        y = np.random.binomial(1, 0.5, n_samples)
+
+        # Test tree method (native constraints)
+        woe_tree = FastWoe(
+            binning_method="tree",
+            monotonic_cst={"income": -1, "age": 1},
+            numerical_threshold=10,
+        )
+        woe_tree.fit(X_df, y)
+
+        # Test KBins method (isotonic regression)
+        woe_kbins = FastWoe(
+            binning_method="kbins",
+            monotonic_cst={"income": -1, "age": 1},
+            numerical_threshold=10,
+            binner_kwargs={"n_bins": 4, "strategy": "quantile"},
+        )
+        woe_kbins.fit(X_df, y)
+
+        # Both should have constraints applied
+        assert woe_tree.binning_info_["income"]["monotonic_constraint"] == -1
+        assert woe_tree.binning_info_["age"]["monotonic_constraint"] == 1
+        assert woe_kbins.binning_info_["income"]["monotonic_constraint"] == -1
+        assert woe_kbins.binning_info_["age"]["monotonic_constraint"] == 1
+
+        # Both should have different methods
+        assert woe_tree.binning_info_["income"]["method"] == "tree"
+        assert woe_kbins.binning_info_["income"]["method"] == "kbins"
+
+    def test_monotonic_constraints_edge_cases(self):
+        """Test edge cases for monotonic constraints."""
+        np.random.seed(42)
+        n_samples = 100
+
+        # Test with very few bins
+        X_df = pd.DataFrame({"feature": np.random.normal(0, 1, n_samples)})
+        y = np.random.binomial(1, 0.5, n_samples)
+
+        woe = FastWoe(
+            binning_method="kbins",
+            monotonic_cst={"feature": 1},
+            numerical_threshold=10,
+            binner_kwargs={"n_bins": 2, "strategy": "quantile"},  # Only 2 bins
+        )
+
+        woe.fit(X_df, y)
+
+        # Should work even with few bins
+        assert woe.is_fitted_
+        assert woe.binning_info_["feature"]["monotonic_constraint"] == 1
+
+        # Test with constraint value 0 (no constraint)
+        woe_no_constraint = FastWoe(
+            binning_method="kbins",
+            monotonic_cst={"feature": 0},  # No constraint
+            numerical_threshold=10,
+            binner_kwargs={"n_bins": 3, "strategy": "quantile"},
+        )
+
+        woe_no_constraint.fit(X_df, y)
+
+        # Should work without applying constraints
+        assert woe_no_constraint.is_fitted_
+        assert woe_no_constraint.binning_info_["feature"]["monotonic_constraint"] == 0

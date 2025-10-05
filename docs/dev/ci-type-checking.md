@@ -24,7 +24,7 @@ CI=true uv run type-check
 - Build continues
 
 **What it does**:
-- Runs pyrefly with comprehensive ignore flags
+- Runs ty with comprehensive ignore flags
 - Detects CI environment automatically
 - Treats expected data science library type issues as success
 - Only fails on genuine type errors in your code
@@ -46,7 +46,7 @@ PYREFLY_STRICT=true uv run type-check
 
 The CI mode will only fail if:
 
-1. **Script execution fails**: pyrefly not installed, import errors, etc.
+1. **Script execution fails**: ty not installed, import errors, etc.
 2. **New genuine type errors**: Errors in your code logic (not pandas/numpy)
 3. **Missing dependencies**: Required packages not available
 
@@ -85,8 +85,8 @@ env:
 
 ### Making CI More Lenient
 The current configuration is already lenient. If you need even more leniency, you can:
-1. Add more ignore flags in `fastwoe/scripts/type_check.py`
-2. Exclude more files in the pyrefly configuration
+1. Add more ignore flags in the ty configuration in `pyproject.toml`
+2. Exclude more files in the ty configuration
 
 ## Summary
 

@@ -168,7 +168,7 @@ act --container-architecture linux/amd64 -W .github/workflows/typecheck.yml --dr
 # - Python 3.11 setup
 # - uv installation
 # - Dependencies installation
-# - FastWoe & pyrefly verification
+# - FastWoe & ty verification
 # - CI checks (format, lint, typecheck)
 # - Strict type checking
 ```
@@ -302,7 +302,7 @@ act --container-architecture linux/amd64 -W .github/workflows/compatibility.yml 
 Your project includes these workflows:
 
 - **`ci.yml`**: Main CI pipeline with tests, linting, and type checking
-- **`typecheck.yml`**: Dedicated type checking with pyrefly integration
+- **`typecheck.yml`**: Dedicated type checking with ty integration
 - **`compatibility.yml`**: Python version compatibility testing
 - **`release.yml`**: Release automation and publishing
 

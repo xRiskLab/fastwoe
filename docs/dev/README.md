@@ -6,7 +6,7 @@ This directory contains documentation for developers and contributors working on
 
 - **[act-local-testing.md](act-local-testing.md)** - Guide for testing GitHub Actions workflows locally using act
 - **[ci-type-checking.md](ci-type-checking.md)** - CI type checking setup and configuration
-- **[type-checking.md](type-checking.md)** - Type checking setup and pyrefly configuration
+- **[type-checking.md](type-checking.md)** - Type checking setup and ty configuration
 
 ## User Documentation
 

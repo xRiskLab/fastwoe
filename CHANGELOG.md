@@ -1,5 +1,75 @@
 # Changelog
 
+## Version 0.1.4.post2 (Current)
+
+**Monotonic Constraints Support**: Complete implementation across all binning methods
+
+- **New Features**:
+  - **Monotonic Constraints**: Added comprehensive monotonic constraints support for credit scoring compliance
+    - **Tree Method**: Native scikit-learn monotonic constraints (`monotonic_cst` parameter)
+    - **KBins Method**: Isotonic regression post-processing to enforce constraints
+    - **FAISS KMeans Method**: Isotonic regression post-processing to enforce constraints
+    - **Constraint Values**: `1` (increasing), `-1` (decreasing), `0` (no constraint)
+    - **Validation**: Comprehensive input validation with clear error messages
+    - **Binning Info**: Monotonic constraints stored in `binning_info_` and displayed in summaries
+  - **Isotonic Regression Integration**: Added `_apply_isotonic_constraints` method
+    - Uses scikit-learn's `IsotonicRegression` for KBins and FAISS methods
+    - Enforces monotonic patterns on WOE values after initial binning
+    - Handles bin center extraction and constraint application
+  - **Comprehensive Testing**: Added extensive test coverage for monotonic constraints
+    - Tests for all binning methods (Tree, KBins, FAISS)
+    - Tests for multiclass and continuous targets
+    - Tests for edge cases and validation
+    - Tests for backward compatibility
+  - **Enhanced Documentation**: Updated README and examples
+    - Added detailed monotonic constraints section with examples
+    - Updated API reference with `monotonic_cst` parameter
+    - Created comprehensive example (`examples/fastwoe_monotonic.py`)
+
+- **API Changes**:
+  - **FastWoe**: Added `monotonic_cst` parameter to constructor
+    - Type: `dict[str, int]` mapping feature names to constraint values
+    - Default: `None` (no constraints applied)
+    - Validation: Ensures valid constraint values (-1, 0, 1) and feature names
+  - **Binning Summary**: Added `monotonic_constraint` column to `get_binning_summary()`
+  - **Binning Info**: Added `monotonic_constraint` field to `binning_info_`
+
+- **Bug Fixes**:
+  - Fixed bare `except:` clause in isotonic constraints implementation
+  - Updated test for unsupported methods warning (now tests invalid method instead)
+  - Fixed FAISS API compatibility issue with `index.search` method
+
+- **Examples**:
+  - **New**: `examples/fastwoe_monotonic.py` - Comprehensive monotonic constraints demonstration
+    - Shows all binning methods with constraints
+    - Compares KBins strategies (uniform, quantile, kmeans)
+    - Analyzes monotonic patterns and performance
+    - Provides readable table outputs instead of plots
+
+- **Technical Details**:
+  - **Tree Method**: Uses scikit-learn's native `monotonic_cst` parameter
+  - **KBins/FAISS Methods**: Applies isotonic regression after WOE calculation
+  - **Performance**: Constraints may slightly affect performance but ensure business logic compliance
+  - **Compatibility**: Fully backward compatible - existing code works unchanged
+
+## Version 0.1.4.post1
+
+**Bug Fix Release**: Fixed pyrefly type checking comments appearing in output
+
+- **Bug Fixes**:
+  - Fixed `# pyrefly: ignore` comments being printed in `WeightOfEvidence.summary()` output
+  - Migrated from `pyrefly` to `ty` type checker
+  - Updated all type checking comments to use standard `# type: ignore[error-code]` format
+  - Fixed f-string formatting issues in summary method
+
+- **Infrastructure**:
+  - **Type Checking Migration**: Complete migration from `pyrefly` to `ty`
+    - Moved `ty.toml` configuration into `pyproject.toml`
+    - Updated GitHub Actions workflow to use `ty`
+    - Updated Makefile targets for `ty` commands
+    - Updated documentation for new type checking setup
+  - **Dependencies**: Updated dev dependencies to use `ty>=0.0.1a21`
+
 ## Version 0.1.4 (Current)
 
 **Multiclass Support & Enhanced Tree Binning**: Major feature additions and API improvements

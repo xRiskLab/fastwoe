@@ -23,18 +23,8 @@ format-check:  ## Check code formatting
 	uv run ruff format --check fastwoe
 
 typecheck:  ## Run type checking (lenient mode)
-	@echo "Running pyrefly type checking..."
-	@uv run pyrefly check fastwoe/fastwoe.py fastwoe/interpret_fastwoe.py \
-		--ignore missing-attribute \
-		--ignore bad-argument-type \
-		--ignore unsupported-operation \
-		--ignore not-iterable \
-		--ignore no-matching-overload \
-		--ignore missing-argument \
-		--ignore bad-return \
-		--ignore bad-assignment \
-		--ignore missing-module-attribute \
-		--summary=none || { \
+	@echo "Running ty type checking..."
+	@uv run ty check fastwoe/fastwoe.py fastwoe/interpret_fastwoe.py || { \
 		echo "⚠️  Type checking completed with some remaining errors."; \
 		echo "   Remaining errors are expected for pandas/numpy/faiss usage."; \
 		echo "✅ Development mode: Treating expected type errors as success"; \
@@ -43,19 +33,9 @@ typecheck:  ## Run type checking (lenient mode)
 	@echo "✅ Type checking passed"
 
 typecheck-strict:  ## Run type checking (strict mode)
-	@echo "Running pyrefly type checking (strict mode)..."
+	@echo "Running ty type checking (strict mode)..."
 	@echo "🔒 Strict mode enabled"
-	@uv run pyrefly check fastwoe/fastwoe.py fastwoe/interpret_fastwoe.py \
-		--ignore missing-attribute \
-		--ignore bad-argument-type \
-		--ignore unsupported-operation \
-		--ignore not-iterable \
-		--ignore no-matching-overload \
-		--ignore missing-argument \
-		--ignore bad-return \
-		--ignore bad-assignment \
-		--ignore missing-module-attribute \
-		--summary=full || { \
+	@uv run ty check fastwoe/fastwoe.py fastwoe/interpret_fastwoe.py || { \
 		echo "⚠️  Strict type checking found issues (expected for pandas/numpy code)"; \
 		exit 1; \
 	}
@@ -73,17 +53,7 @@ check-all: format-check lint typecheck  ## Run all checks (format, lint, typeche
 ci-check: format-check lint  ## Run CI checks (without strict type checking)
 	@echo "🔍 Running type checking in CI mode..."
 	@echo "This mode ignores expected pandas/numpy/faiss type complexity"
-	@uv run pyrefly check fastwoe/fastwoe.py fastwoe/interpret_fastwoe.py \
-		--ignore missing-attribute \
-		--ignore bad-argument-type \
-		--ignore unsupported-operation \
-		--ignore not-iterable \
-		--ignore no-matching-overload \
-		--ignore missing-argument \
-		--ignore bad-return \
-		--ignore bad-assignment \
-		--ignore missing-module-attribute \
-		--summary=none || { \
+	@uv run ty check fastwoe/fastwoe.py fastwoe/interpret_fastwoe.py || { \
 		echo "⚠️  Type checking completed with some remaining errors."; \
 		echo "   Remaining errors are expected for pandas/numpy/faiss usage."; \
 		echo "🔧 CI mode: Treating expected type errors as success"; \

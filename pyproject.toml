@@ -168,7 +168,7 @@ dev = [
     "seaborn>=0.11.0",
     "rich>=13.7.0", # Required for pretty printing
     "prek>=0.2.0",
-    "pyrefly>=0.1.0",
+    "ty>=0.0.1a21",
 ]
 
 
@@ -195,19 +195,15 @@ max-line-length = 88
 # Allow single letter variable names (common in ML: X, y)
 good-names = ["i", "j", "k", "ex", "Run", "_", "X", "y"]
 
-[tool.pyrefly]
-# Project configuration
-project_includes = ["fastwoe"]
-project_excludes = ["**/__pycache__", ".venv", "build", "dist", "tests", "examples", "fastwoe/fast_somersd.py"]
-python_version = "3.9"
+[tool.ty.rules]
+# Disable specific rules that are problematic for Jupyter notebooks
+unresolved-reference = "ignore"
+possibly-unbound-attribute = "ignore"
+unresolved-import = "ignore"
+# FAISS has incorrect type information in ty
+missing-argument = "ignore"
 
-# Type checking behavior - use only supported options
-strict = false
-
-# Ignore problematic error types for pandas/numpy/numba/faiss code
-# These are necessary because type checkers struggle with:
-# - Dynamic pandas attributes and complex DataFrame operations
-# - NumPy array method inference
-# - FAISS C++ bindings (optional dependency)
-# - Complex generic type inference in data science libraries
-ignore_missing_imports = ["faiss", "faiss.extra_wrappers"]
+[[tool.ty.overrides]]
+# Suppress errors in examples/ directory for optional dependencies and example-specific type issues
+include = ["examples/**"]
+rules = { unresolved-import = "ignore", unsupported-operator = "ignore" }
