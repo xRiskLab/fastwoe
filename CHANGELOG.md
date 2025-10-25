@@ -1,6 +1,60 @@
 # Changelog
 
-## Version 0.1.4.post2 (Current)
+## Version 0.1.5a1 (Current)
+
+**Multiclass WOE Refactoring & Bug Fixes**: Major code organization improvements and multiclass prediction fixes
+
+- **Code Organization**:
+  - **Multiclass Separation**: Extracted multiclass functionality into dedicated `fastwoe_multiclass.py` module
+    - Created `MulticlassWoeMixin` class for clean separation of concerns
+    - FastWoe now inherits multiclass capabilities through mixin pattern
+    - Improved maintainability and testability of multiclass code
+    - Reduced main `fastwoe.py` file complexity by ~300 lines
+  - **Type Stubs**: Added `typings/` folder with stub files for better IDE support
+    - Included type stubs for scipy modules (special, stats)
+    - Improves type checking and autocomplete in IDEs
+    - Added `py.typed` marker for PEP 561 compliance
+  - **Better Architecture**: Cleaner separation between binary and multiclass WOE logic
+  - **Reusability**: Multiclass mixin can be reused for other WOE implementations
+
+- **Multiclass WOE Bug Fixes**:
+  - **Fixed Missing Parameter Bug**: Added missing `X` parameter to `_create_mapping_df()` method
+    - Previously caused "divide by zero" warnings with all counts showing as 0
+    - Fixed by passing `X` DataFrame from `_create_multiclass_encoders()` to enable proper count calculation
+  - **Fixed Array Flattening Issue**: Enhanced `_transform_multiclass()` to properly handle 2D arrays from TargetEncoder
+    - Added proper check: `if isinstance(event_rate, np.ndarray) and event_rate.ndim == 2: event_rate = event_rate.flatten()`
+    - Previously caused NaN values that made LogisticRegression fail
+  - **Fixed WOE Calculation Formula**: Removed incorrect epsilon addition
+    - Previous: `odds_prior = (self.y_prior_[class_label] + 1e-10) / (1 - self.y_prior_[class_label] + 1e-10)`
+    - Corrected: `odds_prior = self.y_prior_[class_label] / (1 - self.y_prior_[class_label])`
+  - **Fixed Probability Prediction Logic**: Corrected `_predict_multiclass_proba()` implementation
+    - Implemented proper simple-vs-composite hypothesis framework (Good, 1950)
+    - Fixed formula: `log_posterior_odds = class_woe + log_prior` then `sigmoid(log_posterior_odds)`
+    - Removed double sigmoid application bug
+    - Fixed loop storage issue where `log_posterior_odds` was computed but never stored in output matrix
+    - Added proper enumeration: `for i, class_label in enumerate(self.classes_)` with `woe_scores[:, i] = log_posterior_odds`
+
+- **Monotonic Constraints Bug Fix**:
+  - **Fixed Infinity Parsing**: Enhanced `_apply_isotonic_constraints()` to properly handle infinity symbols in bin labels
+    - Added handling for `"-∞"` and `"∞"` strings in bin edge parsing
+    - Implemented proper bin center calculation for infinite bounds:
+      - Left-infinite bins: use `end - 1` as center
+      - Right-infinite bins: use `start + 1` as center
+    - Fixed bug where isotonic regression would fail on bins like `(-∞, 3.0]` and `(28.5, ∞)`
+
+- **Testing & Quality**:
+  - All 156 tests passing successfully ✅
+  - Test coverage: 73% overall (1651 statements, 448 missed)
+  - Comprehensive coverage of multiclass functionality
+  - Verified monotonic constraints work across all binning methods
+  - Type checking: All checks passing with `ty check`
+  - Linting: All checks passing with `ruff check` and `ruff format`
+
+- **Examples**:
+  - **Updated**: `examples/fastwoe_multiclass.ipynb` with corrected probability calculations
+  - **Updated**: `examples/fastwoe_monotonic.ipynb` with proper parameter name (`monotonic_cst`)
+
+## Version 0.1.4.post2
 
 **Monotonic Constraints Support**: Complete implementation across all binning methods
 

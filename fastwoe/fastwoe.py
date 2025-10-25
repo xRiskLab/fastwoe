@@ -1,63 +1,20 @@
 """fastwoe.py."""
 
 import contextlib
-import math
 import warnings
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Dict,
-    Optional,
-    Protocol,
-    Union,
-    runtime_checkable,
-)
+from typing import Any, Dict, Optional, Union
 
 import numpy as np
 import pandas as pd
-from scipy.special import expit as sigmoid  # pylint: disable=no-name-in-module
-
-if TYPE_CHECKING:
-
-    @runtime_checkable
-    class NormProtocol(Protocol):
-        """Protocol for a normal distribution with a ppf method."""
-
-        def ppf(self, q: float) -> float: ...
-
-    # type checkers will think norm always matches this interface
-    norm: NormProtocol
-else:
-    try:
-        from scipy.stats import norm  # type: ignore
-    except ImportError:
-
-        class MockNorm:
-            """Fallback normal distribution with rough ppf approximation."""
-
-            def ppf(self, q: float) -> float:
-                if q <= 0:
-                    return float("-inf")
-                if q >= 1:
-                    return float("inf")
-                if q == 0.5:
-                    return 0.0
-                # crude Box-Muller style approximation
-                return (
-                    math.sqrt(-2 * math.log(q))
-                    if q < 0.5
-                    else -math.sqrt(-2 * math.log(1 - q))
-                )
-
-        norm = MockNorm()
-
+from scipy.special import expit as sigmoid
+from scipy.stats import norm
 from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import KBinsDiscretizer, TargetEncoder
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
 from .fast_somersd import somersd_yx
+from .fastwoe_multiclass import MulticlassWoeMixin
 
 
 class WoePreprocessor(BaseEstimator, TransformerMixin):
@@ -117,18 +74,15 @@ class WoePreprocessor(BaseEstimator, TransformerMixin):
             vc_filtered = vc[vc >= self.min_count]
 
             # Fallback: if ALL categories are below min_count, keep the most frequent
-            # type: ignore[missing-attribute]
             if vc_filtered.empty:
                 top_cats = [vc.idxmax()]
             elif self.top_p is not None:
                 # Calculate cumulative as percentage of ORIGINAL total
                 cumulative = vc_filtered.cumsum() / vc.sum()
                 top_cats = cumulative[cumulative <= self.top_p].index.tolist() or [
-                    # type: ignore[missing-attribute]
                     vc_filtered.idxmax()
                 ]
             else:
-                # type: ignore[missing-attribute]
                 top_cats = vc_filtered.nlargest(self.max_categories).index.tolist()
 
             self.category_maps[col] = set(top_cats)
@@ -139,7 +93,6 @@ class WoePreprocessor(BaseEstimator, TransformerMixin):
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
         """Transform by replacing rare categories with other_token."""
         X_ = X.copy()
-        # type: ignore[not-iterable]
         for col in self.cat_features_:
             if col in X_.columns:
                 allowed = self.category_maps[col]
@@ -166,7 +119,6 @@ class WoePreprocessor(BaseEstimator, TransformerMixin):
     def get_reduction_summary(self, X: pd.DataFrame) -> pd.DataFrame:  # pylint: disable=invalid-name
         """Get summary of cardinality reduction per feature."""
         summary = []
-        # type: ignore[not-iterable]
         for col in self.cat_features_:
             if col in X.columns:
                 original_cats = X[col].nunique()
@@ -182,7 +134,7 @@ class WoePreprocessor(BaseEstimator, TransformerMixin):
         return pd.DataFrame(summary)
 
 
-class FastWoe:  # pylint: disable=invalid-name
+class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
     """
     Fast Weight of Evidence (WOE) Encoder using scikit-learn's TargetEncoder.
     Stores mapping tables for each categorical feature, including:
@@ -216,12 +168,6 @@ class FastWoe:  # pylint: disable=invalid-name
         Additional keyword arguments for the tree estimator.
     faiss_kwargs : dict, optional
         Additional keyword arguments for FAISS KMeans (when binning_method="faiss_kmeans").
-    monotonic_cst : dict, optional
-        Monotonic constraints for numerical features. Maps feature names to constraint values:
-        - 1: increasing constraint (higher values → higher risk)
-        - -1: decreasing constraint (higher values → lower risk)
-        - 0: no constraint
-        Only supported for tree binning method. Example: {"income": 1, "age": -1}
 
     Attributes:
     ----------
@@ -233,8 +179,6 @@ class FastWoe:  # pylint: disable=invalid-name
         Per-feature statistics (Gini, IV, etc.).
     y_prior_ : float
         Mean target in fit data.
-    monotonic_cst : dict
-        Monotonic constraints for features.
 
     """
 
@@ -251,6 +195,7 @@ class FastWoe:  # pylint: disable=invalid-name
         faiss_kwargs=None,
         monotonic_cst=None,
     ):
+        super().__init__()
         # Set up encoder kwargs - will be updated in fit() based on target type
         default_kwargs: dict[str, Any] = {"smooth": 1e-5}
         if encoder_kwargs is None:
@@ -283,6 +228,29 @@ class FastWoe:  # pylint: disable=invalid-name
         )
 
         self.random_state = random_state
+
+        # Monotonic constraints: dict mapping feature names to constraint values
+        # 1 = increasing, -1 = decreasing, 0 = no constraint
+        if monotonic_cst is not None and not isinstance(monotonic_cst, dict):
+            raise TypeError("monotonic_cst must be a dictionary")
+        self.monotonic_cst = monotonic_cst if monotonic_cst is not None else {}
+
+        # Validate monotonic constraints
+        if self.monotonic_cst:
+            for feature, constraint in self.monotonic_cst.items():
+                if not isinstance(feature, str):
+                    raise TypeError(
+                        f"Feature names in monotonic_cst must be strings, got {type(feature).__name__}"
+                    )
+                if not isinstance(constraint, int):
+                    raise TypeError(
+                        f"Constraint values must be integers, got {type(constraint).__name__} for feature '{feature}'"
+                    )
+                if constraint not in [-1, 0, 1]:
+                    raise ValueError(
+                        f"Constraint value must be -1, 0, or 1, got {constraint} for feature '{feature}'"
+                    )
+
         self.encoders_: dict[str, Any] = {}
         self.mappings_: dict[str, pd.DataFrame] = {}
         self.feature_stats_: dict[str, dict[str, Any]] = {}
@@ -291,46 +259,10 @@ class FastWoe:  # pylint: disable=invalid-name
         ] = {}  # Store fitted binners for numerical features
         self.binning_info_: dict[str, dict[str, Any]] = {}  # Store binning summary info
         self.y_prior_: Optional[Union[float, Dict[Union[int, str], float]]] = None
+        self.odds_prior_: Optional[float] = None
         self.is_fitted_: bool = False
         self.is_continuous_target: Optional[bool] = None
         self.is_binary_target: Optional[bool] = None
-
-        # Monotonic constraints: dict mapping feature names to constraint values
-        # 1 = increasing, -1 = decreasing, 0 = no constraint
-        self.monotonic_cst: dict[str, int] = monotonic_cst or {}
-
-        # Validate monotonic constraints
-        if self.monotonic_cst:
-            self._validate_monotonic_constraints()
-
-    def _validate_monotonic_constraints(self):
-        """Validate monotonic constraints parameter."""
-        if not isinstance(self.monotonic_cst, dict):
-            raise TypeError("monotonic_cst must be a dictionary")
-
-        for feature_name, constraint in self.monotonic_cst.items():
-            if not isinstance(feature_name, str):
-                raise TypeError(
-                    f"Feature names in monotonic_cst must be strings, got {type(feature_name)}"
-                )
-            if not isinstance(constraint, int):
-                raise TypeError(
-                    f"Constraint values must be integers, got {type(constraint)} for feature '{feature_name}'"
-                )
-            if constraint not in [-1, 0, 1]:
-                raise ValueError(
-                    f"Constraint value must be -1, 0, or 1, got {constraint} for feature '{feature_name}'"
-                )
-
-        # Check if monotonic constraints are used with unsupported binning methods
-        if self.binning_method not in ["tree", "kbins", "faiss_kmeans"]:
-            unsupported_features = list(self.monotonic_cst.keys())
-            warnings.warn(
-                f"Monotonic constraints are supported with tree (native), kbins (isotonic regression), and faiss_kmeans (isotonic regression) binning methods. "
-                f"Constraints for features {unsupported_features} will be ignored.",
-                UserWarning,
-                stacklevel=2,
-            )
 
     def _setup_binner_kwargs(
         self, binning_method, binner_kwargs, tree_kwargs, faiss_kwargs, random_state
@@ -400,7 +332,6 @@ class FastWoe:  # pylint: disable=invalid-name
             return np.nan
 
         # Remove any NaN values
-        # type: ignore[unsupported-operation]
         mask = ~(np.isnan(y_true) | np.isnan(y_pred))
         if not mask.any():
             return np.nan
@@ -445,73 +376,6 @@ class FastWoe:  # pylint: disable=invalid-name
             variance = 1.0 / good_count + 1.0 / bad_count
 
         return np.sqrt(variance)
-
-    def _apply_isotonic_constraints(self, mapping_df, constraint_value):
-        """
-        Apply isotonic regression to enforce monotonic constraints on WOE values.
-
-        Parameters
-        ----------
-        mapping_df : pd.DataFrame
-            Mapping table with WOE statistics
-        constraint_value : int
-            Monotonic constraint: 1 (increasing), -1 (decreasing), 0 (no constraint)
-
-        Returns:
-        -------
-        pd.DataFrame
-            Updated mapping table with monotonic WOE values
-        """
-        if constraint_value == 0:
-            return mapping_df
-
-        # Extract bin centers and WOE values
-        bin_centers = []
-        woe_values = []
-
-        for _, row in mapping_df.iterrows():
-            bin_str = row.name  # Category name contains bin range
-            if "(" in bin_str and "," in bin_str:
-                try:
-                    # Extract numeric range from bin string like "(20.0, 40.0]"
-                    start = float(bin_str.split("(")[1].split(",")[0])
-                    end = float(bin_str.split(",")[1].split("]")[0])
-                    center = (start + end) / 2
-                    bin_centers.append(center)
-                    woe_values.append(row["woe"])
-                except (ValueError, IndexError):
-                    # If we can't parse the bin, use the original WOE value
-                    bin_centers.append(len(bin_centers))  # Use index as fallback
-                    woe_values.append(row["woe"])
-            else:
-                # For non-numeric bins, use index
-                bin_centers.append(len(bin_centers))
-                woe_values.append(row["woe"])
-
-        if len(bin_centers) < 2:
-            return mapping_df  # Need at least 2 points for isotonic regression
-
-        bin_centers = np.array(bin_centers)
-        woe_values = np.array(woe_values)
-
-        # Apply isotonic regression
-        if constraint_value == 1:  # Increasing constraint
-            # For increasing: higher values should have higher WOE
-            iso_reg = IsotonicRegression(increasing=True, out_of_bounds="clip")
-        else:  # constraint_value == -1, Decreasing constraint
-            # For decreasing: higher values should have lower WOE
-            iso_reg = IsotonicRegression(increasing=False, out_of_bounds="clip")
-
-        # Fit isotonic regression
-        iso_reg.fit(bin_centers.reshape(-1, 1), woe_values)
-        monotonic_woe = iso_reg.predict(bin_centers.reshape(-1, 1))
-
-        # Update the mapping DataFrame with monotonic WOE values
-        mapping_df_updated = mapping_df.copy()
-        for i, (_, row) in enumerate(mapping_df.iterrows()):
-            mapping_df_updated.loc[row.name, "woe"] = monotonic_woe[i]
-
-        return mapping_df_updated
 
     def _calculate_woe_ci(self, woe_value, se_value, alpha=0.05):
         """
@@ -681,7 +545,7 @@ class FastWoe:  # pylint: disable=invalid-name
             if isinstance(event_rate, pd.DataFrame):
                 event_rate = event_rate.values.flatten()
             event_rate = np.clip(event_rate, 1e-15, 1 - 1e-15)
-            odds_cat = event_rate / (1 - event_rate)  # type: ignore
+            odds_cat = event_rate / (1 - event_rate)
             woe_values = np.log(odds_cat / odds_prior)
 
         # Calculate IV and its standard error
@@ -780,7 +644,7 @@ class FastWoe:  # pylint: disable=invalid-name
         is_binary = unique_targets == 2 and set(unique_values).issubset({0, 1})
 
         # Multiclass: more than 2 unique values and not continuous proportions
-        is_multiclass = unique_targets > 2 and not is_continuous
+        is_multiclass = self._detect_multiclass_target(y)
 
         if not (is_continuous or is_binary or is_multiclass):
             if unique_targets == 1:
@@ -848,21 +712,10 @@ class FastWoe:  # pylint: disable=invalid-name
 
         # Handle multiclass targets with one-vs-rest approach
         if self.is_multiclass_target:
-            self.classes_ = sorted(y_series.unique())
-            self.n_classes_ = len(self.classes_)
-            self.y_prior_ = {}  # Dictionary of priors for each class
-            self.odds_prior_per_class_ = {}
-
-            # Calculate priors for each class
-            for class_label in self.classes_:
-                class_prior = float((y_series == class_label).mean())
-                self.y_prior_[class_label] = class_prior
-                self.odds_prior_per_class_[class_label] = class_prior / (
-                    1 - class_prior
-                )
+            self._setup_multiclass_target(y)
         else:
             self.y_prior_ = float(y.mean())
-            odds_prior = self.y_prior_ / (1 - self.y_prior_)
+            self.odds_prior_ = self.y_prior_ / (1 - self.y_prior_)
 
         self.encoders_ = {}
         self.mappings_ = {}
@@ -870,98 +723,8 @@ class FastWoe:  # pylint: disable=invalid-name
 
         for col in X_processed.columns:
             if self.is_multiclass_target:
-                # For multiclass, create one encoder per class (one-vs-rest)
-                self.encoders_[col] = {}
-                self.mappings_[col] = {}
-                self.feature_stats_[col] = {}
-
-                for class_label in self.classes_:
-                    # Create binary target: 1 for current class, 0 for all others
-                    y_binary = (y_series == class_label).astype(int)
-
-                    # Use binary target type for one-vs-rest
-                    encoder_kwargs = self.encoder_kwargs.copy()
-                    encoder_kwargs["target_type"] = "binary"
-
-                    enc = TargetEncoder(
-                        **encoder_kwargs, random_state=self.random_state
-                    )
-                    enc.fit(X_processed[[col]], y_binary)
-                    self.encoders_[col][class_label] = enc
-
-                    # Get unique categories as seen by the encoder
-                    categories = enc.categories_[0]
-                    event_rates = enc.encodings_[0]
-
-                    # Defensive clipping to avoid log(0)
-                    event_rates = np.clip(event_rates, 1e-15, 1 - 1e-15)
-                    odds_cat = event_rates / (1 - event_rates)
-                    woe = np.log(odds_cat / self.odds_prior_per_class_[class_label])
-
-                    # Count for each category in training data
-                    value_counts = X_processed[col].value_counts(dropna=False)
-                    count = (
-                        pd.Series(value_counts)
-                        .reindex(categories)
-                        .fillna(0)
-                        .astype(int)
-                        .values
-                    )
-
-                    # Enhanced mapping with more details
-                    good_counts = np.round(count * (1 - event_rates)).astype(int)
-                    bad_counts = np.round(count * event_rates).astype(int)
-
-                    # Calculate WOE standard errors for each category
-                    woe_se = np.array(
-                        [
-                            self._calculate_woe_se(good_count, bad_count)
-                            for good_count, bad_count in zip(good_counts, bad_counts)
-                        ]
-                    )
-
-                    # Calculate confidence intervals for WOE values
-                    woe_ci_lower = []
-                    woe_ci_upper = []
-                    for woe_val, se_val in zip(woe, woe_se):
-                        ci_lower, ci_upper = self._calculate_woe_ci(woe_val, se_val)
-                        woe_ci_lower.append(ci_lower)
-                        woe_ci_upper.append(ci_upper)
-
-                    mapping_df = pd.DataFrame(
-                        {
-                            "category": categories,
-                            "count": count,
-                            "count_pct": (
-                                count.astype(float) / len(X_processed) * 100
-                            ).tolist(),
-                            "good_count": good_counts,
-                            "bad_count": bad_counts,
-                            "event_rate": np.round(event_rates, 6),
-                            "woe": woe,
-                            "woe_se": woe_se,
-                            "woe_ci_lower": woe_ci_lower,
-                            "woe_ci_upper": woe_ci_upper,
-                        }
-                    ).set_index("category")
-
-                    # Apply isotonic constraints for KBins and FAISS methods
-                    if col in self.monotonic_cst and self.binning_method in [
-                        "kbins",
-                        "faiss_kmeans",
-                    ]:
-                        constraint_value = self.monotonic_cst[col]
-                        if constraint_value != 0:
-                            mapping_df = self._apply_isotonic_constraints(
-                                mapping_df, constraint_value
-                            )
-
-                    self.mappings_[col][class_label] = mapping_df
-
-                    # Calculate feature-level statistics for this class
-                    self.feature_stats_[col][class_label] = (
-                        self._calculate_feature_stats(col, X_processed, y, mapping_df)
-                    )
+                self._create_multiclass_encoders(X_processed, y)
+                break  # Break after creating all encoders
             else:
                 # Binary or continuous case
                 enc = TargetEncoder(
@@ -977,7 +740,7 @@ class FastWoe:  # pylint: disable=invalid-name
                 # Defensive clipping to avoid log(0)
                 event_rates = np.clip(event_rates, 1e-15, 1 - 1e-15)
                 odds_cat = event_rates / (1 - event_rates)
-                woe = np.log(odds_cat / odds_prior)
+                woe = np.log(odds_cat / self.odds_prior_)
 
                 # Count for each category in training data
                 value_counts = X_processed[col].value_counts(dropna=False)
@@ -1030,16 +793,9 @@ class FastWoe:  # pylint: disable=invalid-name
                     }
                 ).set_index("category")
 
-                # Apply isotonic constraints for KBins and FAISS methods
-                if col in self.monotonic_cst and self.binning_method in [
-                    "kbins",
-                    "faiss_kmeans",
-                ]:
-                    constraint_value = self.monotonic_cst[col]
-                    if constraint_value != 0:
-                        mapping_df = self._apply_isotonic_constraints(
-                            mapping_df, constraint_value
-                        )
+                # Apply isotonic constraints if specified
+                if col in self.monotonic_cst and self.monotonic_cst[col] != 0:
+                    mapping_df = self._apply_isotonic_constraints(mapping_df, col)
 
                 self.mappings_[col] = mapping_df
 
@@ -1071,7 +827,6 @@ class FastWoe:  # pylint: disable=invalid-name
         # Convert numpy arrays and Series to pandas DataFrame if needed
         if isinstance(X, np.ndarray):
             column_names = [f"feature_{i}" for i in range(X.shape[1])]
-            # type: ignore[bad-argument-type]
             X = pd.DataFrame(X, columns=column_names)
             warnings.warn(
                 "Input X is a numpy array. Converting to pandas DataFrame with generic column names. "
@@ -1091,8 +846,6 @@ class FastWoe:  # pylint: disable=invalid-name
         if not self.is_fitted_:
             raise ValueError("Model must be fitted before transforming data")
 
-        # Calculate odds_prior for non-multiclass targets
-        odds_prior = None
         if not self.is_multiclass_target:
             odds_prior = self.y_prior_ / (1 - self.y_prior_)
         woe_df = pd.DataFrame(index=X.index)
@@ -1106,13 +859,11 @@ class FastWoe:  # pylint: disable=invalid-name
                 binning_info = self.binning_info_[col]
                 X_col = X_processed[[col]].copy()
                 if hasattr(X_col[col], "isna"):
-                    # type: ignore[missing-attribute]
                     mask_missing = X_col[col].isna()
                 else:
                     # For numpy arrays, use pd.isna
                     mask_missing = pd.isna(X_col[col])
 
-                # type: ignore[missing-attribute]
                 if not mask_missing.all():  # If there are any non-missing values
                     # Ensure column is object type to accept strings
                     X_processed[col] = X_processed[col].astype("object")
@@ -1214,44 +965,27 @@ class FastWoe:  # pylint: disable=invalid-name
                         )
 
                 # Handle missing values
-                # type: ignore[missing-attribute]
                 if mask_missing.any():
                     X_processed.loc[mask_missing, col] = "Missing"
 
         for col in X_processed.columns:
             if self.is_multiclass_target:
-                # For multiclass, create one column per class
-                for class_label in self.classes_:
-                    enc = self.encoders_[col][class_label]
-                    event_rate = enc.transform(X_processed[[col]])
+                return self._transform_multiclass(X_processed)
+            # Binary or continuous case
+            enc = self.encoders_[col]
+            event_rate = enc.transform(X_processed[[col]])
 
-                    # Binary case for this class
-                    if isinstance(event_rate, pd.DataFrame):
-                        event_rate = event_rate.values.flatten()
-                    event_rate = np.clip(event_rate, 1e-15, 1 - 1e-15)
-                    odds_cat = event_rate / (1 - event_rate)
-                    woe = np.log(odds_cat / self.odds_prior_per_class_[class_label])
-
-                    # Create column name with class suffix
-                    col_name = f"{col}_class_{class_label}"
-                    woe_df[col_name] = woe
-            else:
-                # Binary or continuous case
-                enc = self.encoders_[col]
-                event_rate = enc.transform(X_processed[[col]])
-
-                if isinstance(event_rate, pd.DataFrame):
-                    event_rate = event_rate.values.flatten()
-                event_rate = np.clip(event_rate, 1e-15, 1 - 1e-15)
-                odds_cat = event_rate / (1 - event_rate)  # type: ignore
-                woe = np.log(odds_cat / odds_prior)
-                woe_df[col] = woe  # Keep original column name
+            if isinstance(event_rate, pd.DataFrame):
+                event_rate = event_rate.values.flatten()
+            event_rate = np.clip(event_rate, 1e-15, 1 - 1e-15)
+            odds_cat = event_rate / (1 - event_rate)
+            woe = np.log(odds_cat / self.odds_prior_)
+            woe_df[col] = woe  # Keep original column name
 
         return woe_df
 
     def fit_transform(self, X: pd.DataFrame, y=None, **_fit_params) -> pd.DataFrame:
         """Fit and transform in one step."""
-        # type: ignore[bad-argument-type]
         return self.fit(X, y).transform(X)
 
     def get_mapping(
@@ -1269,13 +1003,7 @@ class FastWoe:  # pylint: disable=invalid-name
             raise ValueError(f"Feature '{feature}' not found in fitted features")
 
         if self.is_multiclass_target:
-            if class_label is None:
-                class_label = self.classes_[0]
-            if class_label not in self.mappings_[feature]:
-                raise ValueError(
-                    f"Class '{class_label}' not found for feature '{feature}'. Available classes: {self.classes_}"
-                )
-            mapping = self.mappings_[feature][class_label].copy()
+            mapping = self._get_multiclass_mapping(feature, class_label)
         else:
             mapping = self.mappings_[feature].copy()
         # For binned numerical features, reindex by bin_labels
@@ -1373,7 +1101,6 @@ class FastWoe:  # pylint: disable=invalid-name
             # So SE(p) = SE(WOE) * p * (1-p)
             probabilities = mapping["event_rate"].values
             woe_se = mapping["woe_se"].values
-            # type: ignore[unsupported-operation]
             prob_se = woe_se * probabilities * (1 - probabilities)
             prob_mapping["probability_se"] = prob_se
 
@@ -1389,24 +1116,7 @@ class FastWoe:  # pylint: disable=invalid-name
         If class_label is None and target is multiclass, returns stats for first class.
         """
         if self.is_multiclass_target:
-            if col is not None:
-                if class_label is None:
-                    class_label = self.classes_[0]
-                if class_label not in self.feature_stats_[col]:
-                    raise ValueError(
-                        f"Class '{class_label}' not found for feature '{col}'. Available classes: {self.classes_}"
-                    )
-                return pd.DataFrame([self.feature_stats_[col][class_label]])
-            else:
-                # Return stats for all features and all classes
-                all_stats = []
-                for feature_name, feature_stats in self.feature_stats_.items():
-                    for class_label, stats in feature_stats.items():
-                        stats_copy = stats.copy()
-                        stats_copy["feature"] = f"{feature_name}_class_{class_label}"
-                        stats_copy["class"] = class_label
-                        all_stats.append(stats_copy)
-                return pd.DataFrame(all_stats)
+            return self._get_multiclass_feature_stats(col, class_label)
         else:
             # Binary case (original implementation)
             if col is not None:
@@ -1417,7 +1127,6 @@ class FastWoe:  # pylint: disable=invalid-name
     def get_feature_summary(self) -> pd.DataFrame:
         """Get a summary table of all features ranked by predictive power."""
         stats_df = self.get_feature_stats()
-        # type: ignore[bad-return]
         return stats_df.sort_values("gini", ascending=False)[
             ["feature", "gini", "iv", "n_categories"]
         ].round(4)
@@ -1449,99 +1158,46 @@ class FastWoe:  # pylint: disable=invalid-name
             raise ValueError("FastWoe must be fitted before getting IV analysis")
 
         if self.is_multiclass_target:
-            if col is not None:
-                if class_label is None:
-                    class_label = self.classes_[0]
-                if col not in self.feature_stats_:
-                    raise ValueError(f"Feature '{col}' not found in fitted features")
-                if class_label not in self.feature_stats_[col]:
-                    raise ValueError(
-                        f"Class '{class_label}' not found for feature '{col}'. Available classes: {self.classes_}"
-                    )
-                stats = self.feature_stats_[col][class_label]
-                return pd.DataFrame(
-                    [
-                        {
-                            "feature": f"{stats['feature']}_class_{class_label}",
-                            "class": class_label,
-                            "iv": stats["iv"],
-                            "iv_se": stats["iv_se"],
-                            "iv_ci_lower": stats["iv_ci_lower"],
-                            "iv_ci_upper": stats["iv_ci_upper"],
-                            "iv_significance": "Significant"
-                            if stats["iv_ci_lower"] > 0
-                            else "Not Significant",
-                            "n_categories": stats["n_categories"],
-                            "gini": stats["gini"],
-                        }
-                    ]
-                )
-            else:
-                # Return analysis for all features and all classes
-                analysis_data = []
-                for _, feature_stats in self.feature_stats_.items():
-                    for class_label, stats in feature_stats.items():
-                        analysis_data.append(
-                            {
-                                "feature": f"{stats['feature']}_class_{class_label}",
-                                "class": class_label,
-                                "iv": stats["iv"],
-                                "iv_se": stats["iv_se"],
-                                "iv_ci_lower": stats["iv_ci_lower"],
-                                "iv_ci_upper": stats["iv_ci_upper"],
-                                "iv_significance": (
-                                    "Significant"
-                                    if stats["iv_ci_lower"] > 0
-                                    else "Not Significant"
-                                ),
-                                "n_categories": stats["n_categories"],
-                                "gini": stats["gini"],
-                            }
-                        )
-                df = pd.DataFrame(analysis_data)
-                return df.sort_values("iv", ascending=False).round(4)
-        else:
-            # Binary case (original implementation)
-            if col is not None:
-                if col not in self.feature_stats_:
-                    raise ValueError(f"Feature '{col}' not found in fitted features")
-                stats = self.feature_stats_[col]
-                return pd.DataFrame(
-                    [
-                        {
-                            "feature": stats["feature"],
-                            "iv": stats["iv"],
-                            "iv_se": stats["iv_se"],
-                            "iv_ci_lower": stats["iv_ci_lower"],
-                            "iv_ci_upper": stats["iv_ci_upper"],
-                            "iv_significance": "Significant"
-                            if stats["iv_ci_lower"] > 0
-                            else "Not Significant",
-                            "n_categories": stats["n_categories"],
-                            "gini": stats["gini"],
-                        }
-                    ]
-                )
-            else:
-                analysis_data = [
+            return self._get_multiclass_iv_analysis(col, class_label, alpha)
+        # Binary case (original implementation)
+        if col is not None:
+            if col not in self.feature_stats_:
+                raise ValueError(f"Feature '{col}' not found in fitted features")
+            stats = self.feature_stats_[col]
+            return pd.DataFrame(
+                [
                     {
                         "feature": stats["feature"],
                         "iv": stats["iv"],
                         "iv_se": stats["iv_se"],
                         "iv_ci_lower": stats["iv_ci_lower"],
                         "iv_ci_upper": stats["iv_ci_upper"],
-                        "iv_significance": (
-                            "Significant"
-                            if stats["iv_ci_lower"] > 0
-                            else "Not Significant"
-                        ),
+                        "iv_significance": "Significant"
+                        if stats["iv_ci_lower"] > 0
+                        else "Not Significant",
                         "n_categories": stats["n_categories"],
                         "gini": stats["gini"],
                     }
-                    for _feature_name, stats in self.feature_stats_.items()
                 ]
-                df = pd.DataFrame(analysis_data)
-                return df.sort_values("iv", ascending=False).round(4)
+            )
+        else:
+            analysis_data = [
+                {
+                    "feature": stats["feature"],
+                    "iv": stats["iv"],
+                    "iv_se": stats["iv_se"],
+                    "iv_ci_lower": stats["iv_ci_lower"],
+                    "iv_ci_upper": stats["iv_ci_upper"],
+                    "iv_significance": (
+                        "Significant" if stats["iv_ci_lower"] > 0 else "Not Significant"
+                    ),
+                    "n_categories": stats["n_categories"],
+                    "gini": stats["gini"],
+                }
+                for _feature_name, stats in self.feature_stats_.items()
+            ]
+            df = pd.DataFrame(analysis_data)
+            return df.sort_values("iv", ascending=False).round(4)
 
     def predict_proba(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
         """
@@ -1559,7 +1215,6 @@ class FastWoe:  # pylint: disable=invalid-name
                 stacklevel=2,
             )
             column_names = [f"feature_{i}" for i in range(X.shape[1])]
-            # type: ignore[bad-argument-type]
             X = pd.DataFrame(X, columns=column_names)
 
         X_woe = self.transform(X)
@@ -1567,40 +1222,15 @@ class FastWoe:  # pylint: disable=invalid-name
             raise ValueError("Model must be fitted before predicting probabilities")
 
         if self.is_multiclass_target:
-            # For multiclass: calculate WOE score for each class
-            n_samples = len(X_woe)
-            n_classes = len(self.classes_)
-            woe_scores = np.zeros((n_samples, n_classes))
+            return self._predict_multiclass_proba(X)
+        # Binary case
+        if self.y_prior_ is None:
+            raise ValueError("Model must be fitted before predicting probabilities")
+        woe_score = X_woe.sum(axis=1) + np.log(self.odds_prior_)
 
-            for i, class_label in enumerate(self.classes_):
-                # Get WOE columns for this class
-                class_cols = [
-                    col
-                    for col in X_woe.columns
-                    if col.endswith(f"_class_{class_label}")
-                ]
-                if class_cols:
-                    class_woe = X_woe[class_cols].sum(axis=1)
-                    # Add log prior for this class
-                    log_prior = np.log(
-                        self.y_prior_[class_label] / (1 - self.y_prior_[class_label])
-                    )
-                    woe_scores[:, i] = class_woe + log_prior
-
-            # Convert to probabilities using softmax
-            exp_scores = np.exp(woe_scores - np.max(woe_scores, axis=1, keepdims=True))
-            probs = exp_scores / np.sum(exp_scores, axis=1, keepdims=True)
-            return probs
-        else:
-            # Binary case
-            if self.y_prior_ is None:
-                raise ValueError("Model must be fitted before predicting probabilities")
-            odds_prior = self.y_prior_ / (1 - self.y_prior_)
-            woe_score = X_woe.sum(axis=1) + np.log(odds_prior)
-
-            # Convert to probability (simple sigmoid transformation)
-            prob = sigmoid(woe_score)
-            return np.column_stack([1 - prob, prob])
+        # Convert to probability (simple sigmoid transformation)
+        prob = sigmoid(woe_score)
+        return np.column_stack([1 - prob, prob])
 
     def predict_ci(self, X: Union[pd.DataFrame, np.ndarray], alpha=0.05) -> np.ndarray:
         """
@@ -1635,131 +1265,52 @@ class FastWoe:  # pylint: disable=invalid-name
                 stacklevel=2,
             )
             column_names = [f"feature_{i}" for i in range(X.shape[1])]
-            # type: ignore[bad-argument-type]
             X = pd.DataFrame(X, columns=column_names)
 
         # Get WOE-transformed features
         X_woe = self.transform(X)
 
         if self.is_multiclass_target:
-            # For multiclass: calculate CI for each class
-            n_samples = len(X_woe)
-            n_classes = len(self.classes_)
-            z_crit = norm.ppf(1 - alpha / 2)
+            return self._predict_multiclass_ci(X, alpha)
+        # Binary case (original implementation)
+        z_crit = norm.ppf(1 - alpha / 2)
+        woe_ci_lower = np.zeros_like(X_woe.values)
+        woe_ci_upper = np.zeros_like(X_woe.values)
 
-            # Initialize arrays for each class
-            all_ci_lower = []
-            all_ci_upper = []
+        for i, col in enumerate(X.columns):
+            if col in self.encoders_:
+                mapping = self.mappings_[col]
 
-            for _, class_label in enumerate(self.classes_):
-                # Get WOE columns for this class
-                class_cols = [
-                    col
-                    for col in X_woe.columns
-                    if col.endswith(f"_class_{class_label}")
-                ]
-                if not class_cols:
-                    continue
+                # For each row, find the WOE standard error
+                for j in range(len(X)):
+                    cat_value = X.iloc[j, i]
 
-                # Calculate WOE confidence intervals for this class
-                woe_ci_lower = np.zeros((n_samples, len(class_cols)))
-                woe_ci_upper = np.zeros((n_samples, len(class_cols)))
+                    # Look up in mapping (handle unseen categories)
+                    woe_se = (
+                        mapping.loc[cat_value, "woe_se"]
+                        if cat_value in mapping.index
+                        else mapping["woe_se"].mean()
+                    )
+                    woe_val = X_woe.iloc[j, i]
+                    margin = z_crit * woe_se
 
-                # Map class columns back to original features
-                original_features = []
-                for col in class_cols:
-                    # Extract original feature name (remove _class_X suffix)
-                    orig_feature = col.rsplit("_class_", 1)[0]
-                    original_features.append(orig_feature)
+                    woe_ci_lower[j, i] = woe_val - margin
+                    woe_ci_upper[j, i] = woe_val + margin
 
-                for i, orig_feature in enumerate(original_features):
-                    if orig_feature in self.mappings_:
-                        mapping = self.mappings_[orig_feature][class_label]
+        # Sum WOE values across features for final score
+        woe_score_lower = woe_ci_lower.sum(axis=1)
+        woe_score_upper = woe_ci_upper.sum(axis=1)
 
-                        # For each row, find the WOE standard error
-                        for j in range(n_samples):
-                            cat_value = X.iloc[j, X.columns.get_loc(orig_feature)]
+        # Convert to probability scale
+        if self.y_prior_ is None:
+            raise ValueError(
+                "Model must be fitted before predicting confidence intervals"
+            )
+        logit_lower = woe_score_lower + np.log(self.odds_prior_)
+        logit_upper = woe_score_upper + np.log(self.odds_prior_)
 
-                            # Look up in mapping (handle unseen categories)
-                            if cat_value in mapping.index:
-                                woe_se = mapping.loc[cat_value, "woe_se"]
-                            else:
-                                # For unseen categories, use the average SE
-                                woe_se = mapping["woe_se"].mean()
-
-                            woe_val = X_woe.iloc[
-                                j, X_woe.columns.get_loc(class_cols[i])
-                            ]
-                            margin = z_crit * woe_se
-
-                            woe_ci_lower[j, i] = woe_val - margin
-                            woe_ci_upper[j, i] = woe_val + margin
-
-                # Sum WOE values across features for this class
-                woe_score_lower = woe_ci_lower.sum(axis=1)
-                woe_score_upper = woe_ci_upper.sum(axis=1)
-
-                # Convert to probability scale for this class
-                log_prior = np.log(
-                    self.y_prior_[class_label] / (1 - self.y_prior_[class_label])
-                )
-                logit_lower = woe_score_lower + log_prior
-                logit_upper = woe_score_upper + log_prior
-
-                prob_lower = sigmoid(logit_lower)
-                prob_upper = sigmoid(logit_upper)
-
-                all_ci_lower.append(prob_lower)
-                all_ci_upper.append(prob_upper)
-
-            # Combine all classes: [lower_0, upper_0, lower_1, upper_1, ...]
-            result = []
-            for lower, upper in zip(all_ci_lower, all_ci_upper):
-                result.extend([lower, upper])
-
-            return np.column_stack(result)
-        else:
-            # Binary case (original implementation)
-            z_crit = norm.ppf(1 - alpha / 2)
-            woe_ci_lower = np.zeros_like(X_woe.values)
-            woe_ci_upper = np.zeros_like(X_woe.values)
-
-            for i, col in enumerate(X.columns):
-                if col in self.encoders_:
-                    mapping = self.mappings_[col]
-
-                    # For each row, find the WOE standard error
-                    for j in range(len(X)):
-                        cat_value = X.iloc[j, i]
-
-                        # Look up in mapping (handle unseen categories)
-                        if cat_value in mapping.index:
-                            woe_se = mapping.loc[cat_value, "woe_se"]
-                        else:
-                            # For unseen categories, use the average SE
-                            woe_se = mapping["woe_se"].mean()
-
-                        woe_val = X_woe.iloc[j, i]
-                        margin = z_crit * woe_se
-
-                        woe_ci_lower[j, i] = woe_val - margin
-                        woe_ci_upper[j, i] = woe_val + margin
-
-            # Sum WOE values across features for final score
-            woe_score_lower = woe_ci_lower.sum(axis=1)
-            woe_score_upper = woe_ci_upper.sum(axis=1)
-
-            # Convert to probability scale
-            if self.y_prior_ is None:
-                raise ValueError(
-                    "Model must be fitted before predicting confidence intervals"
-                )
-            odds_prior = self.y_prior_ / (1 - self.y_prior_)
-            logit_lower = woe_score_lower + np.log(odds_prior)
-            logit_upper = woe_score_upper + np.log(odds_prior)
-
-            prob_lower = sigmoid(logit_lower)
-            prob_upper = sigmoid(logit_upper)
+        prob_lower = sigmoid(logit_lower)
+        prob_upper = sigmoid(logit_upper)
 
         # Return numpy array with shape (n_samples, 2)
         return np.column_stack([prob_lower, prob_upper])
@@ -1851,7 +1402,6 @@ class FastWoe:  # pylint: disable=invalid-name
         X: pd.DataFrame,
         output="woe",
         col_name: Optional[str] = None,
-        # type: ignore[bad-return]
     ) -> pd.DataFrame:
         """
         Transform features to standardized WOE scores or Wald statistics.
@@ -1949,18 +1499,13 @@ class FastWoe:  # pylint: disable=invalid-name
                 stacklevel=2,
             )
             column_names = [f"feature_{i}" for i in range(X.shape[1])]
-            # type: ignore[bad-argument-type]
             X = pd.DataFrame(X, columns=column_names)
 
         if self.is_multiclass_target:
-            # For multiclass: return class with highest probability
-            probs = self.predict_proba(X)
-            class_indices = np.argmax(probs, axis=1)
-            return np.array([self.classes_[i] for i in class_indices])
-        else:
-            # Binary case
-            woe_score = self.transform(X).sum(axis=1)
-            return (woe_score > 0).astype(int).values
+            return self._predict_multiclass(X)
+        # Binary case
+        woe_score = self.transform(X).sum(axis=1)
+        return (woe_score > 0).astype(int).values
 
     def _detect_numerical_features(self, X: pd.DataFrame) -> list[str]:
         """
@@ -1990,13 +1535,11 @@ class FastWoe:  # pylint: disable=invalid-name
         # Handle missing values
         X_col = X[[col]].copy()
         if hasattr(X_col[col], "isna"):
-            # type: ignore[missing-attribute]
             mask_missing = X_col[col].isna()
         else:
             # For numpy arrays, use pd.isna
             mask_missing = pd.isna(X_col[col])
 
-        # type: ignore[missing-attribute]
         if mask_missing.any():
             # Check if we have enough non-missing values
             X_fit = X_col[~mask_missing]
@@ -2008,10 +1551,8 @@ class FastWoe:  # pylint: disable=invalid-name
             X_fit = X_col
 
         if self.binning_method == "kbins":
-            # type: ignore[bad-argument-type]
             return self._bin_with_kbins(X_col, col, mask_missing, X_fit)
         elif self.binning_method == "faiss_kmeans":
-            # type: ignore[bad-argument-type]
             return self._bin_with_faiss_kmeans(X_col, col, mask_missing, X_fit)
         else:  # tree method
             # Determine if target is continuous (proportions) or binary
@@ -2024,13 +1565,10 @@ class FastWoe:  # pylint: disable=invalid-name
                 and unique_targets > 2
             )
             return self._bin_with_tree(
-                # type: ignore[bad-argument-type]
                 X_col,
                 col,
                 y,
-                # type: ignore[bad-argument-type]
                 mask_missing,
-                # type: ignore[bad-argument-type]
                 X_fit,
                 is_continuous,
             )
@@ -2070,7 +1608,6 @@ class FastWoe:  # pylint: disable=invalid-name
         if not mask_missing.all():  # If there are any non-missing values
             # Ensure column is object type to accept strings
             X_binned[col] = X_binned[col].astype("object")
-            # type: ignore[missing-attribute]
             X_binned.loc[~mask_missing, col] = binner.transform(X_fit).ravel()
 
         # Convert to string categories with meaningful labels
@@ -2128,26 +1665,15 @@ class FastWoe:  # pylint: disable=invalid-name
         # pylint: disable=redefined-outer-name
         if self.tree_estimator is None:
             if is_continuous:
-                tree_estimator_class = DecisionTreeRegressor
+                tree_estimator = DecisionTreeRegressor
             else:
-                tree_estimator_class = DecisionTreeClassifier
-
+                tree_estimator = DecisionTreeClassifier
             # Create and fit the tree
             tree_kwargs = self.tree_kwargs.copy()
-
-            # Add monotonic constraints if specified for this feature
-            if col in self.monotonic_cst:
-                constraint_value = self.monotonic_cst[col]
-                if constraint_value != 0:  # Only add if not "no constraint"
-                    tree_kwargs["monotonic_cst"] = [constraint_value]
-
-            tree = tree_estimator_class(**tree_kwargs)
+            tree = tree_estimator(**tree_kwargs)
         else:
-            # Custom tree estimator provided - it's already an instance
+            # tree_estimator is already an instance, use it directly
             tree = self.tree_estimator
-
-            # Note: We can't modify parameters of an already instantiated estimator
-            # The monotonic constraints should be set when creating the custom estimator
 
         # Fit tree on non-missing data
         y_fit = y[~mask_missing] if mask_missing.any() else y
@@ -2162,7 +1688,6 @@ class FastWoe:  # pylint: disable=invalid-name
             col_values = col_data.values
         else:
             col_values = np.array(col_data)
-        # type: ignore[bad-argument-type]
         bin_edges = self._create_bin_edges_from_splits(split_points, col_values)
 
         # Create bin labels
@@ -2519,3 +2044,49 @@ class FastWoe:  # pylint: disable=invalid-name
         edges[-1] = np.inf
 
         return edges if as_array else edges.tolist()
+
+    def _apply_isotonic_constraints(
+        self, mapping_df: pd.DataFrame, col: str
+    ) -> pd.DataFrame:
+        """Apply isotonic regression to enforce monotonic constraints on WOE values."""
+        from sklearn.isotonic import IsotonicRegression
+
+        constraint = self.monotonic_cst[col]
+        if constraint == 0:
+            return mapping_df
+
+        # Extract bin centers for ordering
+        bin_centers = []
+        for category in mapping_df.index:
+            if "(" in category and "," in category:
+                try:
+                    start = float(category.split("(")[1].split(",")[0])
+                    end = float(category.split(",")[1].split("]")[0])
+                    center = (start + end) / 2
+                    bin_centers.append(center)
+                except (ValueError, IndexError):
+                    bin_centers.append(len(bin_centers))
+            else:
+                bin_centers.append(len(bin_centers))
+
+        # Sort by bin centers
+        sorted_indices = np.argsort(bin_centers)
+        sorted_categories = mapping_df.index[sorted_indices]
+        sorted_woe = mapping_df.loc[sorted_categories, "woe"].values
+
+        # Apply isotonic regression
+        if constraint == 1:  # Increasing
+            isotonic_reg = IsotonicRegression(increasing=True, out_of_bounds="clip")
+        else:  # Decreasing
+            isotonic_reg = IsotonicRegression(increasing=False, out_of_bounds="clip")
+
+        # Fit isotonic regression
+        isotonic_reg.fit(np.arange(len(sorted_woe)), sorted_woe)
+        constrained_woe = isotonic_reg.predict(np.arange(len(sorted_woe)))
+
+        # Update the mapping with constrained WOE values
+        mapping_df_constrained = mapping_df.copy()
+        for i, category in enumerate(sorted_categories):
+            mapping_df_constrained.loc[category, "woe"] = constrained_woe[i]
+
+        return mapping_df_constrained

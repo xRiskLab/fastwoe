@@ -453,6 +453,7 @@ print(summary[['feature', 'monotonic_constraint']])
 
 - **Tree method**: Uses native scikit-learn monotonic constraints
 - **KBins & FAISS methods**: Uses isotonic regression to enforce constraints
+- **Multiclass Support**: Monotonic constraints work with multiclass targets - constraints are applied independently to each class's WOE values
 - Constraints ensure WOE values follow the specified monotonic pattern
 - Performance may be slightly different but more interpretable
 - Essential for regulatory compliance in credit scoring
@@ -471,7 +472,7 @@ For a complete example, see [examples/monotonic_constraints_example.py](examples
 - `tree_estimator` (estimator): Custom tree estimator for binning (when binning_method="tree")
 - `tree_kwargs` (dict): Parameters for tree estimator
 - `faiss_kwargs` (dict): Parameters for FAISS KMeans (when binning_method="faiss_kmeans")
-- `monotonic_cst` (dict): Monotonic constraints for numerical features. Maps feature names to constraint values: 1 (increasing), -1 (decreasing), 0 (no constraint). Supported with all binning methods: tree (native), kbins/faiss_kmeans (isotonic regression).
+- `monotonic_cst` (dict): Monotonic constraints for numerical features. Maps feature names to constraint values: 1 (increasing), -1 (decreasing), 0 (no constraint). Supported with all binning methods: tree (native), kbins/faiss_kmeans (isotonic regression). Works with binary and multiclass targets.
 
 #### Key Methods
 - `fit(X, y)`: Fit the WOE encoder
