@@ -67,6 +67,7 @@ examples = [
     "jupyter>=1.0.0",
     "statsmodels>=0.13.0",
     "fisher_scoring>=2.0.5",
+    "pygam>=0.10.1",
 ]
 faiss = [
     "faiss-cpu>=1.12.0",
@@ -169,6 +170,7 @@ dev = [
     "rich>=13.7.0", # Required for pretty printing
     "prek>=0.2.0",
     "ty>=0.0.1a21",
+    "faiss-cpu>=1.12.0", # Required for FAISS tests
 ]
 
 

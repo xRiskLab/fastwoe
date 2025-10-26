@@ -216,6 +216,7 @@ class TestFastWoe:
             woe.transform(X)
 
     def test_transform_numpy_array(self, sample_data):
+        # sourcery skip: extract-duplicate-method
         """Test transform method with numpy array input."""
         X = sample_data[["cat1", "cat2"]]
         y = sample_data["target"]
@@ -951,10 +952,9 @@ class TestIntegration:
         X_pd = pd.DataFrame(X_np, columns=["feature_1", "feature_2", "feature_3"])
         y_pd = pd.Series(y_np)
 
-        # Test with numpy arrays - should work with warning
+        # Test with numpy arrays - should work cleanly without warnings (improved UX)
         fastwoe_np = FastWoe()
-        with pytest.warns(UserWarning, match="Input X is a numpy array"):
-            fastwoe_np.fit(X_np, y_np)
+        fastwoe_np.fit(X_np, y_np)  # No warnings expected with clean implementation
 
         # Verify numpy fit worked
         assert len(fastwoe_np.mappings_) == 3  # One mapping per feature
@@ -1079,6 +1079,7 @@ class TestIntegration:
         """Test basic FAISS KMeans binning functionality."""
         import importlib.util
 
+        # sourcery skip: no-conditionals-in-tests
         if importlib.util.find_spec("faiss") is None:
             pytest.skip("FAISS not available, skipping FAISS KMeans tests")
 
@@ -1160,6 +1161,7 @@ class TestIntegration:
         y = np.random.binomial(1, 0.3, 100)
 
         # Test with different k values
+        # sourcery skip: no-loop-in-tests
         for k in [3, 5, 7]:
             woe = FastWoe(
                 binning_method="faiss_kmeans",
@@ -1177,6 +1179,7 @@ class TestIntegration:
         """Test FAISS KMeans binning with missing values."""
         import importlib.util
 
+        # sourcery skip: no-conditionals-in-tests
         if importlib.util.find_spec("faiss") is None:
             pytest.skip("FAISS not available, skipping FAISS KMeans tests")
 
@@ -1205,6 +1208,7 @@ class TestIntegration:
         """Test getting mapping for FAISS KMeans binned feature."""
         import importlib.util
 
+        # sourcery skip: no-conditionals-in-tests
         if importlib.util.find_spec("faiss") is None:
             pytest.skip("FAISS not available, skipping FAISS KMeans tests")
 
@@ -1563,6 +1567,7 @@ class TestTreeBinning:
         assert all(summary["method"] == "tree")
 
         # Check that trees are regressors for continuous targets
+        # sourcery skip: no-loop-in-tests
         for feature in self.X.columns:
             tree = woe_model.get_tree_estimator(feature)
             assert isinstance(tree, DecisionTreeRegressor)
@@ -2071,6 +2076,248 @@ class TestMonotonicConstraints:
         assert woe.binning_info_["age"]["monotonic_constraint"] == 0  # No constraint
         assert woe.binning_info_["score"]["monotonic_constraint"] == 0  # No constraint
 
+    def test_monotonic_constraints_functional_validation_tree(self):
+        """Test that tree monotonic constraints actually produce monotonic WOE values."""
+        # Create synthetic data with clear monotonic relationship
+        np.random.seed(42)
+        n_samples = 1000
+
+        # Create feature with clear relationship to target
+        x = np.random.uniform(0, 10, n_samples)
+        # Higher x should lead to higher probability (increasing relationship)
+        prob = 1 / (1 + np.exp(-(x - 5) / 2))
+        y = np.random.binomial(1, prob, n_samples)
+
+        X_df = pd.DataFrame(x.reshape(-1, 1), columns=["feature"])
+
+        # Test increasing constraint
+        woe_inc = FastWoe(binning_method="tree", monotonic_cst={"feature": 1})
+        woe_inc.fit(X_df, y)
+
+        # Transform test data in sorted order
+        x_test = np.linspace(0, 10, 20)
+        X_test = pd.DataFrame(x_test.reshape(-1, 1), columns=["feature"])
+        woe_values_inc = woe_inc.transform(X_test).values.flatten()
+
+        # Check that WOE is increasing (allowing small numerical errors)
+        # sourcery skip: no-loop-in-tests
+        for i in range(len(woe_values_inc) - 1):
+            assert woe_values_inc[i] <= woe_values_inc[i + 1] + 1e-10, (
+                f"WOE not increasing at position {i}: {woe_values_inc[i]:.6f} > {woe_values_inc[i + 1]:.6f}"
+            )
+
+        # Test decreasing constraint
+        woe_dec = FastWoe(binning_method="tree", monotonic_cst={"feature": -1})
+        woe_dec.fit(X_df, y)
+        woe_values_dec = woe_dec.transform(X_test).values.flatten()
+
+        # Check that WOE is decreasing
+        for i in range(len(woe_values_dec) - 1):
+            assert woe_values_dec[i] >= woe_values_dec[i + 1] - 1e-10, (
+                f"WOE not decreasing at position {i}: {woe_values_dec[i]:.6f} < {woe_values_dec[i + 1]:.6f}"
+            )
+
+    def test_monotonic_constraints_functional_validation_faiss(self):
+        # sourcery skip: extract-duplicate-method
+        """Test that FAISS monotonic constraints are properly ignored and warnings are shown."""
+        # Create synthetic data with clear monotonic relationship
+        np.random.seed(42)
+        n_samples = 1000
+
+        # Create feature with clear relationship to target
+        x = np.random.uniform(0, 10, n_samples)
+        # Higher x should lead to higher probability (increasing relationship)
+        prob = 1 / (1 + np.exp(-(x - 5) / 2))
+        y = np.random.binomial(1, prob, n_samples)
+
+        X_df = pd.DataFrame(x.reshape(-1, 1), columns=["feature"])
+
+        # Test that constraints are ignored and warnings are shown
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            woe_inc = FastWoe(
+                binning_method="faiss_kmeans", monotonic_cst={"feature": 1}
+            )
+            woe_inc.fit(X_df, y)
+
+            # Check that warnings were raised
+            warning_messages = [str(warning.message) for warning in w]
+            assert any(
+                "Monotonic constraints specified but binning_method='faiss_kmeans'"
+                in msg
+                for msg in warning_messages
+            )
+            assert any(
+                "Monotonic constraints for feature 'feature' are ignored" in msg
+                for msg in warning_messages
+            )
+
+        # Test that the same warnings occur for decreasing constraints
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            woe_dec = FastWoe(
+                binning_method="faiss_kmeans", monotonic_cst={"feature": -1}
+            )
+            woe_dec.fit(X_df, y)
+
+            # Check that warnings were raised
+            warning_messages = [str(warning.message) for warning in w]
+            assert any(
+                "Monotonic constraints specified but binning_method='faiss_kmeans'"
+                in msg
+                for msg in warning_messages
+            )
+            assert any(
+                "Monotonic constraints for feature 'feature' are ignored" in msg
+                for msg in warning_messages
+            )
+
+    def test_monotonic_constraints_functional_validation_kbins(self):
+        # sourcery skip: extract-duplicate-method
+        """Test that kbins monotonic constraints are properly ignored and warnings are shown."""
+        # Create synthetic data with clear monotonic relationship
+        np.random.seed(42)
+        n_samples = 1000
+
+        # Create feature with clear relationship to target
+        x = np.random.uniform(0, 10, n_samples)
+        # Higher x should lead to higher probability (increasing relationship)
+        prob = 1 / (1 + np.exp(-(x - 5) / 2))
+        y = np.random.binomial(1, prob, n_samples)
+
+        X_df = pd.DataFrame(x.reshape(-1, 1), columns=["feature"])
+
+        # Test that constraints are ignored and warnings are shown
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            woe_inc = FastWoe(
+                binning_method="kbins",
+                binner_kwargs={"n_bins": 10, "strategy": "uniform"},
+                monotonic_cst={"feature": 1},
+            )
+            woe_inc.fit(X_df, y)
+
+            # Check that warnings were raised
+            warning_messages = [str(warning.message) for warning in w]
+            assert any(
+                "Monotonic constraints specified but binning_method='kbins'" in msg
+                for msg in warning_messages
+            )
+            assert any(
+                "Monotonic constraints for feature 'feature' are ignored" in msg
+                for msg in warning_messages
+            )
+
+        # Test that the same warnings occur for decreasing constraints
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            woe_dec = FastWoe(
+                binning_method="kbins",
+                binner_kwargs={"n_bins": 10, "strategy": "uniform"},
+                monotonic_cst={"feature": -1},
+            )
+            woe_dec.fit(X_df, y)
+
+            # Check that warnings were raised
+            warning_messages = [str(warning.message) for warning in w]
+            assert any(
+                "Monotonic constraints specified but binning_method='kbins'" in msg
+                for msg in warning_messages
+            )
+            assert any(
+                "Monotonic constraints for feature 'feature' are ignored" in msg
+                for msg in warning_messages
+            )
+
+    def test_monotonic_vs_non_monotonic_difference(self):
+        """Test that monotonic constraints actually change the WOE values."""
+        # Create data that would naturally violate monotonicity
+        np.random.seed(42)
+        n_samples = 1000
+
+        # Create feature where middle values have different target distribution
+        x = np.random.uniform(0, 10, n_samples)
+        # Create non-monotonic relationship: high probability at ends, low in middle
+        prob = np.where((x < 3) | (x > 7), 0.8, 0.2)
+        y = np.random.binomial(1, prob, n_samples)
+
+        X_df = pd.DataFrame(x.reshape(-1, 1), columns=["feature"])
+        x_test = np.linspace(0, 10, 10)
+        X_test = pd.DataFrame(x_test.reshape(-1, 1), columns=["feature"])
+
+        # Test tree method (always available)
+        method = "tree"
+        # Without monotonic constraint
+        woe_normal = FastWoe(binning_method=method)
+        woe_normal.fit(X_df, y)
+        woe_values_normal = woe_normal.transform(X_test).values.flatten()
+
+        # With monotonic constraint (decreasing)
+        woe_mono = FastWoe(binning_method=method, monotonic_cst={"feature": -1})
+        woe_mono.fit(X_df, y)
+        woe_values_mono = woe_mono.transform(X_test).values.flatten()
+
+        # They should be different (monotonic constraint should change the values)
+        assert not np.allclose(woe_values_normal, woe_values_mono, atol=1e-6), (
+            f"Monotonic constraint had no effect for {method}"
+        )
+
+        # Monotonic values should be decreasing
+        # sourcery skip: no-loop-in-tests
+        for i in range(len(woe_values_mono) - 1):
+            assert woe_values_mono[i] >= woe_values_mono[i + 1] - 1e-10, (
+                f"{method} monotonic WOE not decreasing: {woe_values_mono[i]:.6f} < {woe_values_mono[i + 1]:.6f}"
+            )
+
+    def test_monotonic_vs_non_monotonic_difference_faiss(self):
+        """Test that FAISS monotonic constraints are ignored and warnings are shown."""
+        # Skip if FAISS not available
+        faiss = pytest.importorskip("faiss")
+
+        # Create data that would naturally violate monotonicity
+        np.random.seed(42)
+        n_samples = 1000
+
+        # Create feature where middle values have different target distribution
+        x = np.random.uniform(0, 10, n_samples)
+        # Create non-monotonic relationship: high probability at ends, low in middle
+        prob = np.where((x < 3) | (x > 7), 0.8, 0.2)
+        y = np.random.binomial(1, prob, n_samples)
+
+        X_df = pd.DataFrame(x.reshape(-1, 1), columns=["feature"])
+        x_test = np.linspace(0, 10, 10)
+        X_test = pd.DataFrame(x_test.reshape(-1, 1), columns=["feature"])
+
+        method = "faiss_kmeans"
+        # Without monotonic constraint
+        woe_normal = FastWoe(binning_method=method)
+        woe_normal.fit(X_df, y)
+        woe_values_normal = woe_normal.transform(X_test).values.flatten()
+
+        # With monotonic constraint (should be ignored)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            woe_mono = FastWoe(binning_method=method, monotonic_cst={"feature": -1})
+            woe_mono.fit(X_df, y)
+            woe_values_mono = woe_mono.transform(X_test).values.flatten()
+
+            # Check that warnings were raised
+            warning_messages = [str(warning.message) for warning in w]
+            assert any(
+                "Monotonic constraints specified but binning_method='faiss_kmeans'"
+                in msg
+                for msg in warning_messages
+            )
+            assert any(
+                "Monotonic constraints for feature 'feature' are ignored" in msg
+                for msg in warning_messages
+            )
+
+        # They should be identical (monotonic constraint should have no effect)
+        assert np.allclose(woe_values_normal, woe_values_mono, atol=1e-6), (
+            f"Monotonic constraint incorrectly affected values for {method}"
+        )
+
     def test_monotonic_constraints_with_custom_tree_estimator(self):
         """Test monotonic constraints with custom tree estimator."""
         from sklearn.tree import DecisionTreeClassifier
@@ -2135,8 +2382,8 @@ class TestMonotonicConstraints:
         assert "feature" in woe.binning_info_
         assert woe.binning_info_["feature"]["monotonic_constraint"] == 0
 
-    def test_monotonic_constraints_kbins_isotonic(self):
-        """Test monotonic constraints with KBins using isotonic regression."""
+    def test_monotonic_constraints_kbins_warning(self):
+        """Test that monotonic constraints with KBins show appropriate warnings."""
         np.random.seed(42)
         n_samples = 1000
 
@@ -2147,50 +2394,38 @@ class TestMonotonicConstraints:
 
         X_df = pd.DataFrame({"income": income})
 
-        woe = FastWoe(
-            binning_method="kbins",
-            monotonic_cst={"income": -1},  # Decreasing constraint
-            numerical_threshold=10,
-            binner_kwargs={"n_bins": 5, "strategy": "quantile"},
-        )
+        # Test that warnings are issued for monotonic constraints with kbins
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
 
-        woe.fit(X_df, y)
+            woe = FastWoe(
+                binning_method="kbins",
+                monotonic_cst={"income": -1},  # Decreasing constraint
+                numerical_threshold=10,
+                binner_kwargs={"n_bins": 5, "strategy": "quantile"},
+            )
 
-        # Check that constraint was applied
+            # Should warn during initialization
+            assert len(w) > 0
+            assert any("Monotonic constraints" in str(warning.message) for warning in w)
+
+            woe.fit(X_df, y)
+
+            # Should warn during fitting as well
+            assert any(
+                "ignored for binning method 'kbins'" in str(warning.message)
+                for warning in w
+            )
+
+        # Verify that the monotonic constraints are actually ignored (no isotonic adjustment)
+        mapping = woe.mappings_["income"]
+
+        # Check that constraint information is stored but ignored for kbins
         assert woe.binning_info_["income"]["monotonic_constraint"] == -1
         assert woe.binning_info_["income"]["method"] == "kbins"
 
-        # Check that WOE values follow decreasing pattern
-        mapping = woe.get_mapping("income")
-        woe_values = mapping["woe"].values
-
-        # Extract bin centers for verification
-        bin_centers = []
-        for _, row in mapping.iterrows():
-            bin_str = row["category"]
-            if "(" in bin_str and "," in bin_str:
-                try:
-                    start = float(bin_str.split("(")[1].split(",")[0])
-                    end = float(bin_str.split(",")[1].split("]")[0])
-                    center = (start + end) / 2
-                    bin_centers.append(center)
-                except (ValueError, IndexError):
-                    bin_centers.append(len(bin_centers))
-            else:
-                bin_centers.append(len(bin_centers))
-
-        # Verify monotonic decreasing pattern
-        if len(bin_centers) >= 2:
-            sorted_indices = np.argsort(bin_centers)
-            sorted_woe = woe_values[sorted_indices]
-            # Check that WOE values are non-increasing (monotonic decreasing)
-            for i in range(1, len(sorted_woe)):
-                assert sorted_woe[i] <= sorted_woe[i - 1] + 1e-10, (
-                    f"WOE not monotonic decreasing: {sorted_woe}"
-                )
-
-    def test_monotonic_constraints_faiss_isotonic(self):
-        """Test monotonic constraints with FAISS KMeans using isotonic regression."""
+    def test_monotonic_constraints_faiss_warning(self):
+        """Test that monotonic constraints with FAISS show appropriate warnings."""
         np.random.seed(42)
         n_samples = 500
 
@@ -2201,54 +2436,39 @@ class TestMonotonicConstraints:
 
         X_df = pd.DataFrame({"age": age})
 
-        woe = FastWoe(
-            binning_method="faiss_kmeans",
-            monotonic_cst={"age": 1},  # Increasing constraint
-            numerical_threshold=10,
-            faiss_kwargs={"k": 4, "niter": 10},
-        )
+        # Test that warnings are issued for monotonic constraints with FAISS
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
 
-        try:
-            woe.fit(X_df, y)
+            woe = FastWoe(
+                binning_method="faiss_kmeans",
+                monotonic_cst={"age": 1},  # Increasing constraint
+                numerical_threshold=10,
+                faiss_kwargs={"k": 4, "niter": 10},
+            )
 
-            # Check that constraint was applied
-            assert woe.binning_info_["age"]["monotonic_constraint"] == 1
-            assert woe.binning_info_["age"]["method"] == "faiss_kmeans"
+            # Should warn during initialization
+            assert len(w) > 0
+            assert any("Monotonic constraints" in str(warning.message) for warning in w)
 
-            # Check that WOE values follow increasing pattern
-            mapping = woe.get_mapping("age")
-            woe_values = mapping["woe"].values
+            try:
+                woe.fit(X_df, y)
 
-            # Extract bin centers for verification
-            bin_centers = []
-            for _, row in mapping.iterrows():
-                bin_str = row["category"]
-                if "(" in bin_str and "," in bin_str:
-                    try:
-                        start = float(bin_str.split("(")[1].split(",")[0])
-                        end = float(bin_str.split(",")[1].split("]")[0])
-                        center = (start + end) / 2
-                        bin_centers.append(center)
-                    except (ValueError, IndexError):
-                        bin_centers.append(len(bin_centers))
-                else:
-                    bin_centers.append(len(bin_centers))
+                # Should warn during fitting as well
+                assert any(
+                    "ignored for binning method 'faiss_kmeans'" in str(warning.message)
+                    for warning in w
+                )
 
-            # Verify monotonic increasing pattern
-            if len(bin_centers) >= 2:
-                sorted_indices = np.argsort(bin_centers)
-                sorted_woe = woe_values[sorted_indices]
-                # Check that WOE values are non-decreasing (monotonic increasing)
-                for i in range(1, len(sorted_woe)):
-                    assert sorted_woe[i] >= sorted_woe[i - 1] - 1e-10, (
-                        f"WOE not monotonic increasing: {sorted_woe}"
-                    )
+                # Check that constraint information is stored but ignored for FAISS
+                assert woe.binning_info_["age"]["monotonic_constraint"] == 1
+                assert woe.binning_info_["age"]["method"] == "faiss_kmeans"
 
-        except ImportError:
-            pytest.skip("FAISS not available, skipping FAISS KMeans test")
+            except ImportError:
+                pytest.skip("FAISS not available, skipping FAISS KMeans test")
 
     def test_monotonic_constraints_multiclass_kbins(self):
-        """Test monotonic constraints with multiclass targets and KBins."""
+        """Test that monotonic constraints with multiclass targets and KBins show warnings."""
         np.random.seed(42)
         n_samples = 500
 
@@ -2258,49 +2478,31 @@ class TestMonotonicConstraints:
 
         X_df = pd.DataFrame({"income": income})
 
-        woe = FastWoe(
-            binning_method="kbins",
-            monotonic_cst={"income": -1},  # Decreasing constraint
-            numerical_threshold=10,
-            binner_kwargs={"n_bins": 4, "strategy": "quantile"},
-        )
+        # Test that warnings are issued for monotonic constraints with kbins
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
 
-        woe.fit(X_df, y_multiclass)
+            woe = FastWoe(
+                binning_method="kbins",
+                monotonic_cst={"income": -1},  # Decreasing constraint
+                numerical_threshold=10,
+                binner_kwargs={"n_bins": 4, "strategy": "quantile"},
+            )
 
-        # Check that constraint was applied for all classes
+            woe.fit(X_df, y_multiclass)
+
+            # Should warn about ignored monotonic constraints
+            assert any("Monotonic constraints" in str(warning.message) for warning in w)
+            assert any(
+                "ignored in multiclass WOE encoding" in str(warning.message)
+                for warning in w
+            )
+
+        # Check that constraint information is stored but ignored for all classes
         assert woe.binning_info_["income"]["monotonic_constraint"] == -1
 
-        # Check that WOE values follow decreasing pattern for each class
-        for class_label in woe.classes_:
-            mapping = woe.get_mapping("income", class_label)
-            woe_values = mapping["woe"].values
-
-            # Extract bin centers
-            bin_centers = []
-            for _, row in mapping.iterrows():
-                bin_str = row["category"]
-                if "(" in bin_str and "," in bin_str:
-                    try:
-                        start = float(bin_str.split("(")[1].split(",")[0])
-                        end = float(bin_str.split(",")[1].split("]")[0])
-                        center = (start + end) / 2
-                        bin_centers.append(center)
-                    except (ValueError, IndexError):
-                        bin_centers.append(len(bin_centers))
-                else:
-                    bin_centers.append(len(bin_centers))
-
-            # Verify monotonic decreasing pattern
-            if len(bin_centers) >= 2:
-                sorted_indices = np.argsort(bin_centers)
-                sorted_woe = woe_values[sorted_indices]
-                for i in range(1, len(sorted_woe)):
-                    assert sorted_woe[i] <= sorted_woe[i - 1] + 1e-10, (
-                        f"Class {class_label} WOE not monotonic decreasing: {sorted_woe}"
-                    )
-
     def test_monotonic_constraints_continuous_target_kbins(self):
-        """Test monotonic constraints with continuous target and KBins."""
+        """Test that monotonic constraints with continuous target and KBins show warnings."""
         np.random.seed(42)
         n_samples = 500
 
@@ -2312,45 +2514,28 @@ class TestMonotonicConstraints:
 
         X_df = pd.DataFrame({"income": income})
 
-        woe = FastWoe(
-            binning_method="kbins",
-            monotonic_cst={"income": -1},  # Decreasing constraint
-            numerical_threshold=10,
-            binner_kwargs={"n_bins": 4, "strategy": "quantile"},
-        )
+        # Test that warnings are issued for monotonic constraints with kbins
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
 
-        woe.fit(X_df, y_continuous)
+            woe = FastWoe(
+                binning_method="kbins",
+                monotonic_cst={"income": -1},  # Decreasing constraint
+                numerical_threshold=10,
+                binner_kwargs={"n_bins": 4, "strategy": "quantile"},
+            )
 
-        # Check that constraint was applied
+            woe.fit(X_df, y_continuous)
+
+            # Should warn about ignored monotonic constraints
+            assert any("Monotonic constraints" in str(warning.message) for warning in w)
+            assert any(
+                "ignored for binning method 'kbins'" in str(warning.message)
+                for warning in w
+            )
+
+        # Check that constraint information is stored but ignored
         assert woe.binning_info_["income"]["monotonic_constraint"] == -1
-
-        # Check that WOE values follow decreasing pattern
-        mapping = woe.get_mapping("income")
-        woe_values = mapping["woe"].values
-
-        # Extract bin centers
-        bin_centers = []
-        for _, row in mapping.iterrows():
-            bin_str = row["category"]
-            if "(" in bin_str and "," in bin_str:
-                try:
-                    start = float(bin_str.split("(")[1].split(",")[0])
-                    end = float(bin_str.split(",")[1].split("]")[0])
-                    center = (start + end) / 2
-                    bin_centers.append(center)
-                except (ValueError, IndexError):
-                    bin_centers.append(len(bin_centers))
-            else:
-                bin_centers.append(len(bin_centers))
-
-        # Verify monotonic decreasing pattern
-        if len(bin_centers) >= 2:
-            sorted_indices = np.argsort(bin_centers)
-            sorted_woe = woe_values[sorted_indices]
-            for i in range(1, len(sorted_woe)):
-                assert sorted_woe[i] <= sorted_woe[i - 1] + 1e-10, (
-                    f"WOE not monotonic decreasing: {sorted_woe}"
-                )
 
     def test_monotonic_constraints_mixed_methods(self):
         """Test monotonic constraints with different binning methods."""
@@ -2394,6 +2579,7 @@ class TestMonotonicConstraints:
         assert woe_kbins.binning_info_["income"]["method"] == "kbins"
 
     def test_monotonic_constraints_edge_cases(self):
+        # sourcery skip: extract-duplicate-method
         """Test edge cases for monotonic constraints."""
         np.random.seed(42)
         n_samples = 100

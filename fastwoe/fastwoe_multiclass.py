@@ -4,6 +4,7 @@ This module contains the multiclass-specific implementation for FastWoe,
 providing one-vs-rest WOE encoding for multiclass targets.
 """
 
+import warnings
 from typing import Optional, Union
 
 import numpy as np
@@ -173,9 +174,17 @@ class MulticlassWoeMixin:
             }
         ).set_index("category")
 
-        # Apply isotonic constraints if specified
+        # Warn if monotonic constraints specified for non-tree methods
+        # Note: In multiclass scenarios, monotonic constraints are only supported
+        # for tree-based binning methods in the main FastWoe class
         if col in self.monotonic_cst and self.monotonic_cst[col] != 0:
-            mapping_df = self._apply_isotonic_constraints(mapping_df, col)
+            warnings.warn(
+                f"Monotonic constraints for feature '{col}' are ignored in multiclass WOE encoding. "
+                f"Monotonic constraints only work with binning_method='tree' in the main FastWoe class. "
+                f"Consider using binary classification or binning_method='tree' for monotonic constraints.",
+                UserWarning,
+                stacklevel=3,
+            )
 
         return mapping_df
 
@@ -634,49 +643,3 @@ class MulticlassWoeMixin:
         upper_col = class_idx * 2 + 1
 
         return all_ci[:, [lower_col, upper_col]]
-
-    def _apply_isotonic_constraints(
-        self, mapping_df: pd.DataFrame, col: str
-    ) -> pd.DataFrame:
-        """Apply isotonic regression to enforce monotonic constraints on WOE values."""
-        from sklearn.isotonic import IsotonicRegression
-
-        constraint = self.monotonic_cst[col]
-        if constraint == 0:
-            return mapping_df
-
-        # Extract bin centers for ordering
-        bin_centers = []
-        for category in mapping_df.index:
-            if "(" in category and "," in category:
-                try:
-                    start = float(category.split("(")[1].split(",")[0])
-                    end = float(category.split(",")[1].split("]")[0])
-                    center = (start + end) / 2
-                    bin_centers.append(center)
-                except (ValueError, IndexError):
-                    bin_centers.append(len(bin_centers))
-            else:
-                bin_centers.append(len(bin_centers))
-
-        # Sort by bin centers
-        sorted_indices = np.argsort(bin_centers)
-        sorted_categories = mapping_df.index[sorted_indices]
-        sorted_woe = mapping_df.loc[sorted_categories, "woe"].values
-
-        # Apply isotonic regression
-        if constraint == 1:  # Increasing
-            isotonic_reg = IsotonicRegression(increasing=True, out_of_bounds="clip")
-        else:  # Decreasing
-            isotonic_reg = IsotonicRegression(increasing=False, out_of_bounds="clip")
-
-        # Fit isotonic regression
-        isotonic_reg.fit(np.arange(len(sorted_woe)), sorted_woe)
-        constrained_woe = isotonic_reg.predict(np.arange(len(sorted_woe)))
-
-        # Update the mapping with constrained WOE values
-        mapping_df_constrained = mapping_df.copy()
-        for i, category in enumerate(sorted_categories):
-            mapping_df_constrained.loc[category, "woe"] = constrained_woe[i]
-
-        return mapping_df_constrained

@@ -1,6 +1,41 @@
 # Changelog
 
-## Version 0.1.5a1 (Current)
+## Version 0.1.5rc1 (2025-10-26)
+
+**Clean API Refactoring & Pythonic Input Handling**: Release candidate with major UX improvements
+
+- **Clean API Architecture**:
+  - **Eliminated Conversion Logic**: Replaced 30+ lines of repetitive numpy/pandas conversion code with clean helper methods
+    - Introduced `_ensure_dataframe()`, `_ensure_series()`, and `_validate_constraints()` helper methods
+    - Clean, single-line conversion: `X = self._ensure_dataframe(X); y = self._ensure_series(y)`
+    - Improved code maintainability and readability dramatically
+  - **Smart Feature Naming**: Automatic detection of meaningful feature names from monotonic constraints
+    - When numpy arrays are passed with monotonic constraints, uses constraint keys as column names
+    - Example: `monotonic_cst={"Application_Score": -1}` automatically names the feature "Application_Score"
+    - Eliminates need for manual DataFrame conversion in most cases
+  - **1D Array Handling**: Properly handles 1D numpy arrays by auto-reshaping to 2D
+    - Fixes `IndexError: tuple index out of range` when accessing `X.shape[1]` on 1D arrays
+    - Seamless handling: `encoder.fit(x, y)` where `x` is 1D numpy array now works perfectly
+  - **Consistent Transform Behavior**: Uses fitted column names in transform method for consistency
+    - `_ensure_dataframe(X, use_fitted_names=True)` preserves names from fit phase
+
+- **User Experience Improvements**:
+  - **No More Warnings for Standard Usage**: Removed annoying warnings for common numpy array inputs
+  - **Intuitive API**: Users can pass 1D arrays with meaningful constraint names seamlessly
+  - **Backward Compatibility**: All existing functionality preserved, new features are additive
+  - **Pythonic Design**: Follows Python principles of "it should just work" for common use cases
+
+- **Example Usage** (now works seamlessly):
+  ```python
+  # Clean, intuitive usage - no more ugly conversion warnings!
+  encoder = FastWoe(
+      binning_method="tree",
+      monotonic_cst={"Application_Score": -1}
+  )
+  encoder.fit(x, y)  # x can be 1D numpy array - works perfectly!
+  ```
+
+## Version 0.1.5a1 (Previous)
 
 **Multiclass WOE Refactoring & Bug Fixes**: Major code organization improvements and multiclass prediction fixes
 

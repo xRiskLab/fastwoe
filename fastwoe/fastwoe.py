@@ -251,6 +251,16 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
                         f"Constraint value must be -1, 0, or 1, got {constraint} for feature '{feature}'"
                     )
 
+            # Warn if monotonic constraints specified with non-tree binning method
+            if binning_method != "tree":
+                warnings.warn(
+                    f"Monotonic constraints specified but binning_method='{binning_method}'. "
+                    f"Monotonic constraints only work with binning_method='tree' and will be ignored "
+                    f"for other methods. Consider using binning_method='tree' for monotonic constraints.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+
         self.encoders_: dict[str, Any] = {}
         self.mappings_: dict[str, pd.DataFrame] = {}
         self.feature_stats_: dict[str, dict[str, Any]] = {}
@@ -318,6 +328,57 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
             # For backward compatibility, also set binner_kwargs and faiss_kwargs
             self.binner_kwargs = {}
             self.faiss_kwargs = {}
+
+    def _ensure_dataframe(
+        self,
+        X: Union[pd.DataFrame, np.ndarray, pd.Series],
+        use_fitted_names: bool = False,
+    ) -> pd.DataFrame:
+        """Convert input to DataFrame with intelligent column naming."""
+        if isinstance(X, pd.DataFrame):
+            return X
+
+        if isinstance(X, pd.Series):
+            column_name = X.name if X.name is not None else "feature_0"
+            return pd.DataFrame({column_name: X})
+
+        # Handle numpy arrays (including 1D)
+        if isinstance(X, np.ndarray):
+            # Ensure 2D array
+            if X.ndim == 1:
+                X = X.reshape(-1, 1)
+
+            # Smart column naming: use fitted names if available, else monotonic constraint keys, else generic
+            if use_fitted_names and hasattr(self, "mappings_") and self.mappings_:
+                column_names = list(self.mappings_.keys())
+            elif self.monotonic_cst and len(self.monotonic_cst) == X.shape[1]:
+                column_names = list(self.monotonic_cst.keys())
+            else:
+                column_names = [f"feature_{i}" for i in range(X.shape[1])]
+
+            return pd.DataFrame(X, columns=column_names)
+
+        # Fallback for other types
+        return pd.DataFrame(X)
+
+    def _ensure_series(self, y: Union[pd.Series, np.ndarray]) -> pd.Series:
+        """Convert input to Series."""
+        return y if isinstance(y, pd.Series) else pd.Series(y)
+
+    def _validate_constraints(self, X: pd.DataFrame) -> None:
+        """Validate monotonic constraints against actual feature names."""
+        if not self.monotonic_cst:
+            return
+
+        if missing_features := set(self.monotonic_cst.keys()) - set(X.columns):
+            warnings.warn(
+                f"Monotonic constraints specified for features {sorted(missing_features)} "
+                f"but these features are not found in the input data. "
+                f"Available features: {sorted(X.columns.tolist())}. "
+                f"Monotonic constraints for missing features will be ignored.",
+                UserWarning,
+                stacklevel=3,
+            )
 
     def _calculate_gini(self, y_true, y_pred):
         """Calculate Gini coefficient from AUC."""
@@ -532,9 +593,6 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
         # Calculate WOE values directly to avoid circular dependency during fit
         if self.is_multiclass_target:
             # For multiclass, we need to pass the class-specific prior
-            # This method is called with the original y, so we need to extract the class
-            # from the mapping_df or use a different approach
-            # For now, let's use the mapping_df directly
             woe_values = mapping_df["woe"].values
         else:
             if self.y_prior_ is None:
@@ -601,32 +659,12 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
         self : FastWoe
             The fitted encoder instance
         """
-        # Convert numpy arrays and Series to pandas DataFrame if needed
-        if isinstance(X, np.ndarray):
-            column_names = [f"feature_{i}" for i in range(X.shape[1])]
-            X = pd.DataFrame(X, columns=column_names)  # type: ignore[arg-type]
-            warnings.warn(
-                "Input X is a numpy array. Converting to pandas DataFrame with generic column names. "
-                "For better control, convert to DataFrame with meaningful column names before passing to fit().",
-                stacklevel=2,
-            )
-        elif isinstance(X, pd.Series):
-            # Convert Series to DataFrame with the Series name as column name
-            column_name = X.name if X.name is not None else "feature_0"
-            X = pd.DataFrame({column_name: X})
-            warnings.warn(
-                f"Input X is a pandas Series. Converting to DataFrame with column name '{column_name}'. "
-                "For better control, convert to DataFrame before passing to fit().",
-                stacklevel=2,
-            )
+        # Convert inputs to pandas DataFrame/Series consistently
+        X = self._ensure_dataframe(X)
+        y = self._ensure_series(y)
 
-        if isinstance(y, np.ndarray):
-            y = pd.Series(y)
-            warnings.warn(
-                "Input y is a numpy array. Converting to pandas Series. "
-                "For better control, convert to Series before passing to fit().",
-                stacklevel=2,
-            )
+        # Validate monotonic constraints
+        self._validate_constraints(X)
 
         # Validate target type
         unique_targets = pd.Series(y).nunique()
@@ -793,9 +831,21 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
                     }
                 ).set_index("category")
 
-                # Apply isotonic constraints if specified
-                if col in self.monotonic_cst and self.monotonic_cst[col] != 0:
-                    mapping_df = self._apply_isotonic_constraints(mapping_df, col)
+                # Warn if monotonic constraints specified for non-tree methods
+                binning_info = self.binning_info_.get(col, {})
+                if (
+                    col in self.monotonic_cst
+                    and self.monotonic_cst[col] != 0
+                    and binning_info.get("method") != "tree"
+                ):
+                    warnings.warn(
+                        f"Monotonic constraints for feature '{col}' are ignored for "
+                        f"binning method '{binning_info.get('method', 'unknown')}'. "
+                        f"Monotonic constraints only work with binning_method='tree'. "
+                        f"Consider using binning_method='tree' for monotonic constraints.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
 
                 self.mappings_[col] = mapping_df
 
@@ -824,24 +874,8 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
             instead of categorical values. Column names are preserved.
 
         """
-        # Convert numpy arrays and Series to pandas DataFrame if needed
-        if isinstance(X, np.ndarray):
-            column_names = [f"feature_{i}" for i in range(X.shape[1])]
-            X = pd.DataFrame(X, columns=column_names)
-            warnings.warn(
-                "Input X is a numpy array. Converting to pandas DataFrame with generic column names. "
-                "For better control, convert to DataFrame with meaningful column names before passing to transform().",
-                stacklevel=2,
-            )
-        elif isinstance(X, pd.Series):
-            # Convert Series to DataFrame with the Series name as column name
-            column_name = X.name if X.name is not None else "feature_0"
-            X = pd.DataFrame({column_name: X})
-            warnings.warn(
-                f"Input X is a pandas Series. Converting to DataFrame with column name '{column_name}'. "
-                "For better control, convert to DataFrame before passing to transform().",
-                stacklevel=2,
-            )
+        # Convert input to DataFrame consistently
+        X = self._ensure_dataframe(X, use_fitted_names=True)
 
         if not self.is_fitted_:
             raise ValueError("Model must be fitted before transforming data")
@@ -904,21 +938,28 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
                             labels.flatten() + 1
                         )  # Convert to 1-based indexing
 
-                        # Map cluster labels to bin labels
-                        bin_edges = np.array(binning_info["bin_edges"])
-                        bin_labels = []
-                        for i in range(len(bin_edges) - 1):
-                            if i == 0:
-                                label = f"(-∞, {bin_edges[i + 1]:.1f}]"
-                            elif i == len(bin_edges) - 2:
-                                label = f"({bin_edges[i]:.1f}, ∞)"
-                            else:
-                                label = f"({bin_edges[i]:.1f}, {bin_edges[i + 1]:.1f}]"
-                            bin_labels.append(label)
+                        # Use the stored cluster_to_bin mapping from fit
+                        if "cluster_to_bin" in binning_info:
+                            cluster_to_bin = binning_info["cluster_to_bin"]
+                        else:
+                            # Fallback for older models without the mapping stored
+                            bin_edges = np.array(binning_info["bin_edges"])
+                            bin_labels = []
+                            for i in range(len(bin_edges) - 1):
+                                if i == 0:
+                                    label = f"(-∞, {bin_edges[i + 1]:.1f}]"
+                                elif i == len(bin_edges) - 2:
+                                    label = f"({bin_edges[i]:.1f}, ∞)"
+                                else:
+                                    label = (
+                                        f"({bin_edges[i]:.1f}, {bin_edges[i + 1]:.1f}]"
+                                    )
+                                bin_labels.append(label)
 
-                        cluster_to_bin = dict(
-                            zip(range(1, len(bin_labels) + 1), bin_labels)
-                        )
+                            cluster_to_bin = dict(
+                                zip(range(1, len(bin_labels) + 1), bin_labels)
+                            )
+
                         binned_labels = [
                             cluster_to_bin[label] for label in cluster_labels
                         ]
@@ -972,15 +1013,21 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
             if self.is_multiclass_target:
                 return self._transform_multiclass(X_processed)
             # Binary or continuous case
-            enc = self.encoders_[col]
-            event_rate = enc.transform(X_processed[[col]])
+            mapping = self.mappings_[col]
 
-            if isinstance(event_rate, pd.DataFrame):
-                event_rate = event_rate.values.flatten()
-            event_rate = np.clip(event_rate, 1e-15, 1 - 1e-15)
-            odds_cat = event_rate / (1 - event_rate)
-            woe = np.log(odds_cat / self.odds_prior_)
-            woe_df[col] = woe  # Keep original column name
+            # Create a mapping dictionary from category to WOE
+            category_to_woe = mapping["woe"].to_dict()
+
+            # Apply WOE mapping to each value
+            woe_values = []
+            for val in X_processed[col]:
+                if val in category_to_woe:
+                    woe_values.append(category_to_woe[val])
+                else:
+                    # Handle unseen categories - use default WOE or prior
+                    woe_values.append(0.0)  # or np.log(self.odds_prior_) for prior
+
+            woe_df[col] = woe_values
 
         return woe_df
 
@@ -1670,6 +1717,13 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
                 tree_estimator = DecisionTreeClassifier
             # Create and fit the tree
             tree_kwargs = self.tree_kwargs.copy()
+
+            # Add monotonic constraint for this feature if specified
+            if col in self.monotonic_cst and self.monotonic_cst[col] != 0:
+                # For trees, monotonic_cst expects a list with constraints for each feature
+                # Since we're fitting on a single feature, pass a single-element list
+                tree_kwargs["monotonic_cst"] = [self.monotonic_cst[col]]
+
             tree = tree_estimator(**tree_kwargs)
         else:
             # tree_estimator is already an instance, use it directly
@@ -1833,8 +1887,19 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
             # Ensure column is object type to accept strings
             X_binned[col] = X_binned[col].astype("object")
 
-            # Map cluster labels to bin labels
-            cluster_to_bin = dict(zip(range(1, k + 1), bin_labels))
+            # Map cluster labels to bin labels based on centroid order, not cluster ID order
+            # Get the correct mapping from cluster ID to sorted centroid position
+            centroid_order = np.argsort(centroids)  # indices that would sort centroids
+            cluster_id_to_sorted_position = {
+                cluster_id + 1: pos for pos, cluster_id in enumerate(centroid_order)
+            }
+
+            # Create mapping from cluster ID to bin label based on centroid position
+            cluster_to_bin = {}
+            for cluster_id in range(1, k + 1):
+                sorted_pos = cluster_id_to_sorted_position[cluster_id]
+                cluster_to_bin[cluster_id] = bin_labels[sorted_pos]
+
             # Convert to pandas Series to use .map() method
             cluster_series = pd.Series(cluster_labels)
             X_binned.loc[~mask_missing, col] = cluster_series.map(cluster_to_bin)
@@ -1853,6 +1918,7 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
             "method": "faiss_kmeans",
             "centroids": sorted_centroids.tolist(),
             "monotonic_constraint": self.monotonic_cst.get(col, 0),
+            "cluster_to_bin": cluster_to_bin,  # Store the mapping for transform
         }
 
         return X_binned
@@ -2044,49 +2110,3 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
         edges[-1] = np.inf
 
         return edges if as_array else edges.tolist()
-
-    def _apply_isotonic_constraints(
-        self, mapping_df: pd.DataFrame, col: str
-    ) -> pd.DataFrame:
-        """Apply isotonic regression to enforce monotonic constraints on WOE values."""
-        from sklearn.isotonic import IsotonicRegression
-
-        constraint = self.monotonic_cst[col]
-        if constraint == 0:
-            return mapping_df
-
-        # Extract bin centers for ordering
-        bin_centers = []
-        for category in mapping_df.index:
-            if "(" in category and "," in category:
-                try:
-                    start = float(category.split("(")[1].split(",")[0])
-                    end = float(category.split(",")[1].split("]")[0])
-                    center = (start + end) / 2
-                    bin_centers.append(center)
-                except (ValueError, IndexError):
-                    bin_centers.append(len(bin_centers))
-            else:
-                bin_centers.append(len(bin_centers))
-
-        # Sort by bin centers
-        sorted_indices = np.argsort(bin_centers)
-        sorted_categories = mapping_df.index[sorted_indices]
-        sorted_woe = mapping_df.loc[sorted_categories, "woe"].values
-
-        # Apply isotonic regression
-        if constraint == 1:  # Increasing
-            isotonic_reg = IsotonicRegression(increasing=True, out_of_bounds="clip")
-        else:  # Decreasing
-            isotonic_reg = IsotonicRegression(increasing=False, out_of_bounds="clip")
-
-        # Fit isotonic regression
-        isotonic_reg.fit(np.arange(len(sorted_woe)), sorted_woe)
-        constrained_woe = isotonic_reg.predict(np.arange(len(sorted_woe)))
-
-        # Update the mapping with constrained WOE values
-        mapping_df_constrained = mapping_df.copy()
-        for i, category in enumerate(sorted_categories):
-            mapping_df_constrained.loc[category, "woe"] = constrained_woe[i]
-
-        return mapping_df_constrained
