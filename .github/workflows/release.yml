@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., 0.1.0)'
+        description: 'Version to release (e.g., 0.1.5)'
         required: true
         type: string
 
@@ -65,52 +65,61 @@ jobs:
         name: dist
         path: dist/
 
-  # publish:
-  #   needs: build
-  #   runs-on: ubuntu-latest
-  #   permissions:
-  #     id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
-  #   steps:
-  #   - name: Download build artifacts
-  #     uses: actions/download-artifact@v4
-  #     with:
-  #       name: dist
-  #       path: dist/
-  #
-  #   - name: Publish to PyPI
-  #     uses: pypa/gh-action-pypi-publish@release/v1
-  #     # Uncomment when ready to publish to PyPI
-  #     # with:
-  #     #   password: ${{ secrets.PYPI_API_TOKEN }}
-  #     # Or use trusted publishing (recommended):
-  #     # with:
-  #     #   repository-url: https://upload.pypi.org/legacy/
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: dist
+        path: dist/
 
-  # create-release:
-  #   needs: build
-  #   runs-on: ubuntu-latest
-  #   permissions:
-  #     contents: write
-  #   steps:
-  #   - uses: actions/checkout@v4
-  #     with:
-  #       fetch-depth: 0
+    - name: Publish to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        password: ${{ secrets.PYPI_API_TOKEN }}
 
-  #   - name: Create GitHub Release
-  #     uses: ncipollo/release-action@v1
-  #     with:
-  #       tag: ${{ github.ref_name }}
-  #       name: Release ${{ github.ref_name }}
-  #       body: |
-  #         ## Changes
+  create-release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
-  #         - See [CHANGELOG.md](CHANGELOG.md) for detailed changes
+    - name: Extract version from tag
+      id: get_version
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          echo "tag=v${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+        else
+          echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        fi
 
-  #         ## Installation
+    - name: Create GitHub Release
+      uses: ncipollo/release-action@v1
+      with:
+        tag: ${{ steps.get_version.outputs.tag }}
+        name: Release ${{ steps.get_version.outputs.tag }}
+        body: |
+          ## Changes
 
-  #         ```bash
-  #         pip install fastwoe==${{ github.ref_name }}
-  #         ```
-  #       draft: false
-  #       prerelease: false
-  #       token: ${{ secrets.GITHUB_TOKEN }}
+          See [CHANGELOG.md](https://github.com/xRiskLab/fastwoe/blob/main/CHANGELOG.md) for detailed changes.
+
+          ## Installation
+
+          ```bash
+          pip install fastwoe==${{ steps.get_version.outputs.version }}
+          ```
+
+          ## What's New in v${{ steps.get_version.outputs.version }}
+
+          Check the [CHANGELOG](https://github.com/xRiskLab/fastwoe/blob/main/CHANGELOG.md#version-${{ steps.get_version.outputs.version }}) for full details.
+        draft: false
+        prerelease: false
+        token: ${{ secrets.GITHUB_TOKEN }}

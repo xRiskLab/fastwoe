@@ -1009,6 +1009,8 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
                 if mask_missing.any():
                     X_processed.loc[mask_missing, col] = "Missing"
 
+        # Collect all WOE columns first to avoid DataFrame fragmentation
+        woe_columns = {}
         for col in X_processed.columns:
             if self.is_multiclass_target:
                 return self._transform_multiclass(X_processed)
@@ -1027,7 +1029,11 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
                     # Handle unseen categories - use default WOE or prior
                     woe_values.append(0.0)  # or np.log(self.odds_prior_) for prior
 
-            woe_df[col] = woe_values
+            woe_columns[col] = woe_values
+
+        # Create DataFrame from dict to avoid fragmentation warning
+        if woe_columns:
+            woe_df = pd.DataFrame(woe_columns, index=X.index)
 
         return woe_df
 
@@ -1820,8 +1826,6 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
         """Apply FAISS KMeans clustering to a numerical feature."""
         try:
             import faiss  # noqa: F401
-
-            print("FAISS is available:", faiss)
         except ImportError as e:
             raise ImportError(
                 "FAISS is required for faiss_kmeans binning method. "

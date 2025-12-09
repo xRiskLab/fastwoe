@@ -13,7 +13,7 @@ Features:
 from .fastwoe import FastWoe, WoePreprocessor
 from .interpret_fastwoe import WeightOfEvidence
 
-__version__ = "0.1.5rc1"
+__version__ = "0.1.5"
 __author__ = "xRiskLab"
 __email__ = "contact@xrisklab.ai"
 

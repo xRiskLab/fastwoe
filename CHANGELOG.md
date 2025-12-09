@@ -1,5 +1,29 @@
 # Changelog
 
+## Version 0.1.5 (2024-12-09)
+
+**Performance Fix & Code Cleanup**: Eliminated DataFrame fragmentation warning and removed debug statements
+
+- **Bug Fixes**:
+  - **DataFrame Fragmentation Warning**: Fixed `PerformanceWarning: DataFrame is highly fragmented` in `transform()` method
+    - Root cause: Iteratively adding columns to DataFrame with `woe_df[col] = woe_values` caused memory fragmentation
+    - Solution: Collect all WOE columns in a dictionary first, then create DataFrame in one operation
+    - Performance improvement: Eliminates repeated memory reallocation during transform
+    - User impact: No more annoying performance warnings when transforming data
+  - **Debug Print Statement**: Removed leftover debug `print("FAISS is available:", faiss)` statement in FAISS KMeans binning
+    - Cleaned up console output when using `binning_method='faiss_kmeans'`
+  - **Code Quality**: Improved transform method efficiency following pandas best practices
+
+- **Technical Details**:
+  - Changed from: `for col in columns: woe_df[col] = values` (causes fragmentation)
+  - Changed to: `woe_columns = {col: values for col in columns}; woe_df = pd.DataFrame(woe_columns)` (single allocation)
+  - Follows pandas recommendation to use `pd.concat(axis=1)` or dict-based DataFrame construction
+
+- **Testing**:
+  - All 102 tests passing successfully ✅
+  - Verified no fragmentation warnings with multi-feature datasets
+  - Backward compatible: transform output unchanged
+
 ## Version 0.1.5rc1 (2025-10-26)
 
 **Clean API Refactoring & Pythonic Input Handling**: Release candidate with major UX improvements
