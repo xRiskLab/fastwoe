@@ -8,13 +8,35 @@ Features:
 - FastWoe: Fast WOE encoding with confidence intervals
 - WoePreprocessor: Cardinality reduction for high-cardinality features
 - WeightOfEvidence: Model interpretability tool with FastWoe
+- plot_performance: CAP/Power curve visualization for binary and continuous targets
+- visualize_woe: WOE feature visualization
+- StyledDataFrame: Rich HTML rendering for Jupyter notebooks
 """
 
+from .display import (
+    StyledDataFrame,
+    iv_styled,
+    style_iv_analysis,
+    style_woe_mapping,
+    styled,
+)
 from .fastwoe import FastWoe, WoePreprocessor
 from .interpret_fastwoe import WeightOfEvidence
+from .metrics import plot_performance, visualize_woe
 
-__version__ = "0.1.5"
+__version__ = "0.1.6a0"
 __author__ = "xRiskLab"
 __email__ = "contact@xrisklab.ai"
 
-__all__ = ["FastWoe", "WoePreprocessor", "WeightOfEvidence"]
+__all__ = [
+    "FastWoe",
+    "WoePreprocessor",
+    "WeightOfEvidence",
+    "plot_performance",
+    "visualize_woe",
+    "StyledDataFrame",
+    "style_iv_analysis",
+    "style_woe_mapping",
+    "styled",
+    "iv_styled",
+]

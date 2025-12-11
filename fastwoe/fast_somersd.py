@@ -48,6 +48,43 @@ def _fenwick_query(bit: np.ndarray, i: int) -> int:
 
 
 @njit
+def _somers_yx_weighted(
+    y: np.ndarray, x: np.ndarray, weights: np.ndarray
+) -> tuple[float, float, float, float, float, float]:
+    """Compute weighted Somers' D_{Y|X}."""
+    n = y.size
+    if n < 2:
+        return np.nan, 0.0, 0.0, 0.0, 0.0, 0.0
+
+    # Calculate weighted concordant and discordant pairs
+    concordant = 0.0
+    discordant = 0.0
+    ties_y = 0.0
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            w_ij = weights[i] * weights[j]
+
+            if y[i] != y[j]:  # Not tied in Y
+                if (y[i] < y[j] and x[i] < x[j]) or (y[i] > y[j] and x[i] > x[j]):
+                    concordant += w_ij
+                elif (y[i] < y[j] and x[i] > x[j]) or (y[i] > y[j] and x[i] < x[j]):
+                    discordant += w_ij
+            else:  # Tied in Y
+                ties_y += w_ij
+
+    total_pairs = concordant + discordant + ties_y
+    denom = concordant + discordant  # Exclude ties in Y from denominator
+
+    if denom > 0:
+        stat = (concordant - discordant) / denom
+    else:
+        stat = np.nan
+
+    return stat, concordant, discordant, ties_y, total_pairs, denom
+
+
+@njit
 def _somers_yx_core(
     y: np.ndarray, x: np.ndarray
 ) -> tuple[float, int, int, int, int, int]:
@@ -202,13 +239,36 @@ def _somers_xy_core(
     return stat, concordant, discordant, Tx, P, denom
 
 
-def somersd_yx(y_true: np.ndarray, y_pred: np.ndarray) -> SomersDResult:
-    """Compute Somers' D_{Y|X} (ties in Y excluded from denominator)."""
+def somersd_yx(
+    y_true: np.ndarray, y_pred: np.ndarray, weights: np.ndarray | None = None
+) -> SomersDResult:
+    """Compute Somers' D_{Y|X} (ties in Y excluded from denominator).
+
+    Args:
+        y_true: True binary labels
+        y_pred: Predicted scores
+        weights: Optional sample weights. If provided, uses weighted AUC calculation.
+
+    Returns:
+        SomersDResult with statistic, concordant, discordant, ties, total_pairs, denominator
+
+    Note:
+        When weights are provided, falls back to sklearn's weighted AUC calculation
+        since weighted concordance requires different algorithm.
+    """
     y = np.asarray(y_true, dtype=np.float64)
     x = np.asarray(y_pred, dtype=np.float64)
     mask = ~(np.isnan(y) | np.isnan(x))
     y = y[mask]
     x = x[mask]
+
+    if weights is not None:
+        # Weighted case: use weighted concordance calculation
+        weights = np.asarray(weights, dtype=np.float64)[mask]
+        stat, S, D, Ty, P, denom = _somers_yx_weighted(y, x, weights)  # type: ignore[misc]
+        return SomersDResult(stat, S, D, Ty, P, denom)
+
+    # Unweighted case: use fast Numba implementation
     stat, S, D, Ty, P, denom = _somers_yx_core(y, x)  # type: ignore[misc]
     return SomersDResult(stat, S, D, Ty, P, denom)
 

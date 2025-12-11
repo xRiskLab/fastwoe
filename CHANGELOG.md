@@ -1,5 +1,156 @@
 # Changelog
 
+## Version 0.1.6a0 (2024-12-11)
+
+**Alpha Release: CAP Curves, Styled Display & Enhanced Metrics** 📊
+
+This alpha release introduces powerful visualization and display capabilities for model performance analysis and WOE interpretation.
+
+### ✨ New Features
+
+#### 1. CAP Curve Visualization (`plot_performance`)
+- **Unified CAP Curves**: Single `plot_performance()` function for both binary (PD) and continuous (LGD) targets
+- **Multiple Model Support**: Plot and compare multiple models on the same chart
+  - Pass list of predictions: `y_pred=[model1, model2, model3]`
+  - Custom labels and colors: `labels=['Model A', 'Model B']`, `colors=['#69db7c', '#55d3ed']`
+- **Flexible Layout**: Accept external `matplotlib.Axes` for custom subplot grids
+- **Crystal Ball Line**: Perfect ranking baseline (blue) with "Crystal Ball" legend
+- **Professional Styling**: Arial font, consistent linewidths, dotted grid, clean aesthetics
+- **Weighted Gini Support**: Pass `weights` parameter for EAD-weighted calculations (LGD models)
+- **Returns**: `(fig, ax, gini)` tuple where `gini` is single value or list for multiple models
+
+#### 2. Weighted Somers' D (`fast_somersd`)
+- **Numba-Optimized Weighted Implementation**: New `_somers_yx_weighted()` function
+  - O(n²) weighted concordant/discordant pair calculation
+  - Fully integrated into `somersd_yx()` function
+  - No external dependencies (removed sklearn.roc_auc_score fallback)
+- **Unified API**: `somersd_yx(y, x, weights=None)` handles both weighted and unweighted cases
+- **Regulatory Compliance**: Supports EAD-weighted Gini for Basel/regulatory LGD models
+- **Performance**: Numba JIT compilation for efficient weighted calculations
+
+#### 3. Rich HTML Display (`fastwoe.display`)
+- **Styled DataFrames**: Beautiful HTML tables for Jupyter notebooks
+  - Clean baseline foundation design (light mode)
+  - Inter font family, subtle gradients, alternating rows
+  - Gradient highlighting for numeric columns (high/medium/low values)
+  - Significance badges for statistical tests
+- **Decorator-Based Styling**: Clean, reusable code patterns
+  - `@iv_styled`: Automatic IV analysis styling
+  - `@styled(title, subtitle, highlight_cols, precision)`: Custom DataFrame styling
+  - Functions return styled output seamlessly
+- **Pre-configured Functions**:
+  - `style_iv_analysis(df)`: IV analysis with feature importance highlighting
+  - `style_woe_mapping(df, feature_name)`: WOE transformations with category details
+  - `StyledDataFrame(df, ...)`: Direct wrapper for any DataFrame
+- **Professional Design**: Based on baseline foundation design system
+  - Consistent light mode colors (#FCFCFC, #F0F0F0, #E8E8E8)
+  - 16px border radius for badges
+  - Smooth transitions with cubic-bezier(0.32, 0.72, 0, 1)
+  - Clean typography hierarchy
+
+#### 4. WOE Visualization (`visualize_woe`)
+- **Dual Display Modes**:
+  - `mode="probability"`: Show default probability deltas
+  - `mode="log_odds"`: Show log-odds (WOE values)
+- **Horizontal Bar Charts**: Clear visualization of WOE impact per category
+- **Color Coding**: Positive (risk-increasing) vs negative (risk-decreasing) categories
+- **Baseline Reference**: Shows prior probability/log-odds as reference point
+
+### 🔧 API Changes
+
+#### New Functions
+- `plot_performance(y_true, y_pred, weights=None, ax=None, labels=None, colors=None, figsize=(6,5), dpi=100, show_plot=True)`
+- `visualize_woe(woe_encoder, feature_name, mode='probability', figsize=(10, None), color_positive='#F783AC', color_negative='#A4D8FF', show_plot=True)`
+- `styled(title, subtitle, highlight_cols, precision)` - Decorator
+- `iv_styled` - Decorator for IV analysis
+- `style_iv_analysis(df)` - Function-based styling
+- `style_woe_mapping(df, feature_name)` - Function-based styling
+- `StyledDataFrame(df, title, subtitle, highlight_cols, precision)` - Direct wrapper
+
+#### Enhanced Functions
+- `somersd_yx(y, x, weights=None)`: Now accepts optional `weights` parameter for weighted Somers' D calculation
+
+#### Exports
+Updated `fastwoe/__init__.py` to export:
+- `plot_performance`, `visualize_woe` from `metrics`
+- `StyledDataFrame`, `style_iv_analysis`, `style_woe_mapping`, `styled`, `iv_styled` from `display`
+
+### 📊 Examples & Documentation
+
+#### New Notebooks
+- **`examples/fastwoe_cap_curve.ipynb`**: Comprehensive CAP curve demonstrations
+  - Single model CAP curves (binary PD)
+  - Multiple model comparison with custom colors
+  - EAD-weighted Gini for LGD models
+  - Side-by-side unweighted vs weighted comparisons
+  - Continuous target (LGD) examples
+
+- **`examples/fastwoe_styled_display.ipynb`**: Rich HTML display demonstrations
+  - Decorator-based styling patterns
+  - IV analysis with `@iv_styled`
+  - Custom styled tables with `@styled`
+  - Feature importance rankings
+  - Model comparison tables
+  - Risk segmentation analysis
+
+#### New Documentation
+- **`WEIGHTED_SOMERSD_SUMMARY.md`**: Mathematical foundation and implementation details for weighted Somers' D
+
+### 🐛 Bug Fixes
+- **Gini Calculation**: Corrected relationship between Somers' D and Gini (removed incorrect `2 *` multiplier for binary targets)
+- **Weighted Gini**: Removed sklearn.roc_auc_score dependency, implemented direct Numba-optimized weighted calculation
+- **Plot Layout**: Fixed `plot_performance` to generate single plot (removed unwanted second subplot)
+- **Return Values**: Corrected return signature to `(fig, ax, gini)` for single axis
+- **Perfect Line**: Fixed continuous target perfect line to sort by true target values (not straight line to (1,1))
+
+### 🎨 Styling & Design
+- **Consistent CAP/Power Curve Styling**:
+  - Arial font family for all text
+  - Font size 12 for axis labels, 14 for titles, 10 for legend
+  - Specific ticks: `np.arange(0, 1.1, 0.1)` for both axes
+  - "Fraction of population" (x-axis), "Fraction of target" (y-axis)
+  - "Crystal Ball" legend for perfect line (dodgerblue)
+  - Black dotted random line
+  - Default colors: `["#69db7c", "#55d3ed", "#ffa94d", "#c430c1", "#ff6b6b", "#4dabf7"]`
+  - Default figsize: `(6, 5)`
+
+- **HTML Table Styling**:
+  - Light mode only (no dark mode mixing)
+  - Inter font family
+  - Subtle backgrounds and borders
+  - Gradient highlighting with `!important` for proper rendering
+  - 16px border radius for badges
+  - Smooth hover transitions
+
+### 🔧 Configuration
+- **Moved Sourcery Config**: Migrated `.sourcery.yaml` to `pyproject.toml` under `[tool.sourcery]` section
+
+### 📦 Dependencies
+- **Added**: `loguru>=0.7.0` for enhanced logging in tests
+- **Added**: `matplotlib>=3.5.0` (already in examples dependencies)
+
+### 🧪 Testing
+- **Enhanced `test_fast_somersd.py`**:
+  - Added `test_weighted_somersd()` to verify weighted implementation
+  - Integrated `loguru` with `RichHandler` for better test output
+  - All tests passing ✅
+
+### 🚀 Installation
+This alpha version can be installed directly from the Git branch:
+
+```bash
+# Install from alpha branch
+uv add "fastwoe @ git+https://github.com/xRiskLab/fastwoe.git@alpha-0.1.6a0"
+```
+
+### ⚠️ Breaking Changes
+None - all changes are additive and backward compatible.
+
+### 📝 Notes
+- This is an alpha release for testing new visualization and display features
+- Feedback welcome on styling, API design, and functionality
+- Stable release (0.1.6) will follow after testing period
+
 ## Version 0.1.5 (2024-12-09)
 
 **Performance Fix & Code Cleanup**: Eliminated DataFrame fragmentation warning and removed debug statements

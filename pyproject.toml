@@ -50,6 +50,7 @@ dependencies = [
     "scipy>=1.7.0",
     "scikit-learn>=1.3.0,<1.8.0",
     "rich>=13.7.0",
+    "loguru>=0.7.0",
     "numba>=0.60.0",
     "packaging>=21.0",
 ]
@@ -222,3 +223,11 @@ include = ["deployment/**"]
 [tool.ty.overrides.rules]
 no-matching-overload = "ignore"
 unresolved-attribute = "ignore"
+
+# Sourcery configuration
+[tool.sourcery]
+[tool.sourcery.rules]
+disable = [
+    "extract-duplicate-method",
+    "extract-method",
+]
