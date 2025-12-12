@@ -189,7 +189,7 @@ disable = [
     "C0415",      # import-outside-toplevel (common in tests for mocking)
     "R1714",      # consider-using-in (minor style preference)
     "E0401",      # import-error (dependencies should be available)
-    "E0611",      # no-name-in-module (scipy.special.expit exists but linter can't find it)
+    "E0611",      # no-name-in-module (module exists but linter can't find it)
 ]
 
 [tool.pylint.format]
@@ -204,7 +204,7 @@ init-hook = "import sys; sys.path.insert(0, 'typings')"
 # ty type checker configuration
 [tool.ty.rules]
 unresolved-reference = "ignore"
-possibly-unbound-attribute = "ignore"
+possibly-missing-attribute = "ignore"
 unresolved-import = "ignore"
 
 # Include our type stubs directory in the src path

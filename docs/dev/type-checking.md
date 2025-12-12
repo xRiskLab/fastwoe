@@ -40,7 +40,7 @@ make ci-check
 The following error types are ignored because they're inherent to pandas/numpy/faiss usage:
 
 - **unresolved-reference**: Dynamic pandas/numpy attributes (`.empty`, `.idxmax`, `.isna`, etc.)
-- **possibly-unbound-attribute**: Complex pandas/numpy operations
+- **possibly-missing-attribute**: Complex pandas/numpy operations
 - **unresolved-import**: Optional dependencies like FAISS
 
 ## Expected Behavior

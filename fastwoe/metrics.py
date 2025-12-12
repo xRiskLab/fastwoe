@@ -283,9 +283,9 @@ def visualize_woe(
         )
 
     ax.xaxis.set_major_formatter(plt.FuncFormatter(value_formatter))
-    ax.set_xlabel(xlabel, fontsize=11, fontweight="bold")
+    ax.set_xlabel(xlabel, fontsize=12, fontfamily="Arial")
     ax.set_ylabel("")
-    ax.set_title(f"WOE: {feature_name}", fontsize=13, fontweight="bold")
+    ax.set_title(f"WOE: {feature_name}", fontsize=12, fontfamily="Arial")
     ax.grid(axis="x", alpha=0.3, linestyle="--")
     ax.legend(loc="best")
 
