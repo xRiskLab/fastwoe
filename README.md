@@ -82,6 +82,17 @@ pip install faiss-gpu  # Requires CUDA
 >
 > Both versions support Python 3.7-3.12 and are compatible with NumPy 1.x and 2.x.
 
+#### Plotting Support
+**Optional: Matplotlib for CAP curves and WOE visualization**:
+
+```bash
+# For plot_performance() and visualize_woe()
+pip install fastwoe[plotting]
+```
+
+> [!NOTE]
+> **Plotting Support**: Matplotlib is optional and only required for `plot_performance()` and `visualize_woe()` functions. If you only need WOE encoding, you can skip this dependency.
+
 ### From Source
 ```bash
 git clone https://github.com/xRiskLab/fastwoe.git

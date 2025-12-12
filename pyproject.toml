@@ -73,6 +73,9 @@ examples = [
 faiss = [
     "faiss-cpu>=1.12.0",
 ]
+plotting = [
+    "matplotlib>=3.5.0",
+]
 faiss-gpu = [
     "faiss-gpu-cu12>=1.12.0",
 ]

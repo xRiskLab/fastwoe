@@ -22,7 +22,23 @@ from .display import (
 )
 from .fastwoe import FastWoe, WoePreprocessor
 from .interpret_fastwoe import WeightOfEvidence
-from .metrics import plot_performance, visualize_woe
+
+# Optional plotting functionality
+try:
+    from .metrics import plot_performance, visualize_woe
+
+    _HAS_PLOTTING = True
+except ImportError:
+    _HAS_PLOTTING = False
+
+    def _plotting_not_available(*args, **kwargs):
+        raise ImportError(
+            "Plotting functionality requires matplotlib. "
+            "Install it with: pip install fastwoe[plotting]"
+        )
+
+    plot_performance = _plotting_not_available
+    visualize_woe = _plotting_not_available
 
 __version__ = "0.1.6a0"
 __author__ = "xRiskLab"
