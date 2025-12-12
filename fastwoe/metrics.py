@@ -11,7 +11,7 @@ import pandas as pd
 from matplotlib import pyplot as plt
 from scipy.special import expit, logit
 
-from .fast_somersd import somersd_yx
+from .fast_somersd import somersd_pairwise, somersd_yx
 
 
 def plot_performance(
@@ -297,3 +297,66 @@ def visualize_woe(
         return frame[["category", "woe", "proba", "proba_delta"]]
     else:
         return frame[["category", "woe", "log_odds", "log_odds_delta"]]
+
+
+def gini_clustered_matrix(
+    df: pd.DataFrame,
+    score_col: str,
+    label_col: str,
+    cluster_col: str,
+) -> tuple[pd.DataFrame, float | None]:
+    """Compute intra/inter-cluster Gini/Somers' D matrix.
+
+    Computes a matrix where each element (i, j) represents the Gini coefficient
+    between positive scores from cluster i and negative scores from cluster j.
+
+    Args:
+        df: DataFrame containing scores, labels, and cluster assignments
+        score_col: Name of the column containing model scores
+        label_col: Name of the column containing binary labels (0/1)
+        cluster_col: Name of the column containing cluster assignments
+
+    Returns:
+        Tuple of (gini_matrix, global_gini):
+        - gini_matrix: DataFrame with clusters as index and columns, where:
+          - Diagonal elements (i, i): Intra-cluster Gini (positive vs negative
+            scores within the same cluster)
+          - Off-diagonal elements (i, j): Inter-cluster Gini (positive scores
+            from cluster i vs negative scores from cluster j)
+        - global_gini: Overall Gini coefficient across all data
+
+    Examples:
+        >>> df = pd.DataFrame({
+        ...     'score': [0.8, 0.9, 0.3, 0.4, 0.7, 0.6],
+        ...     'label': [1, 1, 0, 0, 1, 0],
+        ...     'cluster': ['C1', 'C1', 'C1', 'C2', 'C2', 'C2']
+        ... })
+        >>> matrix, global_gini = gini_clustered_matrix(
+        ...     df, 'score', 'label', 'cluster'
+        ... )
+        >>> print(matrix)
+        >>> print(f"Global Gini: {global_gini}")
+    """
+    # Get unique clusters
+    clusters = sorted(df[cluster_col].unique())
+
+    # Initialize matrix
+    gini_matrix = pd.DataFrame(index=clusters, columns=clusters, dtype=float)
+
+    # Compute intra/inter-cluster Gini
+    for ci in clusters:
+        for cj in clusters:
+            pos_scores = df[(df[cluster_col] == ci) & (df[label_col] == 1)][
+                score_col
+            ].values
+            neg_scores = df[(df[cluster_col] == cj) & (df[label_col] == 0)][
+                score_col
+            ].values
+            gini_matrix.loc[ci, cj] = somersd_pairwise(pos_scores, neg_scores)
+
+    # Compute global Gini
+    global_pos_scores = df[df[label_col] == 1][score_col].values
+    global_neg_scores = df[df[label_col] == 0][score_col].values
+    global_gini = somersd_pairwise(global_pos_scores, global_neg_scores)
+
+    return gini_matrix, global_gini

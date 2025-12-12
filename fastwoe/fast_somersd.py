@@ -65,22 +65,17 @@ def _somers_yx_weighted(
         for j in range(i + 1, n):
             w_ij = weights[i] * weights[j]
 
-            if y[i] != y[j]:  # Not tied in Y
-                if (y[i] < y[j] and x[i] < x[j]) or (y[i] > y[j] and x[i] > x[j]):
-                    concordant += w_ij
-                elif (y[i] < y[j] and x[i] > x[j]) or (y[i] > y[j] and x[i] < x[j]):
-                    discordant += w_ij
-            else:  # Tied in Y
+            if y[i] == y[j]:  # Tied in Y
                 ties_y += w_ij
 
+            elif (y[i] < y[j] and x[i] < x[j]) or (y[i] > y[j] and x[i] > x[j]):
+                concordant += w_ij
+            elif (y[i] < y[j] and x[i] > x[j]) or (y[i] > y[j] and x[i] < x[j]):
+                discordant += w_ij
     total_pairs = concordant + discordant + ties_y
     denom = concordant + discordant  # Exclude ties in Y from denominator
 
-    if denom > 0:
-        stat = (concordant - discordant) / denom
-    else:
-        stat = np.nan
-
+    stat = (concordant - discordant) / denom if denom > 0 else np.nan
     return stat, concordant, discordant, ties_y, total_pairs, denom
 
 
@@ -282,3 +277,86 @@ def somersd_xy(y_true: np.ndarray, y_pred: np.ndarray) -> SomersDResult:
     x = x[mask]
     stat, S, D, Tx, P, denom = _somers_xy_core(y, x)  # type: ignore[misc]
     return SomersDResult(stat, S, D, Tx, P, denom)
+
+
+def somersd_pairwise(
+    pos_scores: np.ndarray, neg_scores: np.ndarray, ties: str = "y"
+) -> float | None:
+    """Compute pairwise Somers' D between positive and negative scores.
+
+    This function computes Somers' D by comparing all positive scores
+    against all negative scores. It's used for clustered Gini analysis where
+    you want to measure separation between different groups.
+
+    The computation leverages the fast Somers' D implementation for optimal
+    performance, which uses efficient Numba-accelerated algorithms.
+
+    Args:
+        pos_scores: Array of scores for positive class (label=1)
+        neg_scores: Array of scores for negative class (label=0)
+        ties: How to handle ties. "y" (default) computes D_Y|X (ties in Y excluded),
+              "x" computes D_X|Y (ties in X excluded).
+
+    Returns:
+        Somers' D statistic (net concordant pairs / total pairs), or None if
+        either array is empty.
+
+    Note:
+        Somers' D is computed by combining the scores into a single array with
+        binary labels (1 for positive, 0 for negative). This leverages the
+        efficient O(n log n) algorithm instead of O(n_pos * n_neg).
+
+        For binary classification, Somers' D equals the Gini coefficient
+        (2 * AUC - 1).
+
+    Examples:
+        >>> pos = np.array([0.8, 0.9, 0.7])
+        >>> neg = np.array([0.3, 0.4, 0.2])
+        >>> somersd_pairwise(pos, neg)
+        1.0  # Perfect separation
+        >>> somersd_pairwise(pos, neg, ties="x")
+        1.0  # Same result for perfect separation
+    """
+    if ties not in ("x", "y"):
+        raise ValueError(f"ties must be 'x' or 'y', got {ties}")
+
+    pos_scores = np.asarray(pos_scores, dtype=np.float64)
+    neg_scores = np.asarray(neg_scores, dtype=np.float64)
+
+    # Remove NaN values
+    pos_mask = ~np.isnan(pos_scores)
+    neg_mask = ~np.isnan(neg_scores)
+    pos_scores = pos_scores[pos_mask]
+    neg_scores = neg_scores[neg_mask]
+
+    if len(pos_scores) == 0 or len(neg_scores) == 0:
+        return None
+
+    # Combine scores and create binary labels
+    # This allows us to use the fast somersd implementation
+    all_scores = np.concatenate([pos_scores, neg_scores])
+    all_labels = np.concatenate(
+        [
+            np.ones(len(pos_scores), dtype=np.float64),
+            np.zeros(len(neg_scores), dtype=np.float64),
+        ]
+    )
+
+    # Use fast Somers' D implementation (O(n log n) instead of O(n_pos * n_neg))
+    if ties == "y":
+        result = somersd_yx(all_labels, all_scores)
+    else:  # ties == "x"
+        result = somersd_xy(all_labels, all_scores)
+
+    statistic = result.statistic
+
+    return None if np.isnan(statistic) else float(statistic)
+
+
+# Backward compatibility alias
+def gini_pairwise(pos_scores: np.ndarray, neg_scores: np.ndarray) -> float | None:
+    """Backward compatibility alias for somersd_pairwise.
+
+    This function is deprecated. Use somersd_pairwise instead.
+    """
+    return somersd_pairwise(pos_scores, neg_scores, ties="y")
