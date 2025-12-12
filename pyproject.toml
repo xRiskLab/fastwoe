@@ -12,9 +12,6 @@ packages = ["fastwoe"]
 include = [
     "/fastwoe",
     "/tests",
-    "/examples",
-    "/docs",
-    "/ims",
     "/README.md",
     "/LICENSE",
 ]
