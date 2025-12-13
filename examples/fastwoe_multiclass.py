@@ -133,11 +133,7 @@ def main():  # sourcery skip: extract-duplicate-method
 
     print("\n5. Model performance:")
     print("\nClassification Report:")
-    print(
-        classification_report(
-            y_test, y_pred, target_names=[f"Class {i}" for i in range(3)]
-        )
-    )
+    print(classification_report(y_test, y_pred, target_names=[f"Class {i}" for i in range(3)]))
 
     print("\nConfusion Matrix:")
     print(confusion_matrix(y_test, y_pred))
@@ -151,9 +147,7 @@ def main():  # sourcery skip: extract-duplicate-method
     print(feature_importance.head(10).to_string(index=False))
 
     # Show WOE mappings for most important feature
-    print(
-        f"\n7. WOE mapping for most important feature: {feature_importance.iloc[0]['feature']}"
-    )
+    print(f"\n7. WOE mapping for most important feature: {feature_importance.iloc[0]['feature']}")
     most_important_feature = feature_importance.iloc[0]["feature"]
 
     # Extract original feature name and class
@@ -189,9 +183,7 @@ def main():  # sourcery skip: extract-duplicate-method
     # High-confidence predictions for Class 2
     class_2_ci = woe_encoder.predict_ci_class(X_test, class_label=2)
     high_confidence_mask = class_2_ci[:, 0] > 0.3  # Lower bound > 0.3
-    print(
-        f"Samples with high confidence of being Class 2: {high_confidence_mask.sum()}"
-    )
+    print(f"Samples with high confidence of being Class 2: {high_confidence_mask.sum()}")
 
     # Uncertain predictions (wide CI)
     ci_widths = class_0_ci_method[:, 1] - class_0_ci_method[:, 0]

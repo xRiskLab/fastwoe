@@ -520,9 +520,7 @@ def test_somersd_pairwise_binary_vs_auc():
             somersd_result = somersd_pairwise(cluster_pos, cluster_neg, ties="y")
 
             # Compute using AUC
-            y_true = np.concatenate(
-                [np.ones(len(cluster_pos)), np.zeros(len(cluster_neg))]
-            )
+            y_true = np.concatenate([np.ones(len(cluster_pos)), np.zeros(len(cluster_neg))])
             y_pred = np.concatenate([cluster_pos, cluster_neg])
             auc = roc_auc_score(y_true, y_pred)
             gini_from_auc = 2 * auc - 1
@@ -592,9 +590,7 @@ def test_somersd_pairwise_vs_scipy():
         else:
             logger.info("somersd_pairwise(ties='x'): None")
         logger.info(f"scipy.somersd(x, y): {scipy_xy:.8f}")
-        if somersd_xy_result is not None and not (
-            np.isnan(scipy_xy) and somersd_xy_result == 0.0
-        ):
+        if somersd_xy_result is not None and not (np.isnan(scipy_xy) and somersd_xy_result == 0.0):
             logger.info(f"Difference (xy): {abs(somersd_xy_result - scipy_xy):.2e}")
         else:
             logger.info("Difference (xy): Both are 0.0, None, or NaN (no separation)")
@@ -605,9 +601,7 @@ def test_somersd_pairwise_vs_scipy():
                 somersd_yx_result == 0.0
                 or (somersd_yx_result is not None and np.isnan(somersd_yx_result))
                 or somersd_yx_result is None
-            ), (
-                f"{name}: When scipy returns NaN, somersd_pairwise should return 0.0, None, or NaN"
-            )
+            ), f"{name}: When scipy returns NaN, somersd_pairwise should return 0.0, None, or NaN"
         else:
             assert somersd_yx_result is not None, (
                 f"{name}: somersd_pairwise(ties='y') should not return None"
@@ -621,9 +615,7 @@ def test_somersd_pairwise_vs_scipy():
                 somersd_xy_result == 0.0
                 or (somersd_xy_result is not None and np.isnan(somersd_xy_result))
                 or somersd_xy_result is None
-            ), (
-                f"{name}: When scipy returns NaN, somersd_pairwise should return 0.0, None, or NaN"
-            )
+            ), f"{name}: When scipy returns NaN, somersd_pairwise should return 0.0, None, or NaN"
         else:
             assert somersd_xy_result is not None, (
                 f"{name}: somersd_pairwise(ties='x') should not return None"
@@ -655,12 +647,8 @@ def test_somersd_pairwise_vs_scipy():
             scipy_xy = stats.somersd(y_pred, y_true).statistic
 
         logger.info(f"Size {size}:")
-        logger.info(
-            f"somersd_pairwise(ties='y'): {somersd_yx_result:.8f}, scipy: {scipy_yx:.8f}"
-        )
-        logger.info(
-            f"somersd_pairwise(ties='x'): {somersd_xy_result:.8f}, scipy: {scipy_xy:.8f}"
-        )
+        logger.info(f"somersd_pairwise(ties='y'): {somersd_yx_result:.8f}, scipy: {scipy_yx:.8f}")
+        logger.info(f"somersd_pairwise(ties='x'): {somersd_xy_result:.8f}, scipy: {scipy_xy:.8f}")
 
         # Handle NaN cases
         if np.isnan(scipy_yx):

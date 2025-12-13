@@ -10,13 +10,48 @@ Based on: Revolut MIV methodology (see docs/revolut_miv.md)
 
 from __future__ import annotations
 
-from typing import Optional, Union
+import contextlib
+import itertools
+from typing import Any, Optional, Union
 
 import numpy as np
 import pandas as pd
 
 from .fastwoe import FastWoe
-from .metrics import somersd_pairwise
+from .metrics import gini_pairwise, somersd_pairwise
+
+
+def _create_woe_model(template: Optional[FastWoe] = None) -> FastWoe:
+    """
+    Create a new FastWoe instance, optionally using a template for configuration.
+
+    Parameters
+    ----------
+    template : FastWoe, optional
+        Template FastWoe instance to copy configuration from. If None, creates
+        a new instance with default parameters.
+
+    Returns:
+    -------
+    FastWoe
+        New FastWoe instance with configuration from template (if provided).
+    """
+    if template is None:
+        return FastWoe()
+
+    # Create new instance with same configuration as template
+    return FastWoe(
+        encoder_kwargs=template.encoder_kwargs.copy() if template.encoder_kwargs else None,
+        random_state=template.random_state,
+        binner_kwargs=getattr(template, "binner_kwargs", None),
+        warn_on_numerical=getattr(template, "warn_on_numerical", False),
+        numerical_threshold=getattr(template, "numerical_threshold", 20),
+        binning_method=getattr(template, "binning_method", "tree"),
+        tree_estimator=getattr(template, "tree_estimator", None),
+        tree_kwargs=getattr(template, "tree_kwargs", None),
+        faiss_kwargs=getattr(template, "faiss_kwargs", None),
+        monotonic_cst=getattr(template, "monotonic_cst", None),
+    )
 
 
 def marginal_somersd_selection(
@@ -29,6 +64,7 @@ def marginal_somersd_selection(
     correlation_threshold: float = 0.5,
     ties: str = "y",
     random_state: Optional[int] = None,
+    woe_model: Optional[FastWoe] = None,
 ) -> dict:
     """
     Feature selection using Marginal Information Value (MIV) with Somers' D.
@@ -65,6 +101,10 @@ def marginal_somersd_selection(
         - "x": D_X|Y (measures how well Y predicts X)
     random_state : int, optional
         Random seed for reproducibility
+    woe_model : FastWoe, optional
+        Pre-configured FastWoe instance to use as a template. If provided, new instances
+        will be created with the same configuration at each iteration. If None, creates
+        FastWoe() with default parameters.
 
     Returns:
     -------
@@ -111,29 +151,91 @@ def marginal_somersd_selection(
     y = np.asarray(y)
     y_eval = np.asarray(y_eval)
 
-    # Calculate univariate Somers' D for all features
-    univariate_somersd = {}
-    candidate_features = list(X.columns)
+    # Pre-compute WOE values for all features (Step 1: Build the matrix on WOE-transformed features)
+    candidate_features = list[Any](X.columns)
+    woe_values_dict: dict[str, np.ndarray] = {}
+    woe_encoders_dict: dict[str, FastWoe] = {}
 
-    print("Calculating univariate Somers' D for all features...")
+    print("Pre-computing WOE values for all features...")
     for feature in candidate_features:
-        # Get WOE values for this feature
-        woe_encoder = FastWoe()
+        woe_encoder = _create_woe_model(woe_model)
         try:
             woe_encoder.fit(X[[feature]], y)
             X_woe = woe_encoder.transform(X[[feature]])
-            woe_values = X_woe.iloc[:, 0].values
-
-            # Calculate Somers' D between WOE values and target
-            pos_scores = woe_values[y == 1]
-            neg_scores = woe_values[y == 0]
-
-            if len(pos_scores) > 0 and len(neg_scores) > 0:
-                somersd = somersd_pairwise(pos_scores, neg_scores, ties=ties)
-                univariate_somersd[feature] = somersd if somersd is not None else 0.0
-            else:
-                univariate_somersd[feature] = 0.0
+            woe_values_dict[feature] = X_woe.iloc[:, 0].values
+            woe_encoders_dict[feature] = woe_encoder
         except Exception:
+            # If fitting fails, store zeros as placeholder
+            woe_values_dict[feature] = np.zeros(len(X))
+            woe_encoders_dict[feature] = woe_encoder
+
+    # Build pairwise correlation matrix between features using Gini pairwise (for correlation checking)
+    print("Building pairwise feature correlation matrix using Gini pairwise...")
+    feature_correlation_matrix: dict[tuple[str, str], float] = {}
+    for i, f_i in enumerate[Any](candidate_features):
+        for f_j in candidate_features[i + 1 :]:
+            try:
+                # Use Gini pairwise: split one feature by median and compute Gini
+                woe_i = woe_values_dict[f_i]
+                woe_j = woe_values_dict[f_j]
+
+                # Create binary split for feature j using median
+                median_j = np.median(woe_j)
+                binary_j = (woe_j > median_j).astype(int)
+
+                # Compute Gini pairwise: use feature i WOE values as scores,
+                # split by feature j binary values
+                pos_scores = woe_i[binary_j == 1]
+                neg_scores = woe_i[binary_j == 0]
+
+                if len(pos_scores) > 0 and len(neg_scores) > 0:
+                    gini_ij = gini_pairwise(pos_scores, neg_scores)
+                    if gini_ij is not None and not np.isnan(gini_ij):
+                        feature_correlation_matrix[(f_i, f_j)] = abs(gini_ij)
+                    else:
+                        feature_correlation_matrix[(f_i, f_j)] = 0.0
+                else:
+                    feature_correlation_matrix[(f_i, f_j)] = 0.0
+
+                # Also compute in reverse direction and take average for symmetry
+                median_i = np.median(woe_i)
+                binary_i = (woe_i > median_i).astype(int)
+                pos_scores_rev = woe_j[binary_i == 1]
+                neg_scores_rev = woe_j[binary_i == 0]
+
+                if len(pos_scores_rev) > 0 and len(neg_scores_rev) > 0:
+                    gini_ji = gini_pairwise(pos_scores_rev, neg_scores_rev)
+                    if gini_ji is not None and not np.isnan(gini_ji):
+                        # Average the two directions for symmetric correlation
+                        avg_gini = (
+                            feature_correlation_matrix.get((f_i, f_j), 0.0) + abs(gini_ji)
+                        ) / 2.0
+                        feature_correlation_matrix[(f_i, f_j)] = avg_gini
+                        feature_correlation_matrix[(f_j, f_i)] = avg_gini
+                    else:
+                        feature_correlation_matrix[(f_j, f_i)] = feature_correlation_matrix.get(
+                            (f_i, f_j), 0.0
+                        )
+                else:
+                    feature_correlation_matrix[(f_j, f_i)] = feature_correlation_matrix.get(
+                        (f_i, f_j), 0.0
+                    )
+            except Exception:
+                feature_correlation_matrix[(f_i, f_j)] = 0.0
+                feature_correlation_matrix[(f_j, f_i)] = 0.0
+
+    # Calculate univariate Somers' D for all features using pre-computed WOE values
+    print("Calculating univariate Somers' D for all features...")
+    univariate_somersd = {}
+    for feature in candidate_features:
+        woe_values = woe_values_dict[feature]
+        pos_scores = woe_values[y == 1]
+        neg_scores = woe_values[y == 0]
+
+        if len(pos_scores) > 0 and len(neg_scores) > 0:
+            somersd = somersd_pairwise(pos_scores, neg_scores, ties=ties)
+            univariate_somersd[feature] = somersd if somersd is not None else 0.0
+        else:
             univariate_somersd[feature] = 0.0
 
     # Sort features by univariate Somers' D
@@ -157,19 +259,19 @@ def marginal_somersd_selection(
             break
 
         # Fit model with current features
-        woe_model = FastWoe()
+        current_woe_model = _create_woe_model(woe_model)
         try:
-            woe_model.fit(X[selected_features], y)
+            current_woe_model.fit(X[selected_features], y)
         except Exception as e:
             print(f"Error fitting model: {e}")
             break
 
         # Get model scores (probabilities) on training set
-        train_probs = woe_model.predict_proba(X[selected_features])[:, 1]
+        train_probs = current_woe_model.predict_proba(X[selected_features])[:, 1]
 
         # Calculate test performance
         try:
-            test_probs = woe_model.predict_proba(X_eval[selected_features])[:, 1]
+            test_probs = current_woe_model.predict_proba(X_eval[selected_features])[:, 1]
             test_pos = test_probs[y_eval == 1]
             test_neg = test_probs[y_eval == 0]
             if len(test_pos) > 0 and len(test_neg) > 0:
@@ -185,11 +287,8 @@ def marginal_somersd_selection(
 
         for feature in remaining_features:
             try:
-                # Get WOE values for candidate feature
-                woe_encoder = FastWoe()
-                woe_encoder.fit(X[[feature]], y)
-                X_woe = woe_encoder.transform(X[[feature]])
-                feature_woe = X_woe.iloc[:, 0].values
+                # Use pre-computed WOE values for candidate feature
+                feature_woe = woe_values_dict[feature]
 
                 # Calculate residual correlation: Somers' D between feature and target,
                 # controlling for current model scores
@@ -200,31 +299,34 @@ def marginal_somersd_selection(
                 neg_scores = feature_woe[y == 0]
 
                 if len(pos_scores) > 0 and len(neg_scores) > 0:
-                    # Calculate correlation between feature and model residuals
-                    # Residual = target - predicted probability
-                    residuals = y.astype(float) - train_probs
+                    # Calculate conformal residual metric: residual correlation between
+                    # feature and target after controlling for current model scores
+                    # This is done by computing residuals from regressing feature WOE on model scores,
+                    # then computing Somers' D between residuals and target
 
-                    # Calculate Somers' D between feature WOE and residuals
-                    # This measures how much additional information the feature provides
-                    pos_residuals = residuals[y == 1]
-                    neg_residuals = residuals[y == 0]
+                    # Compute residuals: feature_woe - predicted_feature_woe_from_model
+                    # Use simple linear regression to get predicted values
+                    try:
+                        # Fit linear regression: feature_woe ~ train_probs
+                        # Using least squares: beta = (X'X)^(-1)X'y
+                        X_reg = np.column_stack([np.ones(len(train_probs)), train_probs])
+                        beta = np.linalg.lstsq(X_reg, feature_woe, rcond=None)[0]
+                        predicted_feature_woe = X_reg @ beta
+                        residuals = feature_woe - predicted_feature_woe
+                    except Exception:
+                        # If regression fails, use original feature WOE values
+                        residuals = feature_woe
 
-                    # Alternative: Use partial correlation approach
-                    # Calculate Somers' D of feature WOE with target, but weight by
-                    # how much the feature adds beyond current model
-                    feature_somersd = somersd_pairwise(pos_scores, neg_scores, ties=ties)
+                    # Compute conformal residual metric: Somers' D between residuals and target
+                    residual_pos = residuals[y == 1]
+                    residual_neg = residuals[y == 0]
 
-                    if feature_somersd is not None:
-                        # Marginal contribution: feature's correlation minus
-                        # correlation with current model scores
-                        # This is a simplified approach - full MIV would use WOE differences
-                        model_feature_corr = np.corrcoef(feature_woe, train_probs)[0, 1]
-                        if np.isnan(model_feature_corr):
-                            model_feature_corr = 0.0
-
-                        # Marginal Somers' D: reduce by correlation with current model
-                        marginal = feature_somersd * (1 - abs(model_feature_corr))
-                        marginal_somersd[feature] = max(0.0, marginal)
+                    if len(residual_pos) > 0 and len(residual_neg) > 0:
+                        conformal_residual = somersd_pairwise(residual_pos, residual_neg, ties=ties)
+                        if conformal_residual is not None:
+                            marginal_somersd[feature] = max(0.0, abs(conformal_residual))
+                        else:
+                            marginal_somersd[feature] = 0.0
                     else:
                         marginal_somersd[feature] = 0.0
                 else:
@@ -244,33 +346,20 @@ def marginal_somersd_selection(
             print(f"\nMIV ({best_miv:.4f}) below threshold ({min_miv})")
             break
 
-        # Check correlation with already selected features
-        if len(selected_features) > 0:
-            try:
-                # Calculate correlation between candidate and selected features
-                candidate_woe = FastWoe()
-                candidate_woe.fit(X[[best_feature[0]]], y)
-                candidate_woe_vals = candidate_woe.transform(X[[best_feature[0]]]).iloc[:, 0]
+        # Check correlation with already selected features using pre-computed matrix
+        if selected_features:
+            max_corr = 0.0
+            for sel_feat in selected_features:
+                corr = feature_correlation_matrix.get((best_feature[0], sel_feat), 0.0)
+                max_corr = max(max_corr, corr)
 
-                max_corr = 0.0
-                for sel_feat in selected_features:
-                    sel_woe = FastWoe()
-                    sel_woe.fit(X[[sel_feat]], y)
-                    sel_woe_vals = sel_woe.transform(X[[sel_feat]]).iloc[:, 0]
-                    corr = abs(np.corrcoef(candidate_woe_vals, sel_woe_vals)[0, 1])
-                    if not np.isnan(corr):
-                        max_corr = max(max_corr, corr)
-
-                if max_corr > correlation_threshold:
-                    print(
-                        f"\nFeature '{best_feature[0]}' has high correlation "
-                        f"({max_corr:.3f}) with selected features, skipping..."
-                    )
-                    remaining_features.remove(best_feature[0])
-                    continue
-            except Exception:
-                pass
-
+            if max_corr > correlation_threshold:
+                print(
+                    f"\nFeature '{best_feature[0]}' has high correlation "
+                    f"({max_corr:.3f}) with selected features, skipping..."
+                )
+                remaining_features.remove(best_feature[0])
+                continue
         # Add best feature
         selected_features.append(best_feature[0])
         miv_history.append(best_miv)
@@ -280,18 +369,15 @@ def marginal_somersd_selection(
         step += 1
 
     # Build final model
-    final_model = FastWoe()
+    final_model = _create_woe_model(woe_model)
     final_model.fit(X[selected_features], y)
 
     # Calculate correlation matrix of selected features
     correlation_matrix = None
     if len(selected_features) > 1:
-        try:
+        with contextlib.suppress(Exception):
             woe_features = final_model.transform(X[selected_features])
             correlation_matrix = woe_features.corr()
-        except Exception:
-            pass
-
     return {
         "selected_features": selected_features,
         "miv_history": miv_history,
@@ -302,195 +388,269 @@ def marginal_somersd_selection(
     }
 
 
-def cumulative_gini_analysis(
+def gini_shapley(
     score_dict: dict[str, np.ndarray],
     y: Union[np.ndarray, pd.Series],
     availability_mask: Optional[dict[str, np.ndarray]] = None,
+    base_score_name: Optional[str] = None,
     ties: str = "y",
 ) -> pd.DataFrame:
     """
-    Analyze cumulative Gini from multiple score vectors (e.g., different models/credit checks).
+    Exact Shapley-value attribution of Gini under a fixed aggregation rule.
 
-    This function calculates how Gini improves as you add each score/model sequentially.
-    It's useful for understanding the incremental value of different data sources or models
-    in a credit decisioning process.
+    This function computes Shapley values for each score source by enumerating
+    all subsets (2^n). It attributes the total Gini of the *combined score*
+    fairly across individual score sources.
+
+    When base_score_name is provided:
+    - Population is fixed to where base score is available
+    - Base score is always included in the averaged score
+    - Shapley values are computed only for "extras" (scores other than base)
+    - Returns base-only Gini separately and incremental effects for extras
+
+    - This IS a fair attribution of Gini under:
+        * a fixed population (base-available if base_score_name provided, else intersection of all)
+        * a fixed score aggregation rule (simple averaging)
+        * a fixed availability regime
+
+    The Shapley values:
+        - are order-invariant
+        - sum to the total combined Gini (or incremental effects sum to final - base)
+        - account for all interactions
 
     Parameters
     ----------
     score_dict : dict[str, np.ndarray]
-        Dictionary mapping score names to score arrays. Each array should have the same length.
-        Example: {'model1': scores1, 'bureau_score': scores2, 'internal_score': scores3}
+        Mapping of score names to score arrays.
     y : np.ndarray or pd.Series
-        Binary target variable (0/1)
+        Binary target (0/1).
     availability_mask : dict[str, np.ndarray], optional
-        Dictionary mapping score names to boolean arrays indicating availability.
-        If None, assumes all scores are available for all samples.
-        Example: {'bureau_score': has_bureau_data, 'model1': np.ones(n, dtype=bool)}
+        Availability masks per score. If base_score_name is provided, population
+        is fixed to base-available samples. Otherwise, uses intersection of all masks.
+    base_score_name : str, optional
+        Name of the base score. If provided:
+        - Population is fixed to where base score is available
+        - Base score is always included in averaged scores
+        - Shapley values computed only for extras
+        - Returns base-only Gini and incremental effects
     ties : str, default="y"
-        How to handle ties in Somers' D calculation:
-        - "y": D_Y|X (default, measures how well X predicts Y)
-        - "x": D_X|Y (measures how well Y predicts X)
+        Tie handling for Somers' D.
 
     Returns:
     -------
     pd.DataFrame
-        DataFrame with columns:
-        - 'step': Step number (0 = baseline, 1 = first score, etc.)
-        - 'score_name': Name of score added at this step
-        - 'gini': Cumulative Gini after adding this score
-        - 'marginal_gini': Marginal Gini contribution of this score
-        - 'n_samples': Number of samples with this score available
-        - 'n_pos': Number of positive samples with this score
-        - 'n_neg': Number of negative samples with this score
-
-    Examples:
-    --------
-    >>> import numpy as np
-    >>> from fastwoe.modeling import cumulative_gini_analysis
-    >>>
-    >>> n = 1000
-    >>> y = np.random.binomial(1, 0.3, n)
-    >>> score_dict = {
-    ...     'model1': np.random.uniform(0, 1, n),
-    ...     'bureau_score': np.random.uniform(0, 1, n),
-    ...     'internal_score': np.random.uniform(0, 1, n),
-    ... }
-    >>> # Only 80% have bureau data
-    >>> availability_mask = {
-    ...     'model1': np.ones(n, dtype=bool),
-    ...     'bureau_score': np.random.binomial(1, 0.8, n).astype(bool),
-    ...     'internal_score': np.ones(n, dtype=bool),
-    ... }
-    >>>
-    >>> results = cumulative_gini_analysis(score_dict, y, availability_mask)
-    >>> print(results)
+        If base_score_name is provided:
+        - component: Score name
+        - effect_on_gini: Base Gini for base, Shapley value for extras
+        - role: "base_score_only" or "increment_over_base"
+        - base_only_gini: Gini of base score alone
+        - final_system_gini: Gini of all scores combined
+        - sum_incremental_effects: Sum of Shapley values for extras
+        - base_plus_incrementals: base_only_gini + sum_incremental_effects
+        - n_samples_used: Number of samples in fixed population
+        - n_pos, n_neg: Positive/negative counts
+        Otherwise:
+        - score_name: Score name
+        - shapley_value: Shapley value
+        - total_gini: Total Gini of all scores
+        - n_scores: Number of scores
+        - n_subsets: Number of subsets evaluated
     """
-    y = np.asarray(y)
+    y = np.asarray(y, dtype=float)
     n_samples = len(y)
 
-    # Initialize availability mask if not provided
+    # Normalize inputs
+    scores = {k: np.asarray(v, dtype=float) for k, v in score_dict.items()}
+    score_names = list(scores.keys())
+
     if availability_mask is None:
-        availability_mask = {name: np.ones(n_samples, dtype=bool) for name in score_dict.keys()}
+        availability_mask = {k: np.ones(n_samples, dtype=bool) for k in score_names}
+    else:
+        availability_mask = {k: np.asarray(m, dtype=bool) for k, m in availability_mask.items()}
+        for k in score_names:
+            availability_mask.setdefault(k, np.ones(n_samples, dtype=bool))
 
-    # Validate inputs
-    for name, scores in score_dict.items():
-        if len(scores) != n_samples:
-            raise ValueError(f"Score '{name}' has length {len(scores)}, expected {n_samples}")
-        if name not in availability_mask:
-            availability_mask[name] = np.ones(n_samples, dtype=bool)
-        if len(availability_mask[name]) != n_samples:
-            raise ValueError(
-                f"Availability mask for '{name}' has length {len(availability_mask[name])}, "
-                f"expected {n_samples}"
-            )
+    # Handle base score case
+    if base_score_name is not None:
+        if base_score_name not in scores:
+            raise ValueError(f"base_score_name='{base_score_name}' not found in score_dict")
 
-    results = []
+        # Fix population to where base score + y exist
+        base_score = scores[base_score_name]
+        base_valid = availability_mask[base_score_name] & ~np.isnan(base_score) & ~np.isnan(y)
 
-    # Baseline: no scores
-    baseline_gini = 0.0
-    results.append(
-        {
-            "step": 0,
-            "score_name": "baseline",
-            "gini": baseline_gini,
-            "marginal_gini": 0.0,
-            "n_samples": n_samples,
-            "n_pos": np.sum(y == 1),
-            "n_neg": np.sum(y == 0),
-        }
-    )
+        if base_valid.sum() == 0:
+            raise ValueError("No valid samples after applying base availability and NaN filtering")
 
-    # Track cumulative score (sum of all scores added so far)
-    cumulative_score = np.zeros(n_samples)
-    used_scores = []
+        y_valid = y[base_valid]
+        if len(np.unique(y_valid)) < 2:
+            raise ValueError("Target has no class variation on the base-valid population")
 
-    step = 1
-    remaining_scores = list(score_dict.keys())
+        extras = [k for k in score_names if k != base_score_name]
 
-    while remaining_scores:
-        best_score_name = None
-        best_marginal_gini = -np.inf
-        best_gini = -np.inf
+        # For extras, availability also requires score not-NaN
+        extra_avail = {k: (availability_mask[k] & ~np.isnan(scores[k])) for k in extras}
 
-        # Try each remaining score
-        for score_name in remaining_scores:
-            scores = score_dict[score_name]
-            mask = availability_mask[score_name]
+        def gini_of(score_1d: np.ndarray) -> float:
+            s = score_1d[base_valid]
+            pos = s[y_valid == 1]
+            neg = s[y_valid == 0]
+            if len(pos) == 0 or len(neg) == 0:
+                return 0.0
+            g = somersd_pairwise(pos, neg, ties=ties)
+            return float(g) if g is not None else 0.0
 
-            # Only consider samples where this score is available
-            # and where we have both positive and negative cases
-            valid_mask = mask & ~np.isnan(scores)
-            valid_y = y[valid_mask]
-            valid_scores = scores[valid_mask]
+        cache: dict[tuple[str, ...], float] = {}
 
-            if len(valid_y) == 0 or len(np.unique(valid_y)) < 2:
-                continue
+        def v(subset: tuple[str, ...]) -> float:
+            """Gini of averaged score: base + subset of extras."""
+            subset = tuple[str, ...](sorted(subset))
+            if subset in cache:
+                return cache[subset]
 
-            # Calculate Gini for this score alone
-            pos_scores = valid_scores[valid_y == 1]
-            neg_scores = valid_scores[valid_y == 0]
+            numer = np.zeros(n_samples, dtype=float)
+            denom = np.zeros(n_samples, dtype=float)
 
-            if len(pos_scores) == 0 or len(neg_scores) == 0:
-                continue
+            # Base is always included for base_valid samples
+            numer[base_valid] = base_score[base_valid]
+            denom[base_valid] = 1.0
 
-            score_gini = somersd_pairwise(pos_scores, neg_scores, ties=ties)
-            if score_gini is None:
-                continue
+            # Add subset components only where they are available
+            for k in subset:
+                m = base_valid & extra_avail[k]
+                numer[m] += scores[k][m]
+                denom[m] += 1.0
 
-            # Calculate marginal contribution: Gini of combined score vs cumulative
-            # Create combined score (simple average for now, could be weighted)
-            combined_score = cumulative_score.copy()
-            combined_score[valid_mask] += valid_scores
+            combined = np.zeros(n_samples, dtype=float)
+            combined[base_valid] = numer[base_valid] / denom[base_valid]
 
-            # Normalize combined score for samples with this score
-            n_used = len(used_scores) + 1
-            combined_score[valid_mask] = combined_score[valid_mask] / n_used
+            val = gini_of(combined)
+            cache[subset] = val
+            return val
 
-            # Calculate Gini of combined score
-            combined_pos = combined_score[valid_mask & (y == 1)]
-            combined_neg = combined_score[valid_mask & (y == 0)]
+        base_only_gini = v(())
+        final_system_gini = v(tuple[str, ...](extras))
 
-            if len(combined_pos) > 0 and len(combined_neg) > 0:
-                combined_gini = somersd_pairwise(combined_pos, combined_neg, ties=ties)
-                if combined_gini is not None:
-                    marginal = combined_gini - results[-1]["gini"]
-                    if combined_gini > best_gini:
-                        best_score_name = score_name
-                        best_marginal_gini = marginal
-                        best_gini = combined_gini
+        # Exact Shapley for each extra component
+        shapley = dict.fromkeys(extras, 0.0)
+        M = len(extras)
 
-        if best_score_name is None:
-            break
+        for i in extras:
+            others = [k for k in extras if k != i]
+            for r in range(M + 1):  # r = |S|, from 0 to M
+                for S in itertools.combinations(others, r):
+                    # Shapley weight: |S|! (M-|S|-1)! / M!
+                    weight = (
+                        np.math.factorial(r) * np.math.factorial(M - r - 1) / np.math.factorial(M)
+                    )
+                    shapley[i] += weight * (v(S + (i,)) - v(S))
 
-        # Add best score
-        scores = score_dict[best_score_name]
-        mask = availability_mask[best_score_name]
-        valid_mask = mask & ~np.isnan(scores)
-
-        # Update cumulative score
-        cumulative_score[valid_mask] += scores[valid_mask]
-        used_scores.append(best_score_name)
-        remaining_scores.remove(best_score_name)
-
-        # Calculate final stats
-        valid_y = y[valid_mask]
-        valid_scores = cumulative_score[valid_mask] / len(used_scores)
-
-        pos_scores = valid_scores[valid_y == 1]
-        neg_scores = valid_scores[valid_y == 0]
-
-        results.append(
+        # Build output DataFrame
+        rows = []
+        rows.append(
             {
-                "step": step,
-                "score_name": best_score_name,
-                "gini": best_gini,
-                "marginal_gini": best_marginal_gini,
-                "n_samples": np.sum(valid_mask),
-                "n_pos": np.sum(valid_y == 1),
-                "n_neg": np.sum(valid_y == 0),
+                "component": base_score_name,
+                "effect_on_gini": base_only_gini,
+                "role": "base_score_only",
             }
         )
 
-        step += 1
+        for k in sorted(extras, key=lambda z: shapley[z], reverse=True):
+            rows.append(
+                {
+                    "component": k,
+                    "effect_on_gini": shapley[k],
+                    "role": "increment_over_base",
+                }
+            )
 
-    return pd.DataFrame(results)
+        out = pd.DataFrame(rows)
+        out["base_only_gini"] = base_only_gini
+        out["final_system_gini"] = final_system_gini
+
+        return out
+
+    # Original behavior: no base score, compute Shapley for all scores
+    # Fix population to intersection of all availability masks
+    global_mask = np.ones(n_samples, dtype=bool)
+    for name in score_names:
+        global_mask &= availability_mask[name]
+
+    if global_mask.sum() == 0:
+        raise ValueError("No samples available after intersecting availability masks")
+
+    y_valid = y[global_mask]
+    if len(np.unique(y_valid)) < 2:
+        raise ValueError("Target has no class variation in the valid population")
+
+    # Cache value function v(S)
+    value_cache: dict[tuple[str, ...], float] = {}
+
+    def v(subset: tuple[str, ...]) -> float:
+        """Gini of the averaged score for a subset (cached)."""
+        if subset in value_cache:
+            return value_cache[subset]
+
+        if not subset:
+            value_cache[subset] = 0.0
+            return 0.0
+
+        cumulative = np.zeros(n_samples)
+        for s in subset:
+            cumulative[global_mask] += scores[s][global_mask]
+
+        averaged_score = cumulative[global_mask] / len(subset)
+
+        pos = averaged_score[y_valid == 1]
+        neg = averaged_score[y_valid == 0]
+
+        if len(pos) == 0 or len(neg) == 0:
+            g = 0.0
+        else:
+            g = somersd_pairwise(pos, neg, ties=ties) or 0.0
+
+        value_cache[subset] = g
+        return g
+
+    # Exact Shapley computation
+    shapley = dict.fromkeys(score_names, 0.0)
+    n_scores = len(score_names)
+
+    for k in range(n_scores + 1):
+        for subset in itertools.combinations(score_names, k):
+            subset = tuple[str, ...](sorted(subset))
+            v_subset = v(subset)
+
+            for s in score_names:
+                if s in subset:
+                    continue
+
+                extended = tuple[str, ...](sorted(subset + (s,)))
+                v_extended = v(extended)
+
+                # Shapley weight: |S|! (n-|S|-1)! / n!
+                weight = (
+                    np.math.factorial(len(subset))
+                    * np.math.factorial(n_scores - len(subset) - 1)
+                    / np.math.factorial(n_scores)
+                )
+
+                shapley[s] += weight * (v_extended - v_subset)
+
+    total_gini = v(tuple[str, ...](sorted(score_names)))
+
+    # Output
+    result = pd.DataFrame(
+        {
+            "score_name": score_names,
+            "shapley_value": [shapley[s] for s in score_names],
+        }
+    )
+
+    result["total_gini"] = total_gini
+    result["n_scores"] = n_scores
+    result["n_subsets"] = 2**n_scores
+
+    result = result.sort_values("shapley_value", ascending=False).reset_index(drop=True)
+
+    return result

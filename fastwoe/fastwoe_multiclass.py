@@ -71,9 +71,7 @@ class MulticlassWoeMixin:
             self.y_prior_[class_label] = class_prior
             self.odds_prior_per_class_[class_label] = class_prior / (1 - class_prior)
 
-    def _create_multiclass_encoders(
-        self, X: pd.DataFrame, y: Union[pd.Series, np.ndarray]
-    ) -> None:
+    def _create_multiclass_encoders(self, X: pd.DataFrame, y: Union[pd.Series, np.ndarray]) -> None:
         """Create one-vs-rest encoders for multiclass targets.
 
         Parameters
@@ -100,21 +98,17 @@ class MulticlassWoeMixin:
                     encoder_kwargs = self.encoder_kwargs.copy()
                     encoder_kwargs["target_type"] = "binary"
 
-                    encoder = TargetEncoder(
-                        **encoder_kwargs, random_state=self.random_state
-                    )
+                    encoder = TargetEncoder(**encoder_kwargs, random_state=self.random_state)
                     encoder.fit(X[[col]], y_binary)
                     self.encoders_[col][class_label] = encoder
 
                     # Create mapping for this class
-                    mapping_df = self._create_mapping_df(
-                        encoder, col, X, y_binary, class_label
-                    )
+                    mapping_df = self._create_mapping_df(encoder, col, X, y_binary, class_label)
                     self.mappings_[col][class_label] = mapping_df
 
                     # Calculate feature-level statistics for this class
-                    self.feature_stats_[col][class_label] = (
-                        self._calculate_feature_stats(col, X, y, mapping_df)
+                    self.feature_stats_[col][class_label] = self._calculate_feature_stats(
+                        col, X, y, mapping_df
                     )
 
     def _create_mapping_df(
@@ -223,9 +217,7 @@ class MulticlassWoeMixin:
                 else:
                     # For DecisionTreeClassifier, check if data is already binned
                     col_data = X_processed[col]
-                    if col_data.dtype != "object" and not isinstance(
-                        col_data.iloc[0], str
-                    ):
+                    if col_data.dtype != "object" and not isinstance(col_data.iloc[0], str):
                         # Data needs binning, use predict
                         X_processed[col] = binner.predict(X_processed[[col]])
 
@@ -399,9 +391,7 @@ class MulticlassWoeMixin:
                 ]
             )
 
-    def _predict_multiclass_proba(
-        self, X: Union[pd.DataFrame, np.ndarray]
-    ) -> np.ndarray:
+    def _predict_multiclass_proba(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
         """Predict probabilities for multiclass targets."""
         X_woe = self.transform(X)
 
@@ -413,9 +403,7 @@ class MulticlassWoeMixin:
 
             for i, class_label in enumerate(self.classes_):
                 if class_cols := [
-                    col
-                    for col in X_woe.columns
-                    if col.endswith(f"_class_{class_label}")
+                    col for col in X_woe.columns if col.endswith(f"_class_{class_label}")
                 ]:
                     # For simple-vs-composite hypothesis (Good, 1950)
                     # Sum of WOEs gives us the log likelihood ratio for this class
@@ -458,9 +446,7 @@ class MulticlassWoeMixin:
 
             for _, class_label in enumerate(self.classes_):
                 if class_cols := [
-                    col
-                    for col in X_woe.columns
-                    if col.endswith(f"_class_{class_label}")
+                    col for col in X_woe.columns if col.endswith(f"_class_{class_label}")
                 ]:
                     class_woe = X_woe[class_cols].sum(axis=1)
 
@@ -523,9 +509,7 @@ class MulticlassWoeMixin:
         else:
             # Binary case
             if self.y_prior_ is None:
-                raise ValueError(
-                    "Model must be fitted before predicting confidence intervals"
-                )
+                raise ValueError("Model must be fitted before predicting confidence intervals")
             odds_prior = self.y_prior_ / (1 - self.y_prior_)
             logit_lower = woe_score_lower + np.log(odds_prior)
             logit_upper = woe_score_upper + np.log(odds_prior)
@@ -581,14 +565,10 @@ class MulticlassWoeMixin:
             Array with shape (n_samples,) containing probabilities for the specified class
         """
         if not self.is_multiclass_target:
-            raise ValueError(
-                "predict_proba_class() is only available for multiclass targets"
-            )
+            raise ValueError("predict_proba_class() is only available for multiclass targets")
 
         if class_label not in self.classes_:
-            raise ValueError(
-                f"Class '{class_label}' not found. Available classes: {self.classes_}"
-            )
+            raise ValueError(f"Class '{class_label}' not found. Available classes: {self.classes_}")
 
         # Get all probabilities
         all_probs = self.predict_proba(X)
@@ -623,14 +603,10 @@ class MulticlassWoeMixin:
             Array with shape (n_samples, 2) containing [lower, upper] bounds for the specified class
         """
         if not self.is_multiclass_target:
-            raise ValueError(
-                "predict_ci_class() is only available for multiclass targets"
-            )
+            raise ValueError("predict_ci_class() is only available for multiclass targets")
 
         if class_label not in self.classes_:
-            raise ValueError(
-                f"Class '{class_label}' not found. Available classes: {self.classes_}"
-            )
+            raise ValueError(f"Class '{class_label}' not found. Available classes: {self.classes_}")
 
         # Get all confidence intervals
         all_ci = self.predict_ci(X, alpha)

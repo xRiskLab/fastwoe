@@ -90,9 +90,7 @@ class WeightOfEvidence(BaseEstimator):
             return list(classifier.mappings_.keys())
         else:
             # Fallback to generic names
-            n_features = (
-                X_train.shape[1] if hasattr(X_train, "shape") else len(X_train[0])
-            )
+            n_features = X_train.shape[1] if hasattr(X_train, "shape") else len(X_train[0])
             return [f"feature_{i}" for i in range(n_features)]
 
     @staticmethod
@@ -158,9 +156,7 @@ class WeightOfEvidence(BaseEstimator):
                 )
 
         if X_train is None or y_train is None:
-            raise ValueError(
-                "X_train and y_train must be provided if not auto-inferable"
-            )
+            raise ValueError("X_train and y_train must be provided if not auto-inferable")
 
         # Auto-infer feature names for FastWoe first
         if auto_infer and feature_names is None:
@@ -178,9 +174,7 @@ class WeightOfEvidence(BaseEstimator):
 
         # Update feature names to match WOE-transformed features if not set
         if feature_names is None:
-            self.feature_names: Optional[list[str]] = list(
-                self._original_X_train.columns
-            )
+            self.feature_names: Optional[list[str]] = list(self._original_X_train.columns)
         else:
             self.feature_names = feature_names
 
@@ -228,16 +222,12 @@ class WeightOfEvidence(BaseEstimator):
         elif isinstance(class_id, str):
             # type: ignore[unsupported-operation]
             if class_id not in self.class_names:
-                raise ValueError(
-                    f"Class name '{class_id}' not found in {self.class_names}"
-                )
+                raise ValueError(f"Class name '{class_id}' not found in {self.class_names}")
             # type: ignore[missing-attribute]
             return self.class_names.index(class_id)
         else:
             # Raise error if class identifier is not int or str
-            raise ValueError(
-                f"Class identifier must be int or str, got {type(class_id)}"
-            )
+            raise ValueError(f"Class identifier must be int or str, got {type(class_id)}")
 
     def _fit(self):
         """Fit the Weight of Evidence explainer."""
@@ -345,8 +335,7 @@ class WeightOfEvidence(BaseEstimator):
             if isinstance(x, pd.DataFrame):
                 sample = x.iloc[sample_idx]
                 sample_dict = {
-                    k: v.item() if hasattr(v, "item") else v
-                    for k, v in sample.to_dict().items()
+                    k: v.item() if hasattr(v, "item") else v for k, v in sample.to_dict().items()
                 }
             else:
                 sample = x[sample_idx]
@@ -376,13 +365,9 @@ class WeightOfEvidence(BaseEstimator):
             )
 
             if not return_dict:
-                sample_info = (
-                    f"Sample Index: {sample_idx}\nOriginal Features: {sample_dict}"
-                )
+                sample_info = f"Sample Index: {sample_idx}\nOriginal Features: {sample_dict}"
                 if true_label is not None:
-                    sample_info += (
-                        f"\nTrue Label: {self._format_class_name(true_label)}"
-                    )
+                    sample_info += f"\nTrue Label: {self._format_class_name(true_label)}"
                 sample_info += (
                     f"Predicted Label: {explanation['predicted_label']}\n"
                     f"Predicted Probabilities: {explanation['predicted_proba']}\n"
@@ -409,11 +394,7 @@ class WeightOfEvidence(BaseEstimator):
             true_label = None
             if true_labels is not None:
                 if isinstance(x, pd.Series) and isinstance(true_labels, pd.Series):
-                    if (
-                        hasattr(x, "name")
-                        and x.name is not None
-                        and x.name in true_labels.index
-                    ):
+                    if hasattr(x, "name") and x.name is not None and x.name in true_labels.index:
                         true_label = true_labels.loc[x.name]
                     else:
                         raise ValueError(
@@ -423,17 +404,14 @@ class WeightOfEvidence(BaseEstimator):
                         )
                 else:
                     true_label = (
-                        true_labels[-1]
-                        if hasattr(true_labels, "__getitem__")
-                        else true_labels
+                        true_labels[-1] if hasattr(true_labels, "__getitem__") else true_labels
                     )
             # type: ignore[bad-argument-type]
             explanation = self._explain_single_sample(x, class_to_explain, true_label)
             if not return_dict:
                 if isinstance(x, pd.Series):
                     sample_dict = {
-                        k: v.item() if hasattr(v, "item") else v
-                        for k, v in x.to_dict().items()
+                        k: v.item() if hasattr(v, "item") else v for k, v in x.to_dict().items()
                     }
                 elif isinstance(x, np.ndarray):
                     sample_dict = {
@@ -444,14 +422,11 @@ class WeightOfEvidence(BaseEstimator):
                 else:
                     raw_dict = x.to_dict() if hasattr(x, "to_dict") else dict(x)
                     sample_dict = {
-                        k: v.item() if hasattr(v, "item") else v
-                        for k, v in raw_dict.items()
+                        k: v.item() if hasattr(v, "item") else v for k, v in raw_dict.items()
                     }
                 sample_info = f"**Original Features**: {sample_dict}"
                 if true_label is not None:
-                    sample_info += (
-                        f"\n**True Label**: {self._format_class_name(true_label)}"
-                    )
+                    sample_info += f"\n**True Label**: {self._format_class_name(true_label)}"
                 sample_info += f"""
                     Predicted Label: {explanation["predicted_label"]}
                     Predicted Probabilities: {explanation["predicted_proba"]}
@@ -550,8 +525,7 @@ class WeightOfEvidence(BaseEstimator):
         # Always use class names for consistency
         if self.class_names:
             return {
-                name: round(float(prob), 5)
-                for name, prob in zip(self.class_names, proba_array)
+                name: round(float(prob), 5) for name, prob in zip(self.class_names, proba_array)
             }
         else:
             # Fallback to numeric labels if no class names
@@ -576,9 +550,7 @@ class WeightOfEvidence(BaseEstimator):
         else:
             return "Very strong evidence AGAINST the hypothesis"
 
-    def _render_centered_bars(
-        self, contributions: dict, width: int = 20, min_bar: int = 1
-    ) -> None:
+    def _render_centered_bars(self, contributions: dict, width: int = 20, min_bar: int = 1) -> None:
         """
         Render feature contributions as centered horizontal bars.
         """
@@ -594,9 +566,7 @@ class WeightOfEvidence(BaseEstimator):
         half_width = width // 2  # half for each side
 
         # Sort features by value (largest to smallest)
-        sorted_contributions = sorted(
-            contributions.items(), key=lambda x: x[1], reverse=True
-        )
+        sorted_contributions = sorted(contributions.items(), key=lambda x: x[1], reverse=True)
 
         for feat, val in sorted_contributions:
             if max_abs == 0 or val >= 0 and val <= 0:
@@ -679,9 +649,7 @@ class WeightOfEvidence(BaseEstimator):
             if isinstance(x, pd.DataFrame):
                 sample = x.iloc[sample_idx]
                 sample_dict = {
-                    col: sample[col].item()
-                    if hasattr(sample[col], "item")
-                    else sample[col]
+                    col: sample[col].item() if hasattr(sample[col], "item") else sample[col]
                     for col in x.columns
                 }
             else:
@@ -708,16 +676,10 @@ class WeightOfEvidence(BaseEstimator):
                 alpha,
             )
             if not return_dict:
-                sample_info = (
-                    f"Sample Index: {sample_idx}\nOriginal Features: {sample_dict}"
-                )
+                sample_info = f"Sample Index: {sample_idx}\nOriginal Features: {sample_dict}"
                 if true_label is not None:
-                    sample_info += (
-                        f"\nTrue Label: {self._format_class_name(true_label)}"
-                    )
-                console.print(
-                    Panel(sample_info, title="Sample with Confidence Intervals")
-                )
+                    sample_info += f"\nTrue Label: {self._format_class_name(true_label)}"
+                console.print(Panel(sample_info, title="Sample with Confidence Intervals"))
                 self._print_ci_explanation(explanation)
                 return None
         else:
@@ -734,14 +696,8 @@ class WeightOfEvidence(BaseEstimator):
             true_label = None
             if true_labels is not None:
                 if hasattr(true_labels, "__len__") and len(true_labels) > 1:
-                    raise ValueError(
-                        "true_labels has multiple values but no sample_idx specified"
-                    )
-                true_label = (
-                    true_labels[0]
-                    if hasattr(true_labels, "__getitem__")
-                    else true_labels
-                )
+                    raise ValueError("true_labels has multiple values but no sample_idx specified")
+                true_label = true_labels[0] if hasattr(true_labels, "__getitem__") else true_labels
             explanation = self._explain_single_sample_ci(
                 # type: ignore[bad-argument-type]
                 x,
@@ -753,8 +709,7 @@ class WeightOfEvidence(BaseEstimator):
             if not return_dict:
                 if isinstance(x, pd.Series):
                     sample_dict = {
-                        col: x[col].item() if hasattr(x[col], "item") else x[col]
-                        for col in x.index
+                        col: x[col].item() if hasattr(x[col], "item") else x[col] for col in x.index
                     }
                 elif isinstance(x, np.ndarray):
                     sample_dict = {
@@ -765,17 +720,12 @@ class WeightOfEvidence(BaseEstimator):
                 else:
                     raw_dict = x.to_dict() if hasattr(x, "to_dict") else dict(x)
                     sample_dict = {
-                        k: v.item() if hasattr(v, "item") else v
-                        for k, v in raw_dict.items()
+                        k: v.item() if hasattr(v, "item") else v for k, v in raw_dict.items()
                     }
                 sample_info = f"**Original Features**: {sample_dict}"
                 if true_label is not None:
-                    sample_info += (
-                        f"\n**True Label**: {self._format_class_name(true_label)}"
-                    )
-                console.print(
-                    Panel(sample_info, title="🎯 Sample with Confidence Intervals")
-                )
+                    sample_info += f"\n**True Label**: {self._format_class_name(true_label)}"
+                console.print(Panel(sample_info, title="🎯 Sample with Confidence Intervals"))
                 self._print_ci_explanation(explanation)
                 return None
         return explanation
@@ -794,9 +744,7 @@ class WeightOfEvidence(BaseEstimator):
         ci_lower_probs = ci_results[:, 0]  # Lower confidence bounds
         ci_upper_probs = ci_results[:, 1]  # Upper confidence bounds
         if self.classifier.y_prior_ is None:
-            raise ValueError(
-                "Classifier must be fitted before explaining confidence intervals"
-            )
+            raise ValueError("Classifier must be fitted before explaining confidence intervals")
         odds_prior = self.classifier.y_prior_ / (1 - self.classifier.y_prior_)
         eps = 1e-15
         ci_lower_safe = np.clip(ci_lower_probs, eps, 1 - eps)
@@ -868,12 +816,8 @@ class WeightOfEvidence(BaseEstimator):
         )
 
         # Point estimate row (middle)
-        base_prob = list(explanation["predicted_proba"].values())[
-            1
-        ]  # Get positive class prob
-        point_predicted_label = (
-            "Positive" if explanation["total_woe"] > 0 else "Negative"
-        )
+        base_prob = list(explanation["predicted_proba"].values())[1]  # Get positive class prob
+        point_predicted_label = "Positive" if explanation["total_woe"] > 0 else "Negative"
         scenarios_table.add_row(
             "Point Estimate",
             point_predicted_label,
@@ -981,9 +925,7 @@ class WeightOfEvidence(BaseEstimator):
 
         # Calculate WOE confidence intervals
         if self.classifier.y_prior_ is None:
-            raise ValueError(
-                "Classifier must be fitted before explaining confidence intervals"
-            )
+            raise ValueError("Classifier must be fitted before explaining confidence intervals")
         odds_prior = self.classifier.y_prior_ / (1 - self.classifier.y_prior_)
 
         # Convert probability bounds back to WOE bounds
@@ -1003,20 +945,14 @@ class WeightOfEvidence(BaseEstimator):
         optimistic_predictions = (woe_upper > 0).astype(int)  # Upper bound > 0
 
         # Calculate uncertainty metrics
-        prediction_agreement = np.mean(
-            conservative_predictions == optimistic_predictions
-        )
+        prediction_agreement = np.mean(conservative_predictions == optimistic_predictions)
         woe_uncertainty = woe_upper - woe_lower
         prob_uncertainty = ci_upper_probs - ci_lower_probs
 
         # Format predicted labels for each scenario
         base_labels = [self._format_class_name(pred) for pred in base_predictions]
-        conservative_labels = [
-            self._format_class_name(pred) for pred in conservative_predictions
-        ]
-        optimistic_labels = [
-            self._format_class_name(pred) for pred in optimistic_predictions
-        ]
+        conservative_labels = [self._format_class_name(pred) for pred in conservative_predictions]
+        optimistic_labels = [self._format_class_name(pred) for pred in optimistic_predictions]
 
         # Format probabilities for each scenario
         base_probs = [self._format_probabilities(prob) for prob in base_probabilities]

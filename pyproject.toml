@@ -107,7 +107,6 @@ log_date_format = "%Y-%m-%d %H:%M:%S"
 [tool.ruff]
 line-length = 100
 target-version = "py39"
-extend-exclude = ["*.ipynb"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "B", "C4", "UP", "SLF", "ARG", "D"]

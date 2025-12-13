@@ -353,17 +353,10 @@ def render_dataframe_html(
 
             # Special handling for significance column
             if col.lower() in ["iv_significance", "significance"]:
-                if (
-                    "significant" in str(value).lower()
-                    and "not" not in str(value).lower()
-                ):
-                    formatted_value = (
-                        f'<span class="significance-badge sig-yes">{value}</span>'
-                    )
+                if "significant" in str(value).lower() and "not" not in str(value).lower():
+                    formatted_value = f'<span class="significance-badge sig-yes">{value}</span>'
                 else:
-                    formatted_value = (
-                        f'<span class="significance-badge sig-no">{value}</span>'
-                    )
+                    formatted_value = f'<span class="significance-badge sig-no">{value}</span>'
 
             html_parts.append(f'<td class="{cell_class}">{formatted_value}</td>')
         html_parts.append("</tr>")
@@ -398,9 +391,7 @@ def style_iv_analysis(df: pd.DataFrame, theme: str = "light") -> StyledDataFrame
     )
 
 
-def style_woe_mapping(
-    df: pd.DataFrame, feature_name: str, theme: str = "light"
-) -> StyledDataFrame:
+def style_woe_mapping(df: pd.DataFrame, feature_name: str, theme: str = "light") -> StyledDataFrame:
     """
     Create styled HTML representation for WOE mapping DataFrame.
 

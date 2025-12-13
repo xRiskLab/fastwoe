@@ -210,9 +210,7 @@ class TestFastWoe:
         X = sample_data[["cat1", "cat2"]]
         woe = FastWoe()
 
-        with pytest.raises(
-            ValueError, match="Model must be fitted before transforming data"
-        ):
+        with pytest.raises(ValueError, match="Model must be fitted before transforming data"):
             woe.transform(X)
 
     def test_transform_numpy_array(self, sample_data):
@@ -261,9 +259,7 @@ class TestFastWoe:
                 pass
             except AttributeError as e:
                 # This should not happen anymore
-                pytest.fail(
-                    f"transform() should not raise AttributeError with numpy input: {e}"
-                )
+                pytest.fail(f"transform() should not raise AttributeError with numpy input: {e}")
 
     def test_fit_transform(self, sample_data):
         """Test fit_transform method."""
@@ -396,22 +392,14 @@ class TestFastWoe:
 
         # Strong predictor with clear separation
         X = pd.DataFrame(
-            {
-                "strong_feature": np.random.choice(
-                    ["Low", "High"], n_samples, p=[0.6, 0.4]
-                )
-            }
+            {"strong_feature": np.random.choice(["Low", "High"], n_samples, p=[0.6, 0.4])}
         )
 
         # Create target with strong correlation
         y = np.zeros(n_samples)
         high_mask = X["strong_feature"] == "High"
-        y[high_mask] = np.random.choice(
-            [0, 1], high_mask.sum(), p=[0.2, 0.8]
-        )  # 80% positive
-        y[~high_mask] = np.random.choice(
-            [0, 1], (~high_mask).sum(), p=[0.8, 0.2]
-        )  # 20% positive
+        y[high_mask] = np.random.choice([0, 1], high_mask.sum(), p=[0.2, 0.8])  # 80% positive
+        y[~high_mask] = np.random.choice([0, 1], (~high_mask).sum(), p=[0.8, 0.2])  # 20% positive
         y = pd.Series(y, dtype=int)
 
         woe = FastWoe()
@@ -590,9 +578,7 @@ class TestFastWoe:
             {
                 "age": np.random.randint(18, 80, 200),  # High cardinality numerical
                 "score": np.random.randint(300, 850, 200),  # Another numerical
-                "category": np.random.choice(
-                    ["A", "B", "C"], 200
-                ),  # Low cardinality categorical
+                "category": np.random.choice(["A", "B", "C"], 200),  # Low cardinality categorical
             }
         )
         y = np.random.binomial(1, 0.3, 200)
@@ -608,9 +594,7 @@ class TestFastWoe:
         assert len(binning_summary) > 0
         assert "age" in binning_summary["feature"].values
         assert "score" in binning_summary["feature"].values
-        assert (
-            "category" not in binning_summary["feature"].values
-        )  # Should not be binned
+        assert "category" not in binning_summary["feature"].values  # Should not be binned
 
     def test_numerical_threshold_parameter(self):
         """Test numerical_threshold parameter controls binning."""
@@ -663,15 +647,11 @@ class TestFastWoe:
         X = pd.DataFrame(
             {
                 "high_card_num": np.random.randint(1, 100, 200),  # Should be binned
-                "low_card_num": np.random.choice(
-                    [1, 2, 3], 200
-                ),  # Should not be binned
+                "low_card_num": np.random.choice([1, 2, 3], 200),  # Should not be binned
                 "high_card_cat": np.random.choice(
                     [f"cat_{i}" for i in range(50)], 200
                 ),  # Categorical, high card
-                "low_card_cat": np.random.choice(
-                    ["A", "B", "C"], 200
-                ),  # Categorical, low card
+                "low_card_cat": np.random.choice(["A", "B", "C"], 200),  # Categorical, low card
             }
         )
         y = np.random.binomial(1, 0.35, 200)
@@ -687,9 +667,7 @@ class TestFastWoe:
         # Only high_card_num should be binned (high cardinality numerical)
         assert "high_card_num" in binned_features
         assert "low_card_num" not in binned_features  # Low cardinality
-        assert (
-            "high_card_cat" not in binned_features
-        )  # Categorical (not numerical dtype)
+        assert "high_card_cat" not in binned_features  # Categorical (not numerical dtype)
         assert "low_card_cat" not in binned_features  # Low cardinality categorical
 
         # Transform should work for all features
@@ -700,9 +678,7 @@ class TestFastWoe:
     def test_edge_cases(self):
         """Test edge cases and error conditions."""
         # Test with single category
-        df_single = pd.DataFrame(
-            {"cat": ["A"] * 100, "target": np.random.binomial(1, 0.3, 100)}
-        )
+        df_single = pd.DataFrame({"cat": ["A"] * 100, "target": np.random.binomial(1, 0.3, 100)})
 
         woe = FastWoe()
         woe.fit(df_single[["cat"]], df_single["target"])
@@ -743,9 +719,7 @@ class TestFastWoe:
         y_single = pd.Series([1] * 30)  # Only one class
 
         woe = FastWoe()
-        with pytest.raises(
-            ValueError, match="Target variable must have at least 2 unique values"
-        ):
+        with pytest.raises(ValueError, match="Target variable must have at least 2 unique values"):
             woe.fit(X, y_single)
 
     def test_target_validation_invalid_values(self):
@@ -784,9 +758,7 @@ class TestFastWoe:
         X = sample_data[["cat1", "cat2"]]
         woe = FastWoe()
 
-        with pytest.raises(
-            ValueError, match="Model must be fitted before transforming data"
-        ):
+        with pytest.raises(ValueError, match="Model must be fitted before transforming data"):
             woe.predict(X)
 
     def test_predict_vs_predict_proba_difference(self, sample_data):
@@ -862,9 +834,7 @@ class TestFastWoe:
         assert edges_array.shape[0] > 2  # At least 2 edges  # type: ignore
         assert np.isneginf(edges_array[0])  # First edge should be -inf
         assert np.isinf(edges_array[-1])  # Last edge should be inf
-        assert np.all(
-            np.diff(edges_array[1:-1]) > 0
-        )  # Edges should be strictly increasing
+        assert np.all(np.diff(edges_array[1:-1]) > 0)  # Edges should be strictly increasing
 
         # Test list output
         edges_list = woe.get_split_value_histogram("score", as_array=False)
@@ -910,9 +880,7 @@ class TestIntegration:
         y = df["target"]
 
         # Step 1: Preprocess to reduce cardinality
-        preprocessor = WoePreprocessor(
-            max_categories=10, top_p=None
-        )  # Use max_categories only
+        preprocessor = WoePreprocessor(max_categories=10, top_p=None)  # Use max_categories only
         X_preprocessed = preprocessor.fit_transform(X)
 
         # Step 2: Apply WOE encoding
@@ -1025,9 +993,7 @@ class TestIntegration:
 
         # Generate continuous target (proportions between 0 and 1)
         beta = np.random.normal(size=(n_features,)).astype(np.float32)
-        logit = X @ beta + np.random.normal(scale=0.5, size=n_samples).astype(
-            np.float32
-        )
+        logit = X @ beta + np.random.normal(scale=0.5, size=n_samples).astype(np.float32)
         p_true = sigmoid(logit)
 
         # Create DataFrame
@@ -1036,9 +1002,7 @@ class TestIntegration:
 
         # Test with tree binning
         # sourcery skip: extract-duplicate-method
-        fw = FastWoe(
-            binning_method="tree", numerical_threshold=10, warn_on_numerical=False
-        )
+        fw = FastWoe(binning_method="tree", numerical_threshold=10, warn_on_numerical=False)
         fw.fit(df[["x0"]], df["p_true"])
 
         # Verify the fit worked
@@ -1067,9 +1031,7 @@ class TestIntegration:
         df_binary = df.copy()
         df_binary["p_true"] = (df["p_true"] > 0.5).astype(int)
 
-        fw_binary = FastWoe(
-            binning_method="tree", numerical_threshold=10, warn_on_numerical=False
-        )
+        fw_binary = FastWoe(binning_method="tree", numerical_threshold=10, warn_on_numerical=False)
         fw_binary.fit(df_binary[["x0"]], df_binary["p_true"])
 
         assert fw_binary.is_fitted_
@@ -1089,9 +1051,7 @@ class TestIntegration:
             {
                 "score": np.random.randint(300, 850, 200),  # High cardinality numerical
                 "age": np.random.randint(18, 80, 200),  # Another numerical
-                "category": np.random.choice(
-                    ["A", "B", "C"], 200
-                ),  # Low cardinality categorical
+                "category": np.random.choice(["A", "B", "C"], 200),  # Low cardinality categorical
             }
         )
         y = np.random.binomial(1, 0.3, 200)
@@ -1112,9 +1072,7 @@ class TestIntegration:
         assert len(binning_summary) > 0
         assert "score" in binning_summary["feature"].values
         assert "age" in binning_summary["feature"].values
-        assert (
-            "category" not in binning_summary["feature"].values
-        )  # Should not be binned
+        assert "category" not in binning_summary["feature"].values  # Should not be binned
 
         # Check that FAISS KMeans method was used
         faiss_features = binning_summary[binning_summary["method"] == "faiss_kmeans"]
@@ -1185,9 +1143,7 @@ class TestIntegration:
 
         np.random.seed(42)
         X = pd.DataFrame(
-            {
-                "feature": [1, 2, 3, 4, 5, None, 6, 7, 8, 9, 10] * 10
-            }  # Include missing values
+            {"feature": [1, 2, 3, 4, 5, None, 6, 7, 8, 9, 10] * 10}  # Include missing values
         )
         y = np.random.binomial(1, 0.3, 110)
 
@@ -1258,9 +1214,7 @@ class TestIntegration:
         assert edges_array.shape[0] == 6  # k+1 edges  # type: ignore
         assert np.isneginf(edges_array[0])  # First edge should be -inf
         assert np.isinf(edges_array[-1])  # Last edge should be inf
-        assert np.all(
-            np.diff(edges_array[1:-1]) > 0
-        )  # Edges should be strictly increasing
+        assert np.all(np.diff(edges_array[1:-1]) > 0)  # Edges should be strictly increasing
 
         # Test list output
         edges_list = woe.get_split_value_histogram("score", as_array=False)
@@ -1313,9 +1267,7 @@ class TestIntegration:
 
         # Generate continuous target (proportions between 0 and 1)
         beta = np.random.normal(size=(1,)).astype(np.float32)
-        logit = X @ beta + np.random.normal(scale=0.5, size=n_samples).astype(
-            np.float32
-        )
+        logit = X @ beta + np.random.normal(scale=0.5, size=n_samples).astype(np.float32)
         p_true = sigmoid(logit)
 
         # Create DataFrame
@@ -1490,9 +1442,7 @@ class TestTreeBinning:
             n_clusters_per_class=1,
             random_state=42,
         )
-        X_small = pd.DataFrame(
-            X_small, columns=[f"x_{i}" for i in range(X_small.shape[1])]
-        )
+        X_small = pd.DataFrame(X_small, columns=[f"x_{i}" for i in range(X_small.shape[1])])
         y_small = pd.Series(y_small, name="y")
 
         binning_params = {
@@ -1876,9 +1826,7 @@ class TestMulticlassWoe:
         # Test with single class (should raise error)
         y_single = pd.Series([0] * 60)
         woe = FastWoe()
-        with pytest.raises(
-            ValueError, match="Target variable must have at least 2 unique values"
-        ):
+        with pytest.raises(ValueError, match="Target variable must have at least 2 unique values"):
             woe.fit(X, y_single)
 
         # Test with two classes (should work as binary)
@@ -1967,9 +1915,7 @@ class TestMonotonicConstraints:
             FastWoe(monotonic_cst={"income": 1.0})
 
         # Test invalid feature name types
-        with pytest.raises(
-            TypeError, match="Feature names in monotonic_cst must be strings"
-        ):
+        with pytest.raises(TypeError, match="Feature names in monotonic_cst must be strings"):
             FastWoe(monotonic_cst={123: 1})
 
         # Test invalid constraint dict type
@@ -2021,10 +1967,7 @@ class TestMonotonicConstraints:
         # Check that binning summary includes monotonic constraints
         summary = woe.get_binning_summary()
         assert "monotonic_constraint" in summary.columns
-        assert (
-            summary[summary["feature"] == "income"]["monotonic_constraint"].iloc[0]
-            == -1
-        )
+        assert summary[summary["feature"] == "income"]["monotonic_constraint"].iloc[0] == -1
         assert summary[summary["feature"] == "age"]["monotonic_constraint"].iloc[0] == 1
 
     def test_monotonic_constraints_no_constraint(self):
@@ -2135,16 +2078,13 @@ class TestMonotonicConstraints:
         # Test that constraints are ignored and warnings are shown
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            woe_inc = FastWoe(
-                binning_method="faiss_kmeans", monotonic_cst={"feature": 1}
-            )
+            woe_inc = FastWoe(binning_method="faiss_kmeans", monotonic_cst={"feature": 1})
             woe_inc.fit(X_df, y)
 
             # Check that warnings were raised
             warning_messages = [str(warning.message) for warning in w]
             assert any(
-                "Monotonic constraints specified but binning_method='faiss_kmeans'"
-                in msg
+                "Monotonic constraints specified but binning_method='faiss_kmeans'" in msg
                 for msg in warning_messages
             )
             assert any(
@@ -2155,16 +2095,13 @@ class TestMonotonicConstraints:
         # Test that the same warnings occur for decreasing constraints
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            woe_dec = FastWoe(
-                binning_method="faiss_kmeans", monotonic_cst={"feature": -1}
-            )
+            woe_dec = FastWoe(binning_method="faiss_kmeans", monotonic_cst={"feature": -1})
             woe_dec.fit(X_df, y)
 
             # Check that warnings were raised
             warning_messages = [str(warning.message) for warning in w]
             assert any(
-                "Monotonic constraints specified but binning_method='faiss_kmeans'"
-                in msg
+                "Monotonic constraints specified but binning_method='faiss_kmeans'" in msg
                 for msg in warning_messages
             )
             assert any(
@@ -2304,8 +2241,7 @@ class TestMonotonicConstraints:
             # Check that warnings were raised
             warning_messages = [str(warning.message) for warning in w]
             assert any(
-                "Monotonic constraints specified but binning_method='faiss_kmeans'"
-                in msg
+                "Monotonic constraints specified but binning_method='faiss_kmeans'" in msg
                 for msg in warning_messages
             )
             assert any(
@@ -2413,8 +2349,7 @@ class TestMonotonicConstraints:
 
             # Should warn during fitting as well
             assert any(
-                "ignored for binning method 'kbins'" in str(warning.message)
-                for warning in w
+                "ignored for binning method 'kbins'" in str(warning.message) for warning in w
             )
 
         # Verify that the monotonic constraints are actually ignored (no isotonic adjustment)
@@ -2494,8 +2429,7 @@ class TestMonotonicConstraints:
             # Should warn about ignored monotonic constraints
             assert any("Monotonic constraints" in str(warning.message) for warning in w)
             assert any(
-                "ignored in multiclass WOE encoding" in str(warning.message)
-                for warning in w
+                "ignored in multiclass WOE encoding" in str(warning.message) for warning in w
             )
 
         # Check that constraint information is stored but ignored for all classes
@@ -2508,9 +2442,7 @@ class TestMonotonicConstraints:
 
         # Create continuous target with monotonic relationship
         income = np.random.lognormal(mean=10, sigma=0.5, size=n_samples)
-        y_continuous = np.clip(
-            1 / (1 + np.exp((income - np.median(income)) / 20)), 0, 1
-        )
+        y_continuous = np.clip(1 / (1 + np.exp((income - np.median(income)) / 20)), 0, 1)
 
         X_df = pd.DataFrame({"income": income})
 
@@ -2530,8 +2462,7 @@ class TestMonotonicConstraints:
             # Should warn about ignored monotonic constraints
             assert any("Monotonic constraints" in str(warning.message) for warning in w)
             assert any(
-                "ignored for binning method 'kbins'" in str(warning.message)
-                for warning in w
+                "ignored for binning method 'kbins'" in str(warning.message) for warning in w
             )
 
         # Check that constraint information is stored but ignored

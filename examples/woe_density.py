@@ -106,9 +106,7 @@ encoder.fit(x, y)
 woe_fastwoe_mono = encoder.transform(x_grid.reshape(-1, 1))
 
 # Debug: Check if monotonic and non-monotonic results are different
-print(
-    f"Tree without constraints - first 5 WOE values: {woe_fastwoe.values.flatten()[:5]}"
-)
+print(f"Tree without constraints - first 5 WOE values: {woe_fastwoe.values.flatten()[:5]}")
 print(
     f"Tree with monotonic constraints - first 5 WOE values: {woe_fastwoe_mono.values.flatten()[:5]}"
 )
@@ -129,9 +127,7 @@ ax1.plot(
     label="FastWoe (tree) - Monotonic",
     linewidth=2,
 )
-ax1.step(
-    bin_centers, woe_hist, color=colors[1], label="Histogram", where="mid", linewidth=2
-)
+ax1.step(bin_centers, woe_hist, color=colors[1], label="Histogram", where="mid", linewidth=2)
 ax1.plot(x_grid, woe_gam, color=colors[2], label="GAM", linewidth=2)
 ax1.plot(x_grid, woe_fastwoe, color=colors[3], label="FastWoe (tree)", linewidth=2)
 ax1.plot(

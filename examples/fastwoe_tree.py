@@ -36,9 +36,7 @@ def create_sample_data(n_samples=1000, random_state=42):
     # Create categorical feature
     X_cat = np.random.choice(["A", "B", "C", "D"], n_samples, p=[0.4, 0.3, 0.2, 0.1])
 
-    return pd.DataFrame(
-        {"numerical_feature": X_num, "categorical_feature": X_cat, "target": y}
-    )
+    return pd.DataFrame({"numerical_feature": X_num, "categorical_feature": X_cat, "target": y})
 
 
 def compare_binning_methods(data):  # sourcery skip: extract-duplicate-method
@@ -61,9 +59,7 @@ def compare_binning_methods(data):  # sourcery skip: extract-duplicate-method
         warn_on_numerical=False,
     )
 
-    fw_traditional.fit(
-        data[["numerical_feature", "categorical_feature"]], data["target"]
-    )
+    fw_traditional.fit(data[["numerical_feature", "categorical_feature"]], data["target"])
 
     # Get binning summary
     summary_traditional = fw_traditional.get_binning_summary()
@@ -113,11 +109,7 @@ def analyze_woe_mappings(fw_traditional, fw_tree):
     mapping_tree = fw_tree.get_mapping("numerical_feature")
 
     print("\nTraditional Binning WOE Mapping:")
-    print(
-        mapping_traditional[["category", "count", "event_rate", "woe", "woe_se"]].round(
-            4
-        )
-    )
+    print(mapping_traditional[["category", "count", "event_rate", "woe", "woe_se"]].round(4))
 
     print("\nTree Binning WOE Mapping:")
     print(mapping_tree[["category", "count", "event_rate", "woe", "woe_se"]].round(4))

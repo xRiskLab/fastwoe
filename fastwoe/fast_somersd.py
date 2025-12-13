@@ -4,13 +4,7 @@ This module is maintained for backward compatibility. All functionality
 has been moved to metrics.py. Please import from metrics instead.
 """
 
-from .metrics import (
-    SomersDResult,
-    gini_pairwise,
-    somersd_pairwise,
-    somersd_xy,
-    somersd_yx,
-)
+from .metrics import SomersDResult, gini_pairwise, somersd_pairwise, somersd_xy, somersd_yx
 
 __all__ = [
     "SomersDResult",

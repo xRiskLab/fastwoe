@@ -304,25 +304,19 @@ class TestWeightOfEvidence:
         assert explanation["true_label"] == "Positive"  # Should use class name
 
         # Test explain_ci with true_labels
-        explanation_ci = woe.explain_ci(
-            X.iloc[:5], sample_idx=1, true_labels=true_labels
-        )
+        explanation_ci = woe.explain_ci(X.iloc[:5], sample_idx=1, true_labels=true_labels)
         assert explanation_ci is not None
         assert explanation_ci["true_label"] == "Negative"  # Should use class name
 
         # Test with numpy array
         true_labels_np = np.array([1, 0, 1, 0, 1])
-        explanation_np = woe.explain(
-            X.iloc[:5], sample_idx=2, true_labels=true_labels_np
-        )
+        explanation_np = woe.explain(X.iloc[:5], sample_idx=2, true_labels=true_labels_np)
         assert explanation_np is not None
         assert explanation_np["true_label"] == "Positive"
 
         # Test with list
         true_labels_list = np.array([1, 0, 1, 0, 1])
-        explanation_list = woe.explain(
-            X.iloc[:5], sample_idx=3, true_labels=true_labels_list
-        )
+        explanation_list = woe.explain(X.iloc[:5], sample_idx=3, true_labels=true_labels_list)
         assert explanation_list is not None
         assert explanation_list["true_label"] == "Negative"
 
@@ -523,9 +517,7 @@ class TestCoverageImprovements:
 
             feature_names_ = ["feat1", "feat2"]
 
-        result = WeightOfEvidence._infer_feature_names(
-            None, MockClassifierWithFeatureNames()
-        )
+        result = WeightOfEvidence._infer_feature_names(None, MockClassifierWithFeatureNames())
         assert result == ["feat1", "feat2"]
 
         # Test with classifier that has mappings_ (FastWoe case)
@@ -534,9 +526,7 @@ class TestCoverageImprovements:
 
             mappings_ = {"map1": None, "map2": None}
 
-        result = WeightOfEvidence._infer_feature_names(
-            None, MockClassifierWithMappings()
-        )
+        result = WeightOfEvidence._infer_feature_names(None, MockClassifierWithMappings())
         assert result == ["map1", "map2"]
 
         # Test fallback to generic names
@@ -551,16 +541,12 @@ class TestCoverageImprovements:
 
             shape = (100, 3)
 
-        result = WeightOfEvidence._infer_feature_names(
-            MockXTrain(), MockClassifierMinimal()
-        )
+        result = WeightOfEvidence._infer_feature_names(MockXTrain(), MockClassifierMinimal())
         assert result == ["feature_0", "feature_1", "feature_2"]
 
         # Test with list-like X_train
         X_train_list = [[1, 2, 3], [4, 5, 6]]
-        result = WeightOfEvidence._infer_feature_names(
-            X_train_list, MockClassifierMinimal()
-        )
+        result = WeightOfEvidence._infer_feature_names(X_train_list, MockClassifierMinimal())
         assert result == ["feature_0", "feature_1", "feature_2"]
 
     def test_prepare_input_fallback_without_original_train(self):
@@ -655,9 +641,7 @@ class TestCoverageImprovements:
         woe = WeightOfEvidence(clf, data, y)
 
         # Test DataFrame with multiple rows, no sample_idx
-        with pytest.raises(
-            ValueError, match="received DataFrame with 50 rows but no sample_idx"
-        ):
+        with pytest.raises(ValueError, match="received DataFrame with 50 rows but no sample_idx"):
             woe.explain(data)
 
         # Test 2D numpy array with multiple rows, no sample_idx

@@ -485,13 +485,9 @@ def visualize_woe_analysis(df, woe_encoder):
     # Plot 4: WOE vs Event Rate correlation
     ax4 = axes[1, 0]
     all_woe = np.concatenate([region_mapping["woe"], job_mapping["woe"]])
-    all_rates = np.concatenate(
-        [region_mapping["event_rate"], job_mapping["event_rate"]]
-    )
+    all_rates = np.concatenate([region_mapping["event_rate"], job_mapping["event_rate"]])
 
-    ax4.scatter(
-        all_rates, all_woe, alpha=0.7, s=100, color="purple", edgecolors="black"
-    )
+    ax4.scatter(all_rates, all_woe, alpha=0.7, s=100, color="purple", edgecolors="black")
     ax4.set_xlabel("Event Rate")
     ax4.set_ylabel("WOE Value")
     ax4.set_title("WOE vs Event Rate", fontweight="bold", fontsize=12)
@@ -522,9 +518,7 @@ def visualize_woe_analysis(df, woe_encoder):
     theoretical_x = np.linspace(min(all_counts), max(all_counts), 100)
     # Approximate theoretical SE (assuming balanced good/bad split)
     theoretical_y = np.sqrt(2 / theoretical_x)
-    ax5.plot(
-        theoretical_x, theoretical_y, "r--", alpha=0.7, label="Theoretical (balanced)"
-    )
+    ax5.plot(theoretical_x, theoretical_y, "r--", alpha=0.7, label="Theoretical (balanced)")
     ax5.legend()
 
     # Plot 6: Z-scores (statistical significance)
@@ -543,9 +537,7 @@ def visualize_woe_analysis(df, woe_encoder):
         alpha=0.7,
         edgecolor="black",
     )
-    ax6.axhline(
-        y=1.96, color="red", linestyle="--", alpha=0.7, label="95% significance"
-    )
+    ax6.axhline(y=1.96, color="red", linestyle="--", alpha=0.7, label="95% significance")
     ax6.axhline(y=-1.96, color="red", linestyle="--", alpha=0.7)
     ax6.set_title("Statistical Significance (Z-scores)", fontweight="bold", fontsize=12)
     ax6.set_ylabel("Z-score")

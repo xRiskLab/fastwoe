@@ -20,9 +20,7 @@ COMPATIBILITY_MATRIX = [
 def run_cmd(cmd):
     """Run command and return result."""
     try:
-        result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, check=False
-        )
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=False)
         return result.returncode == 0, result.stdout, result.stderr
     except Exception as e:
         return False, "", str(e)
@@ -49,9 +47,7 @@ def test_python_sklearn_compatibility(python_ver, sklearn_ver, description):
     if not success:
         pytest.skip("uv not available - skipping compatibility tests")
 
-    env_name = (
-        f".test-py{python_ver.replace('.', '')}-sklearn{sklearn_ver.replace('.', '')}"
-    )
+    env_name = f".test-py{python_ver.replace('.', '')}-sklearn{sklearn_ver.replace('.', '')}"
     numpy_constraint = get_numpy_constraint(python_ver, sklearn_ver)
 
     # Test script content
@@ -135,9 +131,7 @@ print("SUCCESS")
         # Install other dependencies
         other_deps = ["pandas>=1.3.0", "scipy>=1.7.0"]
         for dep in other_deps:
-            success, stdout, stderr = run_cmd(
-                f"uv pip install --python {python_exe} '{dep}'"
-            )
+            success, stdout, stderr = run_cmd(f"uv pip install --python {python_exe} '{dep}'")
             if not success:
                 pytest.fail(f"Failed to install {dep}: {stderr}")
 
@@ -221,7 +215,5 @@ def test_sklearn_target_encoder_availability():
 if __name__ == "__main__":
     # Allow running this file directly for development
     print("🧪 Running FastWoe compatibility tests...")
-    print(
-        "Use 'pytest tests/test_compatibility.py -m compatibility' for full test suite"
-    )
+    print("Use 'pytest tests/test_compatibility.py -m compatibility' for full test suite")
     pytest.main([__file__, "-v", "-m", "compatibility"])

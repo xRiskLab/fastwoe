@@ -23,9 +23,7 @@ def create_credit_scoring_data(n_samples=2000, random_state=42):
     np.random.seed(random_state)
 
     # Generate base features
-    income = np.random.lognormal(
-        mean=10, sigma=0.5, size=n_samples
-    )  # Income in thousands
+    income = np.random.lognormal(mean=10, sigma=0.5, size=n_samples)  # Income in thousands
     age = np.random.normal(35, 12, n_samples)
     age = np.clip(age, 18, 80)  # Reasonable age range
     credit_score = np.random.normal(650, 100, n_samples)
@@ -116,9 +114,7 @@ def compare_binning_methods(X, y):
         print("-" * len(method_name))
 
         try:
-            woe = FastWoe(
-                monotonic_cst=monotonic_cst, numerical_threshold=10, **method_config
-            )
+            woe = FastWoe(monotonic_cst=monotonic_cst, numerical_threshold=10, **method_config)
 
             woe.fit(X, y)
 
@@ -143,9 +139,7 @@ def compare_binning_methods(X, y):
             print("📋 Constraints applied:")
             for _, row in summary.iterrows():
                 constraint_map = {-1: "Decreasing", 1: "Increasing", 0: "None"}
-                print(
-                    f"   {row['feature']}: {constraint_map[row['monotonic_constraint']]}"
-                )
+                print(f"   {row['feature']}: {constraint_map[row['monotonic_constraint']]}")
 
         except ImportError as e:
             if "faiss" not in str(e).lower():
@@ -223,9 +217,7 @@ def compare_kbins_strategies(X, y):
             print("📋 Constraints applied:")
             for _, row in summary.iterrows():
                 constraint_map = {-1: "Decreasing", 1: "Increasing", 0: "None"}
-                print(
-                    f"   {row['feature']}: {constraint_map[row['monotonic_constraint']]}"
-                )
+                print(f"   {row['feature']}: {constraint_map[row['monotonic_constraint']]}")
 
         except (ValueError, RuntimeError, AttributeError) as e:
             print(f"❌ Error with {strategy_name}: {e}")
@@ -414,16 +406,8 @@ def print_detailed_woe_analysis(results, X, y):
                 sorted_woe = np.array(woe_values)[sorted_indices]
                 sorted_rates = np.array(event_rates)[sorted_indices]
 
-                for center, woe_val, rate in zip(
-                    sorted_centers, sorted_woe, sorted_rates
-                ):
-                    print(
-                        f"{center:8.1f}"
-                        + " " * 20
-                        + f"{woe_val:8.3f}"
-                        + " " * 8
-                        + f"{rate:.3f}"
-                    )
+                for center, woe_val, rate in zip(sorted_centers, sorted_woe, sorted_rates):
+                    print(f"{center:8.1f}" + " " * 20 + f"{woe_val:8.3f}" + " " * 8 + f"{rate:.3f}")
 
 
 def main():

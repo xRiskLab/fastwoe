@@ -72,9 +72,7 @@ def demonstrate_faiss_kmeans():
     print(f"Target distribution: {y.value_counts().to_dict()}")
 
     # Split data
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.3, random_state=42
-    )
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
 
     print(f"\nTraining data shape: {X_train.shape}")
     print(f"Test data shape: {X_test.shape}")
@@ -126,9 +124,7 @@ def compare_with_kbins():
 
     # Create sample data
     X, y = create_sample_data(n_samples=2000, n_features=4)
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.3, random_state=42
-    )
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
 
     woe_kbins = FastWoe(
         binning_method="kbins",
@@ -165,9 +161,7 @@ def compare_performance():
 
     # Create sample data
     X, y = create_sample_data(n_samples=5000, n_features=6)
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.3, random_state=42
-    )
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
 
     methods = {
         "FAISS KMeans": FastWoe(

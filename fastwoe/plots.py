@@ -200,19 +200,32 @@ def visualize_woe(
     figsize: tuple = (10, None),
     show_plot: bool = True,
 ) -> pd.DataFrame:
-    """Visualize Weight of Evidence (WOE) at feature level or prediction level.
+    """Visualize Weight of Evidence (WOE) transformation effects.
+
+    Creates either a feature-level WOE curve (showing WOE values across bins) or
+    a prediction-level waterfall chart (showing feature contributions to a single prediction).
 
     Args:
-        woe_encoder: WOE encoder (FastWoe or similar) with get_all_mappings() and y_prior_
-        feature_name: Name of feature to visualize (for feature-level). Required if explanation is None.
-        explanation: Dictionary with 'feature_contributions' key (for prediction-level).
-                    If provided, feature_name is ignored and prediction-level visualization is used.
-        mode: "proba" or "logit" - how to display the values
-        figsize: Figure size as (width, height)
-        show_plot: Whether to display the plot
+        woe_encoder: WOE encoder with get_all_mappings() and y_prior_ attributes.
+            Typically a FastWoe instance.
+        feature_name: Feature to visualize for feature-level WOE curve.
+            Required when explanation is None. Ignored when explanation is provided.
+        explanation: Prediction-level explanation dictionary with 'feature_contributions' key.
+            When provided, creates waterfall chart and ignores feature_name.
+        mode: Output scale for values. Options:
+            - "proba": Probability scale (0-1)
+            - "logit": Log-odds scale
+        figsize: Figure dimensions as (width, height) tuple. Default is (10, 6).
+        show_plot: If True, displays the plot immediately. Default is True.
 
     Returns:
-        DataFrame with the visualization data
+        pd.DataFrame: Visualization data with columns depending on mode:
+            - Feature-level: bin labels, WOE values, frequencies
+            - Prediction-level: feature names, contribution values
+
+    Raises:
+        ValueError: If neither feature_name nor explanation is provided, or if
+            feature_name not found in encoder mappings.
 
     Examples:
         >>> # Feature-level visualization
@@ -335,7 +348,7 @@ def visualize_woe(
 
         label_col = "category"
 
-    # Define colormap: CFD4D9, 87D886, E889AB, AFD7FB and continue in this style
+    # Define colormap
     colormap = [
         "#CFD4D9",
         "#87D886",
@@ -360,7 +373,7 @@ def visualize_woe(
     # Draw bars - handle positive and negative separately for proper rendering
     pos_mask = frame[value_col] >= 0
     neg_mask = ~pos_mask
-    y_positions = list(range(len(frame)))
+    y_positions = list[int](range(len(frame)))
 
     if mode == "proba":
         # For probability mode, bars extend from baseline
@@ -382,7 +395,7 @@ def visualize_woe(
 
         # Draw negative bars (extend left from baseline)
         if neg_mask.any():
-            neg_y = [i for i, mask in enumerate(neg_mask) if mask]
+            neg_y = [i for i, mask in enumerate[Any](neg_mask) if mask]
             neg_values = frame.loc[neg_mask, value_col].values
             neg_colors_list = [colors[i] for i, mask in enumerate[Any](neg_mask) if mask]
 
@@ -409,9 +422,9 @@ def visualize_woe(
         # For log_odds mode, bars centered at 0
         # Draw positive bars (extend right from 0)
         if pos_mask.any():
-            pos_y = [i for i, mask in enumerate(pos_mask) if mask]
+            pos_y = [i for i, mask in enumerate[Any](pos_mask) if mask]
             pos_values = frame.loc[pos_mask, value_col].values
-            pos_colors_list = [colors[i] for i, mask in enumerate(pos_mask) if mask]
+            pos_colors_list = [colors[i] for i, mask in enumerate[Any](pos_mask) if mask]
 
             ax.barh(
                 pos_y,
@@ -425,9 +438,9 @@ def visualize_woe(
 
         # Draw negative bars (extend left from 0)
         if neg_mask.any():
-            neg_y = [i for i, mask in enumerate(neg_mask) if mask]
+            neg_y = [i for i, mask in enumerate[Any](neg_mask) if mask]
             neg_values = frame.loc[neg_mask, value_col].values
-            neg_colors_list = [colors[i] for i, mask in enumerate(neg_mask) if mask]
+            neg_colors_list = [colors[i] for i, mask in enumerate[Any](neg_mask) if mask]
 
             ax.barh(
                 neg_y,
