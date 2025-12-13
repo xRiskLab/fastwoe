@@ -25,7 +25,7 @@ from .interpret_fastwoe import WeightOfEvidence
 
 # Optional plotting functionality
 try:
-    from .metrics import plot_performance, visualize_woe
+    from .plots import plot_performance, visualize_woe
 
     _HAS_PLOTTING = True
 except ImportError:
@@ -40,7 +40,7 @@ except ImportError:
     plot_performance = _plotting_not_available
     visualize_woe = _plotting_not_available
 
-__version__ = "0.1.6a1"
+__version__ = "0.1.6a2"
 __author__ = "xRiskLab"
 __email__ = "contact@xrisklab.ai"
 

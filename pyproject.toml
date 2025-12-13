@@ -105,8 +105,9 @@ log_format = "%(levelname)s:%(name)s:%(message)s"
 log_date_format = "%Y-%m-%d %H:%M:%S"
 
 [tool.ruff]
-line-length = 88
+line-length = 100
 target-version = "py39"
+extend-exclude = ["*.ipynb"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "B", "C4", "UP", "SLF", "ARG", "D"]
@@ -117,6 +118,8 @@ ignore = [
     "N803",   # Argument name should be lowercase (allow X_train, y_train for ML)
     "UP035",  # typing.Dict and typing.List are still needed for Python 3.9 compatibility
     "UP006",  # ignore Dict spelling for Python 3.9 compatibility
+    "UP007",  # Union[X, Y] needed for Python 3.9 compatibility (| syntax is 3.10+)
+    "UP045",  # Optional[X] needed for Python 3.9 compatibility (X | None is 3.10+)
     "F841",   # unused variable (equivalent to pylint W0612)
     "SLF001", # protected access (equivalent to pylint protected-access)
     "C901",   # too complex (common C013 equivalent)
@@ -173,8 +176,6 @@ dev = [
     "ty>=0.0.1a21",
     "faiss-cpu>=1.12.0", # Required for FAISS tests
 ]
-
-
 
 [tool.pylint.messages_control]
 disable = [

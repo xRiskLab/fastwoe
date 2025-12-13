@@ -1,302 +1,366 @@
 """
-Model performance metrics and visualization.
+Model performance metrics.
 
-Implements CAP curves (binary) and Power curves (continuous targets like LGD).
+Implements Somers' D, Gini coefficient, and clustered Gini analysis.
 """
 
-from typing import Literal, Optional, Union
+from __future__ import annotations
+
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-from matplotlib import pyplot as plt
-from scipy.special import expit, logit
-
-from .fast_somersd import somersd_pairwise, somersd_yx
+from numba import njit
 
 
-def plot_performance(
-    y_true: Union[np.ndarray, pd.Series],
-    y_pred: Union[np.ndarray, pd.Series, list],
-    weights: Optional[Union[np.ndarray, pd.Series]] = None,
-    ax: Optional[plt.Axes] = None,
-    figsize: tuple = (6, 5),
-    dpi: int = 100,
-    show_plot: bool = True,
-    labels: Optional[list[str]] = None,
-    colors: Optional[list[str]] = None,
-) -> tuple:
-    """
-    Plot model performance curve (CAP for binary, Power curve for continuous).
+@dataclass(frozen=True)
+class SomersDResult:
+    """Container for Somers' D computation results."""
 
-    Automatically detects target type and creates appropriate visualization.
-    Supports multiple predictions for model comparison.
+    statistic: float
+    concordant_pairs: int
+    discordant_pairs: int
+    ties: int
+    total_pairs: int
+    denominator: int
+
+    def __repr__(self):
+        return (
+            f"SomersDResult(statistic={self.statistic:.6f}, "
+            f"concordant_pairs={self.concordant_pairs}, "
+            f"discordant_pairs={self.discordant_pairs}, "
+            f"ties={self.ties}, "
+            f"total_pairs={self.total_pairs}, "
+            f"denominator={self.denominator})"
+        )
+
+
+@njit
+def _fenwick_update(bit: np.ndarray, i: int, delta: int) -> None:
+    n = bit.size
+    while i <= n:
+        bit[i - 1] += delta
+        i += i & -i
+
+
+@njit
+def _fenwick_query(bit: np.ndarray, i: int) -> int:
+    s = 0
+    while i > 0:
+        s += bit[i - 1]
+        i -= i & -i
+    return s
+
+
+@njit
+def _somers_yx_weighted(
+    y: np.ndarray, x: np.ndarray, weights: np.ndarray
+) -> tuple[float, float, float, float, float, float]:
+    """Compute weighted Somers' D_{Y|X}."""
+    n = y.size
+    if n < 2:
+        return np.nan, 0.0, 0.0, 0.0, 0.0, 0.0
+
+    # Calculate weighted concordant and discordant pairs
+    concordant = 0.0
+    discordant = 0.0
+    ties_y = 0.0
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            w_ij = weights[i] * weights[j]
+
+            if y[i] == y[j]:  # Tied in Y
+                ties_y += w_ij
+
+            elif (y[i] < y[j] and x[i] < x[j]) or (y[i] > y[j] and x[i] > x[j]):
+                concordant += w_ij
+            elif (y[i] < y[j] and x[i] > x[j]) or (y[i] > y[j] and x[i] < x[j]):
+                discordant += w_ij
+    total_pairs = concordant + discordant + ties_y
+    denom = concordant + discordant  # Exclude ties in Y from denominator
+
+    stat = (concordant - discordant) / denom if denom > 0 else np.nan
+    return stat, concordant, discordant, ties_y, total_pairs, denom
+
+
+@njit
+def _somers_yx_core(y: np.ndarray, x: np.ndarray) -> tuple[float, int, int, int, int, int]:
+    """Compute Somers' D_{Y|X} (ties computed in Y)."""
+    n = y.size
+    if n < 2:
+        return np.nan, 0, 0, 0, 0, 0
+
+    # Compute ties in Y
+    y_sorted = np.sort(y)
+    Ty = 0
+    run = 1
+    for i in range(1, n):
+        if y_sorted[i] == y_sorted[i - 1]:
+            run += 1
+        else:
+            Ty += run * (run - 1) // 2
+            run = 1
+    Ty += run * (run - 1) // 2
+
+    uniq = [y_sorted[0]]
+    for i in range(1, n):  # sourcery skip: for-append-to-extend
+        if y_sorted[i] != y_sorted[i - 1]:
+            uniq.append(y_sorted[i])
+    m = len(uniq)
+
+    # ranks array
+    y_rank = np.empty(n, dtype=np.int64)
+    for i in range(n):
+        lo, hi = 0, m
+        v = y[i]
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if uniq[mid] < v:
+                lo = mid + 1
+            else:
+                hi = mid
+        y_rank[i] = lo + 1
+
+    idx = np.argsort(x, kind="mergesort")
+    bit = np.zeros(m, dtype=np.int64)
+    processed = 0
+    S = 0
+
+    t = 0
+    while t < n:
+        t2 = t + 1
+        xv = x[idx[t]]
+        while t2 < n and x[idx[t2]] == xv:
+            t2 += 1
+
+        for k in range(t, t2):
+            r = y_rank[idx[k]]
+            less = _fenwick_query(bit, r - 1)
+            greater = processed - _fenwick_query(bit, r)
+            S += less - greater
+
+        for k in range(t, t2):
+            r = y_rank[idx[k]]
+            _fenwick_update(bit, r, 1)
+            processed += 1
+
+        t = t2
+
+    P = n * (n - 1) // 2
+    denom = P - Ty
+    stat = S / denom if denom > 0 else np.nan
+
+    # Fix the concordant/discordant calculation
+    concordant = (S + denom) // 2  # C - D = S, C + D = denom, so C = (S + denom) / 2
+    discordant = denom - concordant  # D = denom - C
+
+    return stat, concordant, discordant, Ty, P, denom
+
+
+@njit
+def _somers_xy_core(y: np.ndarray, x: np.ndarray) -> tuple[float, int, int, int, int, int]:
+    """Compute Somers' D_{X|Y} (ties computed in X)."""
+    n = y.size
+    if n < 2:
+        return np.nan, 0, 0, 0, 0, 0
+
+    # Compute ties in X
+    x_sorted = np.sort(x)
+    Tx = 0
+    run = 1
+    for i in range(1, n):
+        if x_sorted[i] == x_sorted[i - 1]:
+            run += 1
+        else:
+            Tx += run * (run - 1) // 2
+            run = 1
+    Tx += run * (run - 1) // 2
+
+    # Get unique Y values for ranking
+    y_sorted = np.sort(y)
+    uniq = [y_sorted[0]]
+    for i in range(1, n):  # sourcery skip: for-append-to-extend
+        if y_sorted[i] != y_sorted[i - 1]:
+            uniq.append(y_sorted[i])
+    m = len(uniq)
+
+    # Rank Y values
+    y_rank = np.empty(n, dtype=np.int64)
+    for i in range(n):
+        lo, hi = 0, m
+        v = y[i]
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if uniq[mid] < v:
+                lo = mid + 1
+            else:
+                hi = mid
+        y_rank[i] = lo + 1
+
+    # Sort by X values and process with Fenwick tree
+    idx = np.argsort(x, kind="mergesort")
+    bit = np.zeros(m, dtype=np.int64)
+    processed = 0
+    S = 0
+
+    t = 0
+    while t < n:
+        t2 = t + 1
+        xv = x[idx[t]]
+        while t2 < n and x[idx[t2]] == xv:
+            t2 += 1
+
+        for k in range(t, t2):
+            r = y_rank[idx[k]]
+            less = _fenwick_query(bit, r - 1)
+            greater = processed - _fenwick_query(bit, r)
+            S += less - greater
+
+        for k in range(t, t2):
+            r = y_rank[idx[k]]
+            _fenwick_update(bit, r, 1)
+            processed += 1
+
+        t = t2
+
+    P = n * (n - 1) // 2
+    denom = P - Tx  # Denominator excludes ties in X
+    stat = S / denom if denom > 0 else np.nan
+
+    # Fix the concordant/discordant calculation
+    concordant = (S + denom) // 2  # C - D = S, C + D = denom, so C = (S + denom) / 2
+    discordant = denom - concordant  # D = denom - C
+
+    return stat, concordant, discordant, Tx, P, denom
+
+
+def somersd_yx(
+    y_true: np.ndarray, y_pred: np.ndarray, weights: np.ndarray | None = None
+) -> SomersDResult:
+    """Compute Somers' D_{Y|X} (ties in Y excluded from denominator).
 
     Args:
-        y_true: True target values (binary 0/1 or continuous)
-        y_pred: Predicted scores/probabilities. Can be:
-            - Single array: one model
-            - List of arrays: multiple models for comparison
-        weights: Optional weights (e.g., EAD for LGD models)
-        ax: Optional matplotlib axes to plot on. If None, creates new figure.
-        figsize: Figure size as (width, height). Only used if ax is None.
-        dpi: Figure resolution. Only used if ax is None.
-        show_plot: Whether to display the plot. Only used if ax is None.
-        labels: Optional labels for multiple predictions. If None, uses "Model 1", "Model 2", etc.
-        colors: Optional colors for multiple predictions. If None, uses default colormap.
+        y_true: True binary labels
+        y_pred: Predicted scores
+        weights: Optional sample weights. If provided, uses weighted AUC calculation.
 
     Returns:
-        Tuple of (figure, axes, gini_coefficient(s))
-        - gini is a single float if y_pred is single array
-        - gini is a list of floats if y_pred is a list of arrays
+        SomersDResult with statistic, concordant, discordant, ties, total_pairs, denominator
+
+    Note:
+        When weights are provided, falls back to sklearn's weighted AUC calculation
+        since weighted concordance requires different algorithm.
+    """
+    y = np.asarray(y_true, dtype=np.float64)
+    x = np.asarray(y_pred, dtype=np.float64)
+    mask = ~(np.isnan(y) | np.isnan(x))
+    y = y[mask]
+    x = x[mask]
+
+    if weights is not None:
+        # Weighted case: use weighted concordance calculation
+        weights = np.asarray(weights, dtype=np.float64)[mask]
+        stat, S, D, Ty, P, denom = _somers_yx_weighted(y, x, weights)  # type: ignore[misc]
+        return SomersDResult(stat, S, D, Ty, P, denom)
+
+    # Unweighted case: use fast Numba implementation
+    stat, S, D, Ty, P, denom = _somers_yx_core(y, x)  # type: ignore[misc]
+    return SomersDResult(stat, S, D, Ty, P, denom)
+
+
+def somersd_xy(y_true: np.ndarray, y_pred: np.ndarray) -> SomersDResult:
+    """Compute Somers' D_{X|Y} (ties in X excluded from denominator)."""
+    y = np.asarray(y_true, dtype=np.float64)
+    x = np.asarray(y_pred, dtype=np.float64)
+    mask = ~(np.isnan(y) | np.isnan(x))
+    y = y[mask]
+    x = x[mask]
+    stat, S, D, Tx, P, denom = _somers_xy_core(y, x)  # type: ignore[misc]
+    return SomersDResult(stat, S, D, Tx, P, denom)
+
+
+def somersd_pairwise(
+    pos_scores: np.ndarray, neg_scores: np.ndarray, ties: str = "y"
+) -> float | None:
+    """Compute pairwise Somers' D between positive and negative scores.
+
+    This function computes Somers' D by comparing all positive scores
+    against all negative scores. It's used for clustered Gini analysis where
+    you want to measure separation between different groups.
+
+    The computation leverages the fast Somers' D implementation for optimal
+    performance, which uses efficient Numba-accelerated algorithms.
+
+    Args:
+        pos_scores: Array of scores for positive class (label=1)
+        neg_scores: Array of scores for negative class (label=0)
+        ties: How to handle ties. "y" (default) computes D_Y|X (ties in Y excluded),
+              "x" computes D_X|Y (ties in X excluded).
+
+    Returns:
+        Somers' D statistic (net concordant pairs / total pairs), or None if
+        either array is empty.
+
+    Note:
+        Somers' D is computed by combining the scores into a single array with
+        binary labels (1 for positive, 0 for negative). This leverages the
+        efficient O(n log n) algorithm instead of O(n_pos * n_neg).
+
+        For binary classification, Somers' D equals the Gini coefficient
+        (2 * AUC - 1).
 
     Examples:
-        >>> # Single model
-        >>> fig, ax, gini = plot_performance(y_true, y_pred)
-
-        >>> # Compare multiple models
-        >>> fig, ax, ginis = plot_performance(
-        ...     y_true,
-        ...     [y_pred1, y_pred2, y_pred3],
-        ...     labels=['Model A', 'Model B', 'Model C']
-        ... )
-
-        >>> # Side-by-side comparison with custom grid
-        >>> fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
-        >>> _, _, gini1 = plot_performance(y_test, y_pred, ax=ax1)
-        >>> _, _, gini2 = plot_performance(y_test, y_pred, weights=ead, ax=ax2)
-        >>> plt.tight_layout()
-        >>> plt.show()
+        >>> pos = np.array([0.8, 0.9, 0.7])
+        >>> neg = np.array([0.3, 0.4, 0.2])
+        >>> somersd_pairwise(pos, neg)
+        1.0  # Perfect separation
+        >>> somersd_pairwise(pos, neg, ties="x")
+        1.0  # Same result for perfect separation
     """
-    # Convert to numpy
-    y_true = np.asarray(y_true)
+    if ties not in ("x", "y"):
+        raise ValueError(f"ties must be 'x' or 'y', got {ties}")
 
-    # Handle multiple predictions
-    if isinstance(y_pred, list):
-        y_preds = [np.asarray(yp) for yp in y_pred]
-        is_multiple = True
-    else:
-        y_preds = [np.asarray(y_pred)]
-        is_multiple = False
+    pos_scores = np.asarray(pos_scores, dtype=np.float64)
+    neg_scores = np.asarray(neg_scores, dtype=np.float64)
 
-    # Setup labels and colors
-    if labels is None:
-        if is_multiple:
-            labels = [f"Model {i + 1}" for i in range(len(y_preds))]
-        else:
-            labels = ["Model"]
+    # Remove NaN values
+    pos_mask = ~np.isnan(pos_scores)
+    neg_mask = ~np.isnan(neg_scores)
+    pos_scores = pos_scores[pos_mask]
+    neg_scores = neg_scores[neg_mask]
 
-    if colors is None:
-        # Default colormap
-        default_colors = [
-            "#69db7c",
-            "#55d3ed",
-            "#ffa94d",
-            "#c430c1",
-            "#ff6b6b",
-            "#4dabf7",
+    if len(pos_scores) == 0 or len(neg_scores) == 0:
+        return None
+
+    # Combine scores and create binary labels
+    # This allows us to use the fast somersd implementation
+    all_scores = np.concatenate([pos_scores, neg_scores])
+    all_labels = np.concatenate(
+        [
+            np.ones(len(pos_scores), dtype=np.float64),
+            np.zeros(len(neg_scores), dtype=np.float64),
         ]
-        colors = default_colors[: len(y_preds)]
-
-    # Keep track of whether weights were provided
-    has_weights = weights is not None
-    weights = np.asarray(weights) if weights is not None else np.ones_like(y_true)
-
-    # Auto-detect binary vs continuous
-    is_binary = np.all(np.isin(y_true, [0, 1]))
-
-    # Calculate Gini for all predictions using fast Somers' D
-    ginis = []
-    for yp in y_preds:
-        g = somersd_yx(y_true, yp, weights if has_weights else None).statistic
-        ginis.append(g)
-
-    # Create figure or use provided axes
-    if ax is None:
-        fig, ax1 = plt.subplots(1, 1, figsize=figsize, dpi=dpi)
-    else:
-        ax1 = ax
-        fig = ax1.get_figure()
-
-    # CAP curve for binary and continuous targets
-    n = len(y_true)
-    n_events = y_true.sum()
-
-    # Plot random line
-    ax1.plot(
-        [0, 1],
-        [0, 1],
-        linestyle="dotted",
-        color="black",
-        alpha=0.5,
     )
 
-    # Plot perfect/ideal line
-    if is_binary:
-        # Binary: perfect line is step function at bad_rate
-        bad_rate = n_events / n
-        ax1.plot(
-            [0, bad_rate, 1],
-            [0, 1, 1],
-            color="dodgerblue",
-            label="Crystal Ball",
-        )
-    else:
-        # Continuous: perfect line is sorting by TRUE target values
-        perfect_idx = np.argsort(y_true)[::-1]
-        y_perfect = y_true[perfect_idx]
-        cum_pop_perfect = np.concatenate([[0], np.arange(1, n + 1) / n])
-        cum_events_perfect = np.concatenate([[0], np.cumsum(y_perfect) / n_events])
-        ax1.plot(
-            cum_pop_perfect,
-            cum_events_perfect,
-            color="dodgerblue",
-            label="Crystal Ball",
-        )
+    # Use fast Somers' D implementation (O(n log n) instead of O(n_pos * n_neg))
+    if ties == "y":
+        result = somersd_yx(all_labels, all_scores)
+    else:  # ties == "x"
+        result = somersd_xy(all_labels, all_scores)
 
-    # Plot each model (same for both binary and continuous)
-    for yp, label, color, g in zip(y_preds, labels, colors, ginis):
-        sort_idx = np.argsort(yp)[::-1]
-        y_sorted = y_true[sort_idx]
+    statistic = result.statistic
 
-        cum_pop = np.concatenate([[0], np.arange(1, n + 1) / n])
-        cum_events = np.concatenate([[0], np.cumsum(y_sorted) / n_events])
-
-        ax1.plot(
-            cum_pop,
-            cum_events,
-            color=color,
-            label=f"{label} AR: {g:.2%}",
-        )
-
-    # Styling (same for both)
-    ax1.set_xlabel("Fraction of population", fontfamily="Arial", fontsize=12)
-    ax1.set_ylabel("Fraction of target", fontfamily="Arial", fontsize=12)
-    ax1.set_title("Cumulative Accuracy Profile (CAP)", fontsize=14, fontfamily="Arial")
-    ax1.set_xticks(np.arange(0, 1.1, 0.1))
-    ax1.set_yticks(np.arange(0, 1.1, 0.1))
-    ax1.legend(loc="lower right", fontsize=10)
-    ax1.grid(True, which="both", linestyle="dotted", linewidth=0.7, alpha=0.6)
-    # Only apply tight_layout and show if we created the figure
-    if ax is None:
-        plt.tight_layout()
-        if show_plot:
-            plt.show()
-
-    # Return single gini or list depending on input
-    gini_out = ginis if is_multiple else ginis[0]
-    return fig, ax1, gini_out
+    return None if np.isnan(statistic) else float(statistic)
 
 
-def visualize_woe(
-    woe_encoder,
-    feature_name: str,
-    mode: Literal["probability", "log_odds"] = "probability",
-    figsize: tuple = (10, None),
-    color_positive: str = "#F783AC",
-    color_negative: str = "#A4D8FF",
-    show_plot: bool = True,
-) -> pd.DataFrame:
-    """Visualize Weight of Evidence (WOE) transformation for a feature."""
-    # Get WOE mappings
-    try:
-        mappings = woe_encoder.get_all_mappings()[feature_name]
-    except (AttributeError, KeyError) as e:
-        raise ValueError(
-            f"Could not get WOE mappings for feature '{feature_name}'. Error: {e}"
-        ) from e
+# Backward compatibility alias
+def gini_pairwise(pos_scores: np.ndarray, neg_scores: np.ndarray) -> float | None:
+    """Backward compatibility alias for somersd_pairwise.
 
-    frame = pd.DataFrame(mappings)[["category", "woe"]]
-
-    try:
-        prior = woe_encoder.y_prior_
-    except AttributeError as exc:
-        raise ValueError("WOE encoder must have 'y_prior_' attribute.") from exc
-
-    if mode == "probability":
-        frame["proba"] = expit(logit(prior) + frame["woe"])
-        frame["proba_delta"] = frame["proba"] - prior
-        value_col = "proba_delta"
-        baseline = prior
-        xlabel = "Default Probability"
-
-        def value_formatter(x, p):
-            """Value formatter for probability."""
-            return f"{x:.0%}"
-    else:
-        frame["log_odds"] = logit(prior) + frame["woe"]
-        frame["log_odds_delta"] = frame["woe"]
-        value_col = "log_odds_delta"
-        baseline = logit(prior)
-        xlabel = "Log-Odds"
-
-        def value_formatter(x, p):
-            """Value formatter for log-odds."""
-            return f"{x:.2f}"
-
-    try:
-        frame = frame.sort_values("category")
-    except TypeError:
-        frame = frame.sort_values(value_col)
-
-    width, height = figsize
-    if height is None:
-        height = max(3, len(frame) * 0.3)
-
-    fig, ax = plt.subplots(figsize=(width, height))
-    colors = [color_positive if x >= 0 else color_negative for x in frame[value_col]]
-
-    if mode == "probability":
-        ax.barh(
-            range(len(frame)),
-            frame[value_col],
-            left=baseline,
-            color=colors,
-            height=0.8,
-            edgecolor="black",
-            linewidth=0.5,
-        )
-    else:
-        ax.barh(
-            range(len(frame)),
-            frame[value_col],
-            color=colors,
-            height=0.8,
-            edgecolor="black",
-            linewidth=0.5,
-        )
-
-    ax.set_yticks(range(len(frame)))
-    ax.set_yticklabels(frame["category"])
-
-    if mode == "probability":
-        ax.axvline(
-            baseline,
-            color="black",
-            linewidth=1.5,
-            linestyle="--",
-            label=f"Average: {baseline:.1%}",
-            zorder=10,
-        )
-    else:
-        ax.axvline(
-            0, color="black", linewidth=1.5, linestyle="--", label="Baseline", zorder=10
-        )
-
-    ax.xaxis.set_major_formatter(plt.FuncFormatter(value_formatter))
-    ax.set_xlabel(xlabel, fontsize=12, fontfamily="Arial")
-    ax.set_ylabel("")
-    ax.set_title(f"WOE: {feature_name}", fontsize=12, fontfamily="Arial")
-    ax.grid(axis="x", alpha=0.3, linestyle="--")
-    ax.legend(loc="best")
-
-    plt.tight_layout()
-    if show_plot:
-        plt.show()
-
-    if mode == "probability":
-        return frame[["category", "woe", "proba", "proba_delta"]]
-    else:
-        return frame[["category", "woe", "log_odds", "log_odds_delta"]]
+    This function is deprecated. Use somersd_pairwise instead.
+    """
+    return somersd_pairwise(pos_scores, neg_scores, ties="y")
 
 
 def gini_clustered_matrix(
@@ -306,6 +370,7 @@ def gini_clustered_matrix(
     cluster_col: str,
 ) -> tuple[pd.DataFrame, float | None]:
     """Compute intra/inter-cluster Gini/Somers' D matrix.
+    Based off of: Sudjianto and Liu (2025), https://doi.org/10.48550/arXiv.2508.07495.
 
     Computes a matrix where each element (i, j) represents the Gini coefficient
     between positive scores from cluster i and negative scores from cluster j.
@@ -346,12 +411,8 @@ def gini_clustered_matrix(
     # Compute intra/inter-cluster Gini
     for ci in clusters:
         for cj in clusters:
-            pos_scores = df[(df[cluster_col] == ci) & (df[label_col] == 1)][
-                score_col
-            ].values
-            neg_scores = df[(df[cluster_col] == cj) & (df[label_col] == 0)][
-                score_col
-            ].values
+            pos_scores = df[(df[cluster_col] == ci) & (df[label_col] == 1)][score_col].values
+            neg_scores = df[(df[cluster_col] == cj) & (df[label_col] == 0)][score_col].values
             gini_matrix.loc[ci, cj] = somersd_pairwise(pos_scores, neg_scores)
 
     # Compute global Gini
