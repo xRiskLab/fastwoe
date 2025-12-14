@@ -135,26 +135,29 @@ Features are automatically penalized if redundant—they can't rank residuals we
 
 ```mermaid
 graph TD
-    Total[Total Variance in y<br/>100%] --> Step1{Step 1<br/>Time_with_Bank}
-    Step1 -->|Explained<br/>~64%| Explained1[Captured Variance]
-    Step1 -->|Residual<br/>~36%| Residual1[Remaining Variance]
-    Residual1 --> Step2{Step 2<br/>Age_of_Applicant}
-    Step2 -->|Explained<br/>~13% of residual| Explained2[Additional Variance]
-    Step2 -->|Residual<br/>~23%| Residual2[Still Remaining]
-    Residual2 --> Step3[Steps 3+<br/>Diminishing returns]
-    style Explained1 fill:#4caf50
-    style Explained2 fill:#8bc34a
-    style Residual2 fill:#ffeb3b
+    Start[Target: y] --> Step1[Step 1: Time_with_Bank<br/>Univariate Somers' D = 0.64]
+    Step1 --> Model1[Fit model with 1 feature]
+    Model1 --> Resid1[Compute residuals:<br/>epsilon1 = y - y_hat1]
+    Resid1 --> Step2[Step 2: Age_of_Applicant<br/>MSD with residuals = 0.13]
+    Step2 --> Model2[Fit model with 2 features]
+    Model2 --> Resid2[Compute residuals:<br/>epsilon2 = y - y_hat2]
+    Resid2 --> Step3[Steps 3+<br/>MSD ≈ 0.07-0.19<br/>Diminishing returns]
+    style Step1 fill:#e1f5ff
+    style Resid1 fill:#fff4e1
+    style Step2 fill:#e8f5e9
+    style Resid2 fill:#fff4e1
     style Step3 fill:#e0e0e0
 ```
 
 MSD values typically show this pattern:
 
-- **Step 1**: High (e.g., 0.64) - univariate correlation with target
-- **Step 2**: Sharp drop (e.g., 0.13) - now measuring against residuals
-- **Step 3+**: Gradual decrease (e.g., 0.07-0.19) - diminishing residual variance
+- **Step 1**: High (e.g., 0.64) - univariate Somers' D with target
+- **Step 2**: Sharp drop (e.g., 0.13) - measuring against residuals instead
+- **Step 3+**: Gradual decrease (e.g., 0.07-0.19) - less residual variance to explain
 
-**This drop is expected and correct.** After the first feature explains most variance, subsequent features only capture what remains. Slight increases indicate a feature found orthogonal information.
+**This drop is expected and correct.** Step 1 measures correlation with the original target. From Step 2 onwards, MSD measures correlation with residuals—what the current model doesn't explain. Since residuals are smaller and have different distributions than the original target, MSD values are naturally lower.
+
+**Why values aren't additive**: Somers' D is a rank correlation measure, not a variance proportion. You cannot add 0.64 + 0.13 to get total model performance. Instead, evaluate the final model's overall Somers' D on held-out data.
 
 Feature correlation is computed as:
 
