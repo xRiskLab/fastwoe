@@ -6,19 +6,13 @@ from typing import Any
 
 import numpy as np
 import pytest
-from loguru import logger
-from rich.logging import RichHandler
 from scipy import stats
 
-from fastwoe.fast_somersd import gini_pairwise, somersd_pairwise, somersd_xy, somersd_yx
+from fastwoe.fast_somersd import somersd_pairwise, somersd_xy, somersd_yx
+from fastwoe.logging_config import logger, setup_logger
 
 # Configure logger with RichHandler for better formatting
-logger.remove()  # Remove default handler
-logger.add(
-    RichHandler(markup=True, rich_tracebacks=True),
-    format="{message}",
-    level="INFO",
-)
+setup_logger(level="INFO")
 
 
 @pytest.fixture(autouse=True)
@@ -160,27 +154,27 @@ def test_weighted_somersd():
     logger.info("✓ All weighted tests passed!")
 
 
-def test_gini_pairwise():
-    """Test pairwise Gini coefficient computation (backward compatibility)."""
+def test_somersd_pairwise():
+    """Test pairwise Somers' D computation (works for both continuous and binary)."""
     from sklearn.metrics import roc_auc_score
 
-    logger.info("Testing gini_pairwise function (backward compatibility)...")
+    logger.info("Testing somersd_pairwise function...")
 
     # Test 1: Perfect separation
     logger.info("=== Test 1: Perfect separation ===")
     pos_scores = np.array([0.8, 0.9, 0.7])
     neg_scores = np.array([0.3, 0.4, 0.2])
-    gini = gini_pairwise(pos_scores, neg_scores)
-    logger.info(f"Perfect separation Gini: {gini}")
-    assert gini == 1.0, "Perfect separation should give Gini = 1.0"
+    gini = somersd_pairwise(pos_scores, neg_scores, ties="y")
+    logger.info(f"Perfect separation Somers' D: {gini}")
+    assert gini == 1.0, "Perfect separation should give Somers' D = 1.0"
 
     # Test 2: No separation (all ties)
     logger.info("=== Test 2: No separation ===")
     pos_scores = np.array([0.5, 0.5, 0.5])
     neg_scores = np.array([0.5, 0.5, 0.5])
-    gini = gini_pairwise(pos_scores, neg_scores)
-    logger.info(f"No separation Gini: {gini}")
-    assert gini == 0.0, "All ties should give Gini = 0.0"
+    gini = somersd_pairwise(pos_scores, neg_scores, ties="y")
+    logger.info(f"No separation Somers' D: {gini}")
+    assert gini == 0.0, "All ties should give Somers' D = 0.0"
 
     # Test 3: Random data - compare with AUC-based Gini
     logger.info("=== Test 3: Random data vs AUC ===")
@@ -193,33 +187,33 @@ def test_gini_pairwise():
     y_true = np.concatenate([np.ones(n_pos), np.zeros(n_neg)])
     y_pred = np.concatenate([pos_scores, neg_scores])
 
-    gini_pairwise_val = gini_pairwise(pos_scores, neg_scores)
+    somersd_pairwise_val = somersd_pairwise(pos_scores, neg_scores, ties="y")
     auc = roc_auc_score(y_true, y_pred)
     gini_from_auc = 2 * auc - 1
 
-    logger.info(f"Pairwise Gini: {gini_pairwise_val:.8f}")
+    logger.info(f"Pairwise Somers' D: {somersd_pairwise_val:.8f}")
     logger.info(f"Gini from AUC: {gini_from_auc:.8f}")
 
-    assert np.isclose(gini_pairwise_val, gini_from_auc, atol=1e-10), (
-        "Pairwise Gini should match Gini from AUC"
+    assert np.isclose(somersd_pairwise_val, gini_from_auc, atol=1e-10), (
+        "Pairwise Somers' D should match Gini from AUC"
     )
 
     # Test 4: Empty arrays
     logger.info("=== Test 4: Empty arrays ===")
-    assert gini_pairwise(np.array([]), np.array([1, 2])) is None
-    assert gini_pairwise(np.array([1, 2]), np.array([])) is None
-    assert gini_pairwise(np.array([]), np.array([])) is None
+    assert somersd_pairwise(np.array([]), np.array([1, 2]), ties="y") is None
+    assert somersd_pairwise(np.array([1, 2]), np.array([]), ties="y") is None
+    assert somersd_pairwise(np.array([]), np.array([]), ties="y") is None
 
     # Test 5: NaN handling
     logger.info("=== Test 5: NaN handling ===")
     pos_scores = np.array([0.8, np.nan, 0.9, 0.7])
     neg_scores = np.array([0.3, 0.4, np.nan, 0.2])
-    gini = gini_pairwise(pos_scores, neg_scores)
+    gini = somersd_pairwise(pos_scores, neg_scores, ties="y")
     # Should work without NaNs
     assert gini is not None
     assert 0 <= gini <= 1
 
-    logger.info("✓ All gini_pairwise tests passed!")
+    logger.info("✓ All somersd_pairwise tests passed!")
 
 
 def test_somersd_pairwise_ties_parameter():
@@ -271,14 +265,14 @@ def test_somersd_pairwise_ties_parameter():
     logger.info("✓ All ties parameter tests passed!")
 
 
-def test_gini_clustered_matrix():
-    """Test clustered Gini matrix computation."""
+def test_somersd_clustered_matrix():
+    """Test clustered Somers' D matrix computation."""
     import pandas as pd
     from sklearn.metrics import roc_auc_score
 
-    from fastwoe.metrics import gini_clustered_matrix
+    from fastwoe.metrics import somersd_clustered_matrix
 
-    logger.info("Testing gini_clustered_matrix function...")
+    logger.info("Testing somersd_clustered_matrix function...")
 
     # Create test data with clusters
     np.random.seed(42)
@@ -291,25 +285,25 @@ def test_gini_clustered_matrix():
         }
     )
 
-    # Compute clustered Gini matrix
-    gini_matrix, global_gini = gini_clustered_matrix(df, "score", "label", "cluster")
+    # Compute clustered Somers' D matrix
+    somersd_matrix, global_somersd = somersd_clustered_matrix(df, "score", "label", "cluster")
 
-    logger.info("=== Clustered Gini Matrix ===")
-    logger.info(f"\n{gini_matrix}")
+    logger.info("=== Clustered Somers' D Matrix ===")
+    logger.info(f"\n{somersd_matrix}")
 
-    # Test 1: Global Gini should match AUC * 2 - 1
-    logger.info("=== Test 1: Global Gini == AUC * 2 - 1 ===")
+    # Test 1: Global Somers' D should match AUC * 2 - 1 (Gini)
+    logger.info("=== Test 1: Global Somers' D == AUC * 2 - 1 ===")
     auc = roc_auc_score(df["label"], df["score"])
     gini_from_auc = 2 * auc - 1
 
-    logger.info(f"Global Gini (from matrix): {global_gini:.8f}")
-    logger.info(f"Gini from AUC:             {gini_from_auc:.8f}")
+    logger.info(f"Global Somers' D (from matrix): {global_somersd:.8f}")
+    logger.info(f"Gini from AUC:                  {gini_from_auc:.8f}")
 
-    assert np.isclose(global_gini, gini_from_auc, atol=1e-10), (
-        "Global Gini should match Gini from AUC"
+    assert np.isclose(global_somersd, gini_from_auc, atol=1e-10), (
+        "Global Somers' D should match Gini from AUC"
     )
 
-    # Test 2: Diagonal elements are intra-cluster Ginis
+    # Test 2: Diagonal elements are intra-cluster Somers' D
     logger.info("=== Test 2: Diagonal elements ===")
     clusters = sorted(df["cluster"].unique())
     for cluster in clusters:
@@ -318,32 +312,85 @@ def test_gini_clustered_matrix():
             cluster_pos = cluster_df[cluster_df["label"] == 1]["score"].values
             cluster_neg = cluster_df[cluster_df["label"] == 0]["score"].values
             if len(cluster_pos) > 0 and len(cluster_neg) > 0:
-                intra_cluster_gini = somersd_pairwise(cluster_pos, cluster_neg)
-                diagonal_value = gini_matrix.loc[cluster, cluster]
+                intra_cluster_somersd = somersd_pairwise(cluster_pos, cluster_neg, ties="y")
+                diagonal_value = somersd_matrix.loc[cluster, cluster]
 
                 logger.info(
                     f"Cluster {cluster}: diagonal={diagonal_value:.6f}, "
-                    f"computed={intra_cluster_gini:.6f}"
+                    f"computed={intra_cluster_somersd:.6f}"
                 )
 
-                if intra_cluster_gini is not None:
-                    assert np.isclose(diagonal_value, intra_cluster_gini, atol=1e-10), (
-                        f"Diagonal element for {cluster} should match intra-cluster Gini"
+                if intra_cluster_somersd is not None:
+                    assert np.isclose(diagonal_value, intra_cluster_somersd, atol=1e-10), (
+                        f"Diagonal element for {cluster} should match intra-cluster Somers' D"
                     )
 
     # Test 3: Matrix shape
     logger.info("=== Test 3: Matrix shape ===")
-    assert gini_matrix.shape[0] == len(clusters)
-    assert gini_matrix.shape[1] == len(clusters)
-    assert list[Any](gini_matrix.index) == clusters
-    assert list[Any](gini_matrix.columns) == clusters
+    assert somersd_matrix.shape[0] == len(clusters)
+    assert somersd_matrix.shape[1] == len(clusters)
+    assert list[Any](somersd_matrix.index) == clusters
+    assert list[Any](somersd_matrix.columns) == clusters
 
-    logger.info("✓ All gini_clustered_matrix tests passed!")
+    logger.info("✓ All somersd_clustered_matrix tests passed!")
 
 
-def test_gini_pairwise_continuous_target():
-    """Test pairwise Gini with continuous targets, comparing with scipy.somersd."""
-    logger.info("Testing gini_pairwise with continuous targets...")
+def test_somersd_clustered_matrix_continuous():
+    """Test clustered Somers' D matrix with continuous targets."""
+    import pandas as pd
+
+    from fastwoe.metrics import somersd_clustered_matrix, somersd_yx
+
+    logger.info("Testing somersd_clustered_matrix with continuous targets...")
+
+    # Create test data with continuous target
+    np.random.seed(42)
+    n = 100
+    df = pd.DataFrame(
+        {
+            "score": np.random.uniform(0, 1, n),
+            "target": np.random.uniform(0, 100, n),  # Continuous target
+            "cluster": np.random.choice(["C1", "C2", "C3"], n),
+        }
+    )
+
+    # Compute clustered matrix
+    somersd_matrix, global_somersd = somersd_clustered_matrix(df, "score", "target", "cluster")
+
+    logger.info("=== Clustered Somers' D Matrix (Continuous) ===")
+    logger.info(f"\n{somersd_matrix}")
+    logger.info(f"Global Somers' D: {global_somersd:.8f}")
+
+    # Verify results are valid
+    assert global_somersd is not None
+    assert -1 <= global_somersd <= 1
+
+    # Verify matrix shape
+    clusters = sorted(df["cluster"].unique())
+    assert somersd_matrix.shape[0] == len(clusters)
+    assert somersd_matrix.shape[1] == len(clusters)
+
+    # For continuous targets, each row should have the same value (cluster-specific)
+    # Verify that diagonal elements match direct computation
+    for cluster in clusters:
+        cluster_data = df[df["cluster"] == cluster]
+        if len(cluster_data) > 0:
+            cluster_targets = cluster_data["target"].values
+            cluster_scores = cluster_data["score"].values
+            direct_somersd = somersd_yx(cluster_targets, cluster_scores).statistic
+
+            # All elements in this row should be the same
+            row_values = somersd_matrix.loc[cluster, :].values
+            assert np.allclose(row_values, direct_somersd, equal_nan=True, atol=1e-10), (
+                f"Row values for cluster {cluster} should match direct computation"
+            )
+
+    logger.info("✓ All continuous target tests passed!")
+
+
+def test_somersd_pairwise_continuous_target():
+    """Test pairwise Somers' D with continuous targets, comparing with scipy.somersd."""
+    logger.info("Testing somersd_pairwise with continuous targets...")
 
     # Generate continuous target data
     np.random.seed(42)
@@ -360,21 +407,21 @@ def test_gini_pairwise_continuous_target():
     pos_scores = scores[y_binary == 1]
     neg_scores = scores[y_binary == 0]
 
-    # Compute pairwise Gini
-    gini_pairwise_val = somersd_pairwise(pos_scores, neg_scores)
+    # Compute pairwise Somers' D
+    somersd_pairwise_val = somersd_pairwise(pos_scores, neg_scores, ties="y")
 
     # Compare with scipy's somersd on continuous target
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         scipy_somersd = stats.somersd(y_continuous, scores).statistic
 
-    logger.info(f"Pairwise Gini (binary split): {gini_pairwise_val:.8f}")
-    logger.info(f"SciPy Somers' D (continuous):  {scipy_somersd:.8f}")
+    logger.info(f"Pairwise Somers' D (binary split): {somersd_pairwise_val:.8f}")
+    logger.info(f"SciPy Somers' D (continuous):      {scipy_somersd:.8f}")
 
     # They should be close but not necessarily identical since we're using binary split
-    # The pairwise Gini is computed on binary labels, while scipy uses continuous
-    assert gini_pairwise_val is not None
-    assert -1 <= gini_pairwise_val <= 1
+    # The pairwise Somers' D is computed on binary labels, while scipy uses continuous
+    assert somersd_pairwise_val is not None
+    assert -1 <= somersd_pairwise_val <= 1
 
     # Test 2: Using different thresholds
     logger.info("=== Test 2: Different thresholds ===")
@@ -385,10 +432,10 @@ def test_gini_pairwise_continuous_target():
         y_bin = (y_continuous > thresh).astype(int)
         pos = scores[y_bin == 1]
         neg = scores[y_bin == 0]
-        gini = somersd_pairwise(pos, neg)
-        if gini is not None:
-            gini_values.append(gini)
-            logger.info(f"Threshold {thresh:.2f}: Gini = {gini:.6f}")
+        somersd = somersd_pairwise(pos, neg, ties="y")
+        if somersd is not None:
+            gini_values.append(somersd)
+            logger.info(f"Threshold {thresh:.2f}: Somers' D = {somersd:.6f}")
 
     # All should be valid Gini values
     assert all(-1 <= g <= 1 for g in gini_values)
@@ -407,16 +454,16 @@ def test_gini_pairwise_continuous_target():
     pairwise_gini = somersd_pairwise(pos_scores, neg_scores)
 
     logger.info(f"somersd_yx (binary): {our_somersd:.8f}")
-    logger.info(f"gini_pairwise:       {pairwise_gini:.8f}")
+    logger.info(f"somersd_pairwise:    {pairwise_gini:.8f}")
 
     # These should match exactly since both use binary labels
     assert np.isclose(our_somersd, pairwise_gini, atol=1e-10), (
-        "somersd_yx on binary labels should match gini_pairwise"
+        "somersd_yx on binary labels should match somersd_pairwise"
     )
 
     # Test 4: Continuous target with scipy comparison
     logger.info("=== Test 4: Direct comparison with scipy.somersd ===")
-    # For continuous targets, we can't directly use gini_pairwise
+    # For continuous targets, we can't directly use somersd_pairwise
     # But we can verify that when we convert to binary, our result is consistent
     # with scipy's somersd on the binary version
 
@@ -431,13 +478,13 @@ def test_gini_pairwise_continuous_target():
     # Our pairwise on binary split
     pos_scores = scores[y_binary == 1]
     neg_scores = scores[y_binary == 0]
-    pairwise_gini = somersd_pairwise(pos_scores, neg_scores)
+    pairwise_gini = somersd_pairwise(pos_scores, neg_scores, ties="y")
 
     logger.info(f"SciPy Somers' D (binary labels): {scipy_binary:.8f}")
-    logger.info(f"gini_pairwise:                   {pairwise_gini:.8f}")
+    logger.info(f"somersd_pairwise:                {pairwise_gini:.8f}")
 
     assert np.isclose(scipy_binary, pairwise_gini, atol=1e-10), (
-        "gini_pairwise should match scipy.somersd on binary labels"
+        "somersd_pairwise should match scipy.somersd on binary labels"
     )
 
     logger.info("✓ All continuous target tests passed!")
@@ -498,7 +545,7 @@ def test_somersd_pairwise_binary_vs_auc():
             f"{name}: somersd_pairwise should match roc_auc * 2 - 1"
         )
 
-    # Test 2: Clustered segments (like in gini_clustered_matrix)
+    # Test 2: Clustered segments (like in somersd_clustered_matrix)
     logger.info("=== Test 2: Clustered segments ===")
     n = 200
     df = pd.DataFrame(

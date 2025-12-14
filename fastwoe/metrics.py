@@ -7,6 +7,7 @@ Implements Somers' D, Gini coefficient, and clustered Gini analysis.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -354,70 +355,126 @@ def somersd_pairwise(
     return None if np.isnan(statistic) else float(statistic)
 
 
-# Backward compatibility alias
-def gini_pairwise(pos_scores: np.ndarray, neg_scores: np.ndarray) -> float | None:
-    """Backward compatibility alias for somersd_pairwise.
-
-    This function is deprecated. Use somersd_pairwise instead.
-    """
-    return somersd_pairwise(pos_scores, neg_scores, ties="y")
-
-
-def gini_clustered_matrix(
+def somersd_clustered_matrix(
     df: pd.DataFrame,
     score_col: str,
     label_col: str,
     cluster_col: str,
+    ties: str = "y",
 ) -> tuple[pd.DataFrame, float | None]:
-    """Compute intra/inter-cluster Gini/Somers' D matrix.
+    """Compute intra/inter-cluster Somers' D matrix.
     Based off of: Sudjianto and Liu (2025), https://doi.org/10.48550/arXiv.2508.07495.
 
-    Computes a matrix where each element (i, j) represents the Gini coefficient
-    between positive scores from cluster i and negative scores from cluster j.
+    Works for both binary and continuous targets:
+    - Binary targets (0/1): Each element (i, j) represents Somers' D between positive
+      scores from cluster i and negative scores from cluster j.
+    - Continuous targets: Each element (i, j) represents Somers' D between the continuous
+      target and scores for samples in cluster i (computed directly, no thresholding).
 
     Args:
-        df: DataFrame containing scores, labels, and cluster assignments
+        df: DataFrame containing scores, labels/targets, and cluster assignments
         score_col: Name of the column containing model scores
-        label_col: Name of the column containing binary labels (0/1)
+        label_col: Name of the column containing binary labels (0/1) or continuous targets
         cluster_col: Name of the column containing cluster assignments
+        ties: How to handle ties. "y" (default) computes D_Y|X (ties in Y excluded),
+              "x" computes D_X|Y (ties in X excluded).
 
     Returns:
-        Tuple of (gini_matrix, global_gini):
-        - gini_matrix: DataFrame with clusters as index and columns, where:
-          - Diagonal elements (i, i): Intra-cluster Gini (positive vs negative
-            scores within the same cluster)
-          - Off-diagonal elements (i, j): Inter-cluster Gini (positive scores
-            from cluster i vs negative scores from cluster j)
-        - global_gini: Overall Gini coefficient across all data
+        Tuple of (somersd_matrix, global_somersd):
+        - somersd_matrix: DataFrame with clusters as index and columns, where:
+          - For binary targets:
+            - Diagonal elements (i, i): Intra-cluster Somers' D (positive vs negative
+              scores within the same cluster)
+            - Off-diagonal elements (i, j): Inter-cluster Somers' D (positive scores
+              from cluster i vs negative scores from cluster j)
+          - For continuous targets:
+            - Each element (i, j): Somers' D between target and scores for samples
+              in cluster i (computed using somersd_yx)
+        - global_somersd: Overall Somers' D across all data
 
     Examples:
+        >>> # Binary target
         >>> df = pd.DataFrame({
         ...     'score': [0.8, 0.9, 0.3, 0.4, 0.7, 0.6],
         ...     'label': [1, 1, 0, 0, 1, 0],
         ...     'cluster': ['C1', 'C1', 'C1', 'C2', 'C2', 'C2']
         ... })
-        >>> matrix, global_gini = gini_clustered_matrix(
+        >>> matrix, global_somersd = somersd_clustered_matrix(
         ...     df, 'score', 'label', 'cluster'
         ... )
         >>> print(matrix)
-        >>> print(f"Global Gini: {global_gini}")
+        >>> print(f"Global Somers' D: {global_somersd}")
+
+        >>> # Continuous target
+        >>> df = pd.DataFrame({
+        ...     'score': [0.8, 0.9, 0.3, 0.4, 0.7, 0.6],
+        ...     'target': [100, 120, 30, 40, 90, 50],
+        ...     'cluster': ['C1', 'C1', 'C1', 'C2', 'C2', 'C2']
+        ... })
+        >>> matrix, global_somersd = somersd_clustered_matrix(
+        ...     df, 'score', 'target', 'cluster'
+        ... )
     """
+    if ties not in ("x", "y"):
+        raise ValueError(f"ties must be 'x' or 'y', got {ties}")
+
+    # Detect if target is binary (only 0 and 1) or continuous
+    unique_labels = df[label_col].dropna().unique()
+    is_binary = set[Any](unique_labels).issubset({0, 1}) and len(unique_labels) <= 2
+
     # Get unique clusters
     clusters = sorted(df[cluster_col].unique())
 
     # Initialize matrix
-    gini_matrix = pd.DataFrame(index=clusters, columns=clusters, dtype=float)
+    somersd_matrix = pd.DataFrame(index=clusters, columns=clusters, dtype=float)
 
-    # Compute intra/inter-cluster Gini
-    for ci in clusters:
-        for cj in clusters:
-            pos_scores = df[(df[cluster_col] == ci) & (df[label_col] == 1)][score_col].values
-            neg_scores = df[(df[cluster_col] == cj) & (df[label_col] == 0)][score_col].values
-            gini_matrix.loc[ci, cj] = somersd_pairwise(pos_scores, neg_scores)
+    if is_binary:
+        # Binary targets: use pairwise comparison (positive vs negative)
+        high_mask = df[label_col] == 1
+        low_mask = df[label_col] == 0
 
-    # Compute global Gini
-    global_pos_scores = df[df[label_col] == 1][score_col].values
-    global_neg_scores = df[df[label_col] == 0][score_col].values
-    global_gini = somersd_pairwise(global_pos_scores, global_neg_scores)
+        # Compute intra/inter-cluster Somers' D
+        for ci in clusters:
+            for cj in clusters:
+                # Positive scores from cluster i
+                high_scores = df[(df[cluster_col] == ci) & high_mask][score_col].values
+                # Negative scores from cluster j
+                low_scores = df[(df[cluster_col] == cj) & low_mask][score_col].values
+                somersd_matrix.loc[ci, cj] = somersd_pairwise(high_scores, low_scores, ties=ties)
 
-    return gini_matrix, global_gini
+        # Compute global Somers' D
+        global_high_scores = df[high_mask][score_col].values
+        global_low_scores = df[low_mask][score_col].values
+        global_somersd = somersd_pairwise(global_high_scores, global_low_scores, ties=ties)
+    else:
+        # Continuous targets: compute Somers' D directly between target and scores
+        for ci in clusters:
+            cluster_data = df[df[cluster_col] == ci]
+            if len(cluster_data) > 0:
+                cluster_targets = cluster_data[label_col].values
+                cluster_scores = cluster_data[score_col].values
+
+                # Compute Somers' D for this cluster
+                if ties == "y":
+                    result = somersd_yx(cluster_targets, cluster_scores)
+                else:
+                    result = somersd_xy(cluster_targets, cluster_scores)
+
+                somersd_value = None if np.isnan(result.statistic) else result.statistic
+                # Fill entire row with same value (since it's cluster-specific)
+                for cj in clusters:
+                    somersd_matrix.loc[ci, cj] = somersd_value
+            else:
+                for cj in clusters:
+                    somersd_matrix.loc[ci, cj] = None
+
+        # Compute global Somers' D
+        global_targets = df[label_col].values
+        global_scores = df[score_col].values
+        if ties == "y":
+            global_result = somersd_yx(global_targets, global_scores)
+        else:
+            global_result = somersd_xy(global_targets, global_scores)
+        global_somersd = None if np.isnan(global_result.statistic) else global_result.statistic
+
+    return somersd_matrix, global_somersd

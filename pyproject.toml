@@ -192,6 +192,16 @@ disable = [
     "E0611",      # no-name-in-module (module exists but linter can't find it)
 ]
 
+# prek - Python Requirements Checker
+[tool.prek]
+# Check that imports match dependencies in pyproject.toml
+check-imports = true
+# Exclude test and example files from strict import checking
+exclude = [
+    "tests/**",
+    "examples/**",
+]
+
 [tool.pylint.format]
 max-line-length = 88
 

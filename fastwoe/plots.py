@@ -510,6 +510,43 @@ def visualize_woe(
 
     ax.set_xlim(x_min, x_max)
 
+    # Set explicit tick locations using same approach as plot_performance
+    if mode == "proba":
+        # For probability mode, use evenly spaced ticks like CAP curves
+        # Calculate step size: use 0.01 (1%) for small ranges, 0.02 (2%) for larger
+        range_size = x_max - x_min
+        if range_size <= 0.05:  # Very small range (< 5%)
+            step = 0.01  # 1% steps
+        elif range_size <= 0.10:  # Small range (< 10%)
+            step = 0.02  # 2% steps
+        else:  # Normal range
+            step = 0.05  # 5% steps
+
+        # Create ticks from min to max with step, rounded to avoid floating point issues
+        tick_start = np.floor(x_min / step) * step
+        tick_end = np.ceil(x_max / step) * step
+        tick_locations = np.arange(tick_start, tick_end + step / 2, step)
+        # Filter to only include ticks within our range
+        tick_locations = tick_locations[(tick_locations >= x_min) & (tick_locations <= x_max)]
+        ax.set_xticks(tick_locations)
+    else:  # mode == "logit"
+        # For logit mode, use evenly spaced ticks
+        range_size = abs(x_max - x_min)
+        if range_size <= 1.0:
+            step = 0.5
+        elif range_size <= 2.0:
+            step = 1.0
+        else:
+            step = 2.0
+
+        # Create ticks from min to max with step
+        tick_start = np.floor(x_min / step) * step
+        tick_end = np.ceil(x_max / step) * step
+        tick_locations = np.arange(tick_start, tick_end + step / 2, step)
+        # Filter to only include ticks within our range
+        tick_locations = tick_locations[(tick_locations >= x_min) & (tick_locations <= x_max)]
+        ax.set_xticks(tick_locations)
+
     # Add labels with small offset (1.5% of final range)
     final_range = x_max - x_min
     offset = final_range * 0.015
