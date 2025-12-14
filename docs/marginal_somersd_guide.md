@@ -87,8 +87,8 @@ flowchart TD
     Step1 --> CheckMax{Reached<br/>max_features?}
     CheckMax -->|Yes| End([Return selected features])
     CheckMax -->|No| FitModel[Fit model with<br/>selected features]
-    FitModel --> ComputeResiduals[Compute residuals:<br/>ε = y - ŷ]
-    ComputeResiduals --> CalcMSD[For each remaining feature:<br/>Compute D(ε, feature_WOE)]
+    FitModel --> ComputeResiduals[Compute residuals:<br/>epsilon = y - y_hat]
+    ComputeResiduals --> CalcMSD[For each remaining feature:<br/>Compute Somers D with residuals]
     CalcMSD --> FindBest[Find feature with<br/>highest MSD]
     FindBest --> CheckMinMSD{MSD ><br/>min_msd?}
     CheckMinMSD -->|No| End
