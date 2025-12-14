@@ -7,7 +7,7 @@ Implements Somers' D, Gini coefficient, and clustered Gini analysis.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -262,11 +262,11 @@ def somersd_yx(
     if weights is not None:
         # Weighted case: use weighted concordance calculation
         weights = np.asarray(weights, dtype=np.float64)[mask]
-        stat, S, D, Ty, P, denom = _somers_yx_weighted(y, x, weights)  # type: ignore[misc]
+        stat, S, D, Ty, P, denom = _somers_yx_weighted(y, x, weights)
         return SomersDResult(stat, S, D, Ty, P, denom)
 
     # Unweighted case: use fast Numba implementation
-    stat, S, D, Ty, P, denom = _somers_yx_core(y, x)  # type: ignore[misc]
+    stat, S, D, Ty, P, denom = _somers_yx_core(y, x)
     return SomersDResult(stat, S, D, Ty, P, denom)
 
 
@@ -277,13 +277,13 @@ def somersd_xy(y_true: np.ndarray, y_pred: np.ndarray) -> SomersDResult:
     mask = ~(np.isnan(y) | np.isnan(x))
     y = y[mask]
     x = x[mask]
-    stat, S, D, Tx, P, denom = _somers_xy_core(y, x)  # type: ignore[misc]
+    stat, S, D, Tx, P, denom = _somers_xy_core(y, x)
     return SomersDResult(stat, S, D, Tx, P, denom)
 
 
 def somersd_pairwise(
     pos_scores: np.ndarray, neg_scores: np.ndarray, ties: str = "y"
-) -> float | None:
+) -> Optional[float]:
     """Compute pairwise Somers' D between positive and negative scores.
 
     This function computes Somers' D by comparing all positive scores
@@ -335,7 +335,6 @@ def somersd_pairwise(
         return None
 
     # Combine scores and create binary labels
-    # This allows us to use the fast somersd implementation
     all_scores = np.concatenate([pos_scores, neg_scores])
     all_labels = np.concatenate(
         [
@@ -358,42 +357,37 @@ def somersd_pairwise(
 def somersd_clustered_matrix(
     df: pd.DataFrame,
     score_col: str,
-    label_col: str,
+    label_col: str,  # Must be binary (0/1)
     cluster_col: str,
     ties: str = "y",
-) -> tuple[pd.DataFrame, float | None]:
-    """Compute intra/inter-cluster Somers' D matrix.
-    Based off of: Sudjianto and Liu (2025), https://doi.org/10.48550/arXiv.2508.07495.
+) -> tuple[pd.DataFrame, Optional[float]]:
+    """Compute intra/inter-cluster Somers' D matrix for binary classification.
 
-    Works for both binary and continuous targets:
-    - Binary targets (0/1): Each element (i, j) represents Somers' D between positive
-      scores from cluster i and negative scores from cluster j.
-    - Continuous targets: Each element (i, j) represents Somers' D between the continuous
-      target and scores for samples in cluster i (computed directly, no thresholding).
+    Based on: Sudjianto and Liu (2025), https://doi.org/10.48550/arXiv.2508.07495.
+
+    Each element (i, j) represents Somers' D between:
+    - Positive scores from cluster i
+    - Negative scores from cluster j
+
+    Diagonal elements (i, i) measure intra-cluster separation.
+    Off-diagonal elements (i, j) measure inter-cluster separation.
 
     Args:
-        df: DataFrame containing scores, labels/targets, and cluster assignments
-        score_col: Name of the column containing model scores
-        label_col: Name of the column containing binary labels (0/1) or continuous targets
-        cluster_col: Name of the column containing cluster assignments
-        ties: How to handle ties. "y" (default) computes D_Y|X (ties in Y excluded),
-              "x" computes D_X|Y (ties in X excluded).
+        df: DataFrame containing scores, binary labels, and cluster assignments
+        score_col: Column name for model scores
+        label_col: Column name for binary labels (must be 0/1)
+        cluster_col: Column name for cluster assignments
+        ties: "y" (default) for D_Y|X, "x" for D_X|Y
 
     Returns:
-        Tuple of (somersd_matrix, global_somersd):
-        - somersd_matrix: DataFrame with clusters as index and columns, where:
-          - For binary targets:
-            - Diagonal elements (i, i): Intra-cluster Somers' D (positive vs negative
-              scores within the same cluster)
-            - Off-diagonal elements (i, j): Inter-cluster Somers' D (positive scores
-              from cluster i vs negative scores from cluster j)
-          - For continuous targets:
-            - Each element (i, j): Somers' D between target and scores for samples
-              in cluster i (computed using somersd_yx)
+        (somersd_matrix, global_somersd) where:
+        - somersd_matrix: DataFrame with clusters as index/columns
         - global_somersd: Overall Somers' D across all data
 
+    Raises:
+        ValueError: If label_col is not binary (0/1)
+
     Examples:
-        >>> # Binary target
         >>> df = pd.DataFrame({
         ...     'score': [0.8, 0.9, 0.3, 0.4, 0.7, 0.6],
         ...     'label': [1, 1, 0, 0, 1, 0],
@@ -404,77 +398,36 @@ def somersd_clustered_matrix(
         ... )
         >>> print(matrix)
         >>> print(f"Global Somers' D: {global_somersd}")
-
-        >>> # Continuous target
-        >>> df = pd.DataFrame({
-        ...     'score': [0.8, 0.9, 0.3, 0.4, 0.7, 0.6],
-        ...     'target': [100, 120, 30, 40, 90, 50],
-        ...     'cluster': ['C1', 'C1', 'C1', 'C2', 'C2', 'C2']
-        ... })
-        >>> matrix, global_somersd = somersd_clustered_matrix(
-        ...     df, 'score', 'target', 'cluster'
-        ... )
     """
     if ties not in ("x", "y"):
         raise ValueError(f"ties must be 'x' or 'y', got {ties}")
 
-    # Detect if target is binary (only 0 and 1) or continuous
+    # Detect if target is binary
     unique_labels = df[label_col].dropna().unique()
     is_binary = set[Any](unique_labels).issubset({0, 1}) and len(unique_labels) <= 2
 
-    # Get unique clusters
-    clusters = sorted(df[cluster_col].unique())
+    if not is_binary:
+        raise ValueError(
+            f"somersd_clustered_matrix requires binary labels (0/1). "
+            f"Got labels: {sorted(unique_labels)}"
+        )
 
-    # Initialize matrix
+    clusters = sorted(df[cluster_col].unique())
     somersd_matrix = pd.DataFrame(index=clusters, columns=clusters, dtype=float)
 
-    if is_binary:
-        # Binary targets: use pairwise comparison (positive vs negative)
-        high_mask = df[label_col] == 1
-        low_mask = df[label_col] == 0
+    high_mask = df[label_col] == 1
+    low_mask = df[label_col] == 0
 
-        # Compute intra/inter-cluster Somers' D
-        for ci in clusters:
-            for cj in clusters:
-                # Positive scores from cluster i
-                high_scores = df[(df[cluster_col] == ci) & high_mask][score_col].values
-                # Negative scores from cluster j
-                low_scores = df[(df[cluster_col] == cj) & low_mask][score_col].values
-                somersd_matrix.loc[ci, cj] = somersd_pairwise(high_scores, low_scores, ties=ties)
+    # Compute intra/inter-cluster Somers' D
+    for ci in clusters:
+        for cj in clusters:
+            high_scores = df[(df[cluster_col] == ci) & high_mask][score_col].values
+            low_scores = df[(df[cluster_col] == cj) & low_mask][score_col].values
+            somersd_matrix.loc[ci, cj] = somersd_pairwise(high_scores, low_scores, ties=ties)
 
-        # Compute global Somers' D
-        global_high_scores = df[high_mask][score_col].values
-        global_low_scores = df[low_mask][score_col].values
-        global_somersd = somersd_pairwise(global_high_scores, global_low_scores, ties=ties)
-    else:
-        # Continuous targets: compute Somers' D directly between target and scores
-        for ci in clusters:
-            cluster_data = df[df[cluster_col] == ci]
-            if len(cluster_data) > 0:
-                cluster_targets = cluster_data[label_col].values
-                cluster_scores = cluster_data[score_col].values
-
-                # Compute Somers' D for this cluster
-                if ties == "y":
-                    result = somersd_yx(cluster_targets, cluster_scores)
-                else:
-                    result = somersd_xy(cluster_targets, cluster_scores)
-
-                somersd_value = None if np.isnan(result.statistic) else result.statistic
-                # Fill entire row with same value (since it's cluster-specific)
-                for cj in clusters:
-                    somersd_matrix.loc[ci, cj] = somersd_value
-            else:
-                for cj in clusters:
-                    somersd_matrix.loc[ci, cj] = None
-
-        # Compute global Somers' D
-        global_targets = df[label_col].values
-        global_scores = df[score_col].values
-        if ties == "y":
-            global_result = somersd_yx(global_targets, global_scores)
-        else:
-            global_result = somersd_xy(global_targets, global_scores)
-        global_somersd = None if np.isnan(global_result.statistic) else global_result.statistic
+    # Compute global Somers' D
+    global_high_scores = df[high_mask][score_col].values
+    global_low_scores = df[low_mask][score_col].values
+    global_somersd = somersd_pairwise(global_high_scores, global_low_scores, ties=ties)
 
     return somersd_matrix, global_somersd

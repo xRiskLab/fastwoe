@@ -21,6 +21,69 @@ from .logging_config import _HAS_LOGGING, logger
 from .metrics import somersd_pairwise, somersd_xy, somersd_yx
 
 
+def _compute_somersd(
+    y: np.ndarray,
+    scores: np.ndarray,
+    is_binary: bool,
+    ties: str = "y",
+) -> float:
+    """Compute Somers' D for scores against target, handling binary and continuous targets."""
+    if is_binary:
+        pos_scores = scores[y == 1]
+        neg_scores = scores[y == 0]
+        if len(pos_scores) > 0 and len(neg_scores) > 0:
+            result = somersd_pairwise(pos_scores, neg_scores, ties=ties)
+            return abs(result) if result is not None else 0.0
+        return 0.0
+    else:
+        result = somersd_yx(y, scores) if ties == "y" else somersd_xy(y, scores)
+        return 0.0 if np.isnan(result.statistic) else abs(result.statistic)
+
+
+def _build_feature_correlation_matrix(
+    candidate_features: list[str],
+    woe_values_dict: dict[str, np.ndarray],
+    verbose: bool = False,
+) -> dict[tuple[str, str], float]:
+    """Build pairwise correlation matrix between features using Somers' D.
+
+    Computes symmetric correlation by averaging Somers' D in both directions
+    for each feature pair.
+    """
+    feature_correlation_matrix: dict[tuple[str, str], float] = {}
+    for i, f_i in enumerate[str](candidate_features):
+        for f_j in candidate_features[i + 1 :]:
+            try:
+                # Compute Somers' D directly between two continuous WOE value arrays
+                # This gives us rank correlation between the features
+                woe_i = woe_values_dict[f_i]
+                woe_j = woe_values_dict[f_j]
+
+                # Compute Somers' D in both directions and take average for symmetry
+                # D_Y|X: how well woe_j predicts woe_i
+                result_ij = somersd_yx(woe_i, woe_j)
+                somersd_ij = 0.0 if np.isnan(result_ij.statistic) else result_ij.statistic
+
+                # D_Y|X: how well woe_i predicts woe_j
+                result_ji = somersd_yx(woe_j, woe_i)
+                somersd_ji = 0.0 if np.isnan(result_ji.statistic) else result_ji.statistic
+
+                # Average absolute values for symmetric correlation measure
+                avg_corr = (abs(somersd_ij) + abs(somersd_ji)) / 2.0
+                feature_correlation_matrix[(f_i, f_j)] = avg_corr
+                feature_correlation_matrix[(f_j, f_i)] = avg_corr
+
+                if verbose and _HAS_LOGGING:
+                    logger.debug(
+                        f"Pairwise correlation [{f_i} ↔ {f_j}]: "
+                        f"Somers' D = {avg_corr:.4f} (ij={somersd_ij:.4f}, ji={somersd_ji:.4f})"
+                    )
+            except Exception:
+                feature_correlation_matrix[(f_i, f_j)] = 0.0
+                feature_correlation_matrix[(f_j, f_i)] = 0.0
+    return feature_correlation_matrix
+
+
 def _create_woe_model(template: Optional[FastWoe] = None) -> FastWoe:
     """
     Create a new FastWoe instance, optionally using a template for configuration.
@@ -70,50 +133,52 @@ def marginal_somersd_selection(
     """
     Feature selection using Marginal Somers' D (MSD).
 
-    Greedy forward selection that adds features based on their marginal rank correlation
-    with the target, controlling for already-selected features. Uses WOE-transformed
-    features and filters out highly correlated candidates.
+    Selects features based on their Somers' D correlation with model residuals,
+    measuring true incremental contribution beyond already-selected features.
+
+    Algorithm
+    ---------
+    1. Step 1: Select feature with highest univariate Somers' D with target y
+    2. Step 2+: For each subsequent step:
+    a. Fit model with currently selected features
+    b. Compute residuals: ε = y - model.predict_proba(X[selected])
+    c. For each remaining feature, compute |Somers' D(ε, feature_WOE)|
+    d. Select feature with highest |D(ε, feature)|
+    e. Skip if correlation with selected features > correlation_threshold
+
+    This is "truly marginal" - each feature's contribution is measured relative
+    to what prior features fail to explain (residual variance).
 
     Parameters
     ----------
-    X : pd.DataFrame
-        Training features (categorical or mixed types)
-    y : np.ndarray or pd.Series
-        Target variable (binary 0/1 or continuous)
-    X_test : pd.DataFrame, optional
-        Test set for performance monitoring
-    y_test : np.ndarray or pd.Series, optional
-        Test target for performance monitoring
-    min_msd : float, default=0.02
-        Minimum marginal Somers' D to continue selection
-    max_features : int, optional
-        Maximum features to select
+    ...
     correlation_threshold : float, default=0.5
-        Skip features with Somers' D correlation above this threshold
-    ties : str, default="y"
-        Tie handling: "y" for D_Y|X, "x" for D_X|Y
-    random_state : int, optional
-        Random seed for reproducibility
-    woe_model : FastWoe, optional
-        Template FastWoe instance for configuration
-    verbose : bool, default=False
-        Enable detailed logging (requires loguru and rich)
+        Skip features with pairwise Somers' D correlation above this threshold
+        with already-selected features. Acts as a safety net against multicollinearity,
+        though residual-based selection already penalizes redundancy naturally.
+    ...
 
-    Returns:
-    -------
-    dict
-        - selected_features: List of feature names in selection order
-        - msd_history: Marginal Somers' D at each step
-        - univariate_somersd: Dict of univariate Somers' D values
-        - model: Trained FastWoe with selected features
-        - test_performance: Test Somers' D at each step
-        - correlation_matrix: Pairwise correlations of selected features
+    Notes:
+    -----
+    - Marginal Somers' D values decrease at each step (measuring against shrinking
+    residual variance), unlike univariate methods that measure against original y
+    - First feature is selected using univariate Somers' D (no residuals yet)
+    - From Step 2 onwards, selection is based on residual correlation
+    - The method relies on rankable residual variance - monotonic patterns in what
+    the current model doesn't capture
 
     Examples:
     --------
-    >>> result = marginal_somersd_selection(X, y, min_msd=0.01, max_features=5)
+    >>> # Select features using marginal (residual-based) approach
+    >>> result = marginal_somersd_selection(
+    ...     X_train, y_train,
+    ...     X_test=X_test, y_test=y_test,
+    ...     min_msd=0.01,
+    ...     max_features=10,
+    ...     correlation_threshold=0.6
+    ... )
     >>> print(result['selected_features'])
-    >>> print(result['msd_history'])
+    >>> print(result['msd_history'])  # Note: Values decrease with each step
     """
     if random_state is not None:
         np.random.seed(random_state)
@@ -162,65 +227,20 @@ def marginal_somersd_selection(
     log_or_print(
         "Building pairwise feature correlation matrix using Somers' D...", use_logger=verbose
     )
-    feature_correlation_matrix: dict[tuple[str, str], float] = {}
-    for i, f_i in enumerate[Any](candidate_features):
-        for f_j in candidate_features[i + 1 :]:
-            try:
-                # Compute Somers' D directly between two continuous WOE value arrays
-                # This gives us rank correlation between the features
-                woe_i = woe_values_dict[f_i]
-                woe_j = woe_values_dict[f_j]
-
-                # Compute Somers' D in both directions and take average for symmetry
-                # D_Y|X: how well woe_j predicts woe_i
-                result_ij = somersd_yx(woe_i, woe_j)
-                somersd_ij = 0.0 if np.isnan(result_ij.statistic) else result_ij.statistic
-
-                # D_Y|X: how well woe_i predicts woe_j
-                result_ji = somersd_yx(woe_j, woe_i)
-                somersd_ji = 0.0 if np.isnan(result_ji.statistic) else result_ji.statistic
-
-                # Average absolute values for symmetric correlation measure
-                avg_corr = (abs(somersd_ij) + abs(somersd_ji)) / 2.0
-                feature_correlation_matrix[(f_i, f_j)] = avg_corr
-                feature_correlation_matrix[(f_j, f_i)] = avg_corr
-
-                if verbose and _HAS_LOGGING:
-                    logger.debug(
-                        f"  Pairwise correlation [{f_i} ↔ {f_j}]: "
-                        f"Somers' D = {avg_corr:.4f} (ij={somersd_ij:.4f}, ji={somersd_ji:.4f})"
-                    )
-            except Exception:
-                feature_correlation_matrix[(f_i, f_j)] = 0.0
-                feature_correlation_matrix[(f_j, f_i)] = 0.0
+    feature_correlation_matrix = _build_feature_correlation_matrix(
+        candidate_features, woe_values_dict, verbose
+    )
 
     # Calculate univariate Somers' D for all features using pre-computed WOE values
     log_or_print("Calculating univariate Somers' D for all features...", use_logger=verbose)
-    univariate_somersd = {}
-    for feature in candidate_features:
-        woe_values = woe_values_dict[feature]
+    univariate_somersd = {
+        feature: _compute_somersd(y, woe_values_dict[feature], is_binary, ties)
+        for feature in candidate_features
+    }
 
-        if is_binary:
-            # Binary target: use pairwise comparison
-            pos_scores = woe_values[y == 1]
-            neg_scores = woe_values[y == 0]
-            if len(pos_scores) > 0 and len(neg_scores) > 0:
-                somersd = somersd_pairwise(pos_scores, neg_scores, ties=ties)
-                univariate_somersd[feature] = abs(somersd) if somersd is not None else 0.0
-            else:
-                univariate_somersd[feature] = 0.0
-        else:
-            # Continuous target: use somersd_yx directly
-            if ties == "y":
-                result = somersd_yx(y, woe_values)
-            else:
-                result = somersd_xy(y, woe_values)
-            univariate_somersd[feature] = (
-                0.0 if np.isnan(result.statistic) else abs(result.statistic)
-            )
-
-        if verbose and _HAS_LOGGING:
-            logger.debug(f"  Univariate Somers' D [{feature}]: {univariate_somersd[feature]:.4f}")
+    if verbose and _HAS_LOGGING:
+        for feature in candidate_features:
+            logger.debug(f"Univariate Somers' D [{feature}]: {univariate_somersd[feature]:.4f}")
 
     # Sort features by univariate Somers' D
     sorted_features = sorted(univariate_somersd.items(), key=lambda x: x[1], reverse=True)
@@ -253,75 +273,43 @@ def marginal_somersd_selection(
             log_or_print(f"Error fitting model: {e}", use_logger=verbose)
             break
 
-        # Get model scores on training set
-        # For binary targets, use predict_proba; for continuous, use predict
-        if is_binary:
-            train_scores = current_woe_model.predict_proba(X[selected_features])[:, 1]
-        else:
-            # For continuous targets, FastWoe might not support predict directly
-            # Use predict_proba and take the mean or use a different approach
-            # For now, we'll use predict_proba[:, 1] as a score
-            try:
-                train_scores = current_woe_model.predict_proba(X[selected_features])[:, 1]
-            except Exception:
-                # Fallback: use transformed WOE values as scores
-                woe_transformed = current_woe_model.transform(X[selected_features])
-                train_scores = woe_transformed.sum(axis=1).values
-
         # Calculate test performance
         try:
-            if is_binary:
-                test_scores = current_woe_model.predict_proba(X_eval[selected_features])[:, 1]
-                test_pos = test_scores[y_eval == 1]
-                test_neg = test_scores[y_eval == 0]
-                if len(test_pos) > 0 and len(test_neg) > 0:
-                    test_somersd = somersd_pairwise(test_pos, test_neg, ties=ties)
-                    test_performance.append(test_somersd if test_somersd is not None else 0.0)
-                else:
-                    test_performance.append(0.0)
-            else:
-                # Continuous target: compute Somers' D directly
-                test_scores = current_woe_model.predict_proba(X_eval[selected_features])[:, 1]
-                if ties == "y":
-                    result = somersd_yx(y_eval, test_scores)
-                else:
-                    result = somersd_xy(y_eval, test_scores)
-                test_performance.append(
-                    0.0 if np.isnan(result.statistic) else abs(result.statistic)
-                )
+            test_scores = current_woe_model.predict_proba(X_eval[selected_features])[:, 1]
+            test_performance.append(_compute_somersd(y_eval, test_scores, is_binary, ties))
         except Exception:
             test_performance.append(0.0)
 
+        # Compute residuals for truly marginal selection (Step 2 onwards)
+        # At this point, selected_features is non-empty (contains at least first feature)
+        # We measure against residuals to capture what the current model doesn't explain
+        try:
+            current_predictions = current_woe_model.predict_proba(X[selected_features])[:, 1]
+            residuals = y - current_predictions
+            target_for_msd = residuals
+            is_binary_for_msd = False  # Residuals are always continuous
+        except Exception as e:
+            if verbose and _HAS_LOGGING:
+                logger.warning(f"Failed to compute residuals: {e}. Using original target.")
+            # Fallback to original target if residual computation fails
+            target_for_msd = y
+            is_binary_for_msd = is_binary
+
         if verbose and _HAS_LOGGING:
+            target_desc = "residuals (y - ŷ)"
             logger.debug(
                 f"\n[bold cyan]Step {step}:[/bold cyan] Evaluating {len(remaining_features)} "
-                f"candidate features (current model Somers' D: {test_performance[-1]:.4f})"
+                f"candidate features (current model Somers' D: {test_performance[-1]:.4f}, "
+                f"measuring against {target_desc})"
             )
 
         # Calculate marginal Somers' D for each remaining feature
-        marginal_somersd = {}
-
-        for feature in remaining_features:
-            feature_woe = woe_values_dict[feature]
-
-            if is_binary:
-                # Binary target: use pairwise comparison
-                pos_scores = feature_woe[y == 1]
-                neg_scores = feature_woe[y == 0]
-                if len(pos_scores) > 0 and len(neg_scores) > 0:
-                    somersd = somersd_pairwise(pos_scores, neg_scores, ties=ties)
-                    marginal_somersd[feature] = abs(somersd) if somersd is not None else 0.0
-                else:
-                    marginal_somersd[feature] = 0.0
-            else:
-                # Continuous target: use somersd_yx directly
-                if ties == "y":
-                    result = somersd_yx(y, feature_woe)
-                else:
-                    result = somersd_xy(y, feature_woe)
-                marginal_somersd[feature] = (
-                    0.0 if np.isnan(result.statistic) else abs(result.statistic)
-                )
+        marginal_somersd = {
+            feature: _compute_somersd(
+                target_for_msd, woe_values_dict[feature], is_binary_for_msd, ties
+            )
+            for feature in remaining_features
+        }
 
         if not marginal_somersd:
             break
@@ -329,7 +317,7 @@ def marginal_somersd_selection(
         # Show pairwise marginal Somers' D values in verbose mode
         if verbose and _HAS_LOGGING:
             sorted_marginal = sorted(marginal_somersd.items(), key=lambda x: x[1], reverse=True)
-            logger.debug("  [bold]Marginal Somers' D values:[/bold]")
+            logger.debug("[bold]Marginal Somers' D values:[/bold]")
             for feat, msd_val in sorted_marginal[:10]:  # Show top 10
                 logger.debug(f"{feat:30s}: {msd_val:.4f}")
 
@@ -354,7 +342,7 @@ def marginal_somersd_selection(
 
             if verbose and _HAS_LOGGING:
                 logger.debug(
-                    f"  Checking correlations with selected features "
+                    f"Checking correlations with selected features: "
                     f"(max: {max_corr:.4f} with '{max_corr_feature}')"
                 )
 
@@ -444,7 +432,7 @@ def somersd_shapley(
 
     # Normalize inputs
     scores = {k: np.asarray(v, dtype=float) for k, v in score_dict.items()}
-    score_names = list[str](scores.keys())
+    score_names = list(scores.keys())
 
     if availability_mask is None:
         availability_mask = {k: np.ones(n_samples, dtype=bool) for k in score_names}
@@ -471,7 +459,7 @@ def somersd_shapley(
 
         # Detect if binary or continuous target
         unique_labels = np.unique(y_valid)
-        is_binary = set(unique_labels).issubset({0, 1}) and len(unique_labels) <= 2
+        is_binary = set[Any](unique_labels).issubset({0, 1}) and len(unique_labels) <= 2
 
         extras = [k for k in score_names if k != base_score_name]
 
@@ -481,17 +469,7 @@ def somersd_shapley(
         def somersd_of(score_1d: np.ndarray) -> float:
             """Compute Somers' D for a score array, handling both binary and continuous targets."""
             s = score_1d[base_valid]
-            if is_binary:
-                pos = s[y_valid == 1]
-                neg = s[y_valid == 0]
-                if len(pos) == 0 or len(neg) == 0:
-                    return 0.0
-                result = somersd_pairwise(pos, neg, ties=ties)
-                return float(result) if result is not None else 0.0
-            else:
-                # Continuous target: use direct Somers' D
-                result = somersd_yx(y_valid, s) if ties == "y" else somersd_xy(y_valid, s)
-                return 0.0 if np.isnan(result.statistic) else float(result.statistic)
+            return _compute_somersd(y_valid, s, is_binary, ties)
 
         cache: dict[tuple[str, ...], float] = {}
 
@@ -576,7 +554,7 @@ def somersd_shapley(
 
     # Detect if binary or continuous target
     unique_labels = np.unique(y_valid)
-    is_binary = set(unique_labels).issubset({0, 1}) and len(unique_labels) <= 2
+    is_binary = set[Any](unique_labels).issubset({0, 1}) and len(unique_labels) <= 2
 
     # Cache value function v(S)
     value_cache: dict[tuple[str, ...], float] = {}
@@ -596,22 +574,7 @@ def somersd_shapley(
 
         averaged_score = cumulative[global_mask] / len(subset)
 
-        if is_binary:
-            pos = averaged_score[y_valid == 1]
-            neg = averaged_score[y_valid == 0]
-            if len(pos) == 0 or len(neg) == 0:
-                d = 0.0
-            else:
-                result = somersd_pairwise(pos, neg, ties=ties)
-                d = float(result) if result is not None else 0.0
-        else:
-            # Continuous target: use direct Somers' D
-            result = (
-                somersd_yx(y_valid, averaged_score)
-                if ties == "y"
-                else somersd_xy(y_valid, averaged_score)
-            )
-            d = 0.0 if np.isnan(result.statistic) else float(result.statistic)
+        d = _compute_somersd(y_valid, averaged_score, is_binary, ties)
 
         value_cache[subset] = d
         return d

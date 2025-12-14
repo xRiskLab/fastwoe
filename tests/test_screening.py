@@ -1,11 +1,13 @@
-"""Tests for modeling.py module."""
+"""Tests for screening.py module."""
+
+from typing import Any
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from fastwoe import FastWoe
-from fastwoe.modeling import marginal_somersd_selection, somersd_shapley
+from fastwoe.screening import marginal_somersd_selection, somersd_shapley
 
 
 class TestMarginalSomersdSelection:
@@ -117,6 +119,7 @@ class TestMarginalSomersdSelection:
 
         # Should not select both feature1 and feature1_dup if correlation is high
         selected = result["selected_features"]
+        # sourcery skip: no-conditionals-in-tests
         if "feature1" in selected and "feature1_dup" in selected:
             # If both selected, check correlation is below threshold
             corr_matrix = result["correlation_matrix"]
@@ -239,7 +242,7 @@ class TestSomersdShapley:
         assert "n_subsets" in result.columns
 
         assert len(result) == len(score_dict)
-        assert set(result["score_name"]) == set(score_dict.keys())
+        assert set[Any](result["score_name"]) == set(score_dict.keys())
         assert result["n_scores"].iloc[0] == len(score_dict)
         assert result["n_subsets"].iloc[0] == 2 ** len(score_dict)
 

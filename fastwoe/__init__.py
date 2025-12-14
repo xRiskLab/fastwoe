@@ -13,13 +13,7 @@ Features:
 - StyledDataFrame: Rich HTML rendering for Jupyter notebooks
 """
 
-from .display import (
-    StyledDataFrame,
-    iv_styled,
-    style_iv_analysis,
-    style_woe_mapping,
-    styled,
-)
+from .display import StyledDataFrame, iv_styled, style_iv_analysis, style_woe_mapping, styled
 from .fastwoe import FastWoe, WoePreprocessor
 from .interpret_fastwoe import WeightOfEvidence
 
@@ -32,6 +26,7 @@ except ImportError:
     _HAS_PLOTTING = False
 
     def _plotting_not_available(*args, **kwargs):
+        """Raise an ImportError if plotting functionality is not available."""
         raise ImportError(
             "Plotting functionality requires matplotlib. "
             "Install it with: pip install fastwoe[plotting]"
@@ -40,7 +35,7 @@ except ImportError:
     plot_performance = _plotting_not_available
     visualize_woe = _plotting_not_available
 
-__version__ = "0.1.6a2"
+__version__ = "0.1.6a3"
 __author__ = "xRiskLab"
 __email__ = "contact@xrisklab.ai"
 

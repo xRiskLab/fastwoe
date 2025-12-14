@@ -11,20 +11,18 @@
 
 </div>
 
----
-
 ## 1. Introduction
 
 **Marginal Somers' D (MSD)** is a feature selection method that uses rank correlation (Somers' D) instead of traditional Information Value (IV). It implements greedy forward selection that:
 
 1. Transforms features using WOE encoding
-2. Selects features based on their Somers' D with the target
+2. Selects features based on their Somers' D with residuals (y - current_predictions)
 3. Filters out features highly correlated with already-selected features
 4. Works with both binary and continuous targets
 
 **Key advantage:** Unlike IV-based methods limited to binary classification, MSD handles continuous targets through rank correlation.
 
----
+**Truly marginal:** The algorithm measures against residuals, making it truly "marginal" by selecting features that explain what the current model doesn't capture. This relies on **rankable variance** - the portion of residual variance that can be captured by rank correlation (monotonic relationships).
 
 ## 2. Mathematical Foundation
 
@@ -53,50 +51,116 @@ All features are transformed using Weight of Evidence (WOE) before computing Som
 - Creates monotonic transformations
 - Works with both binary and continuous targets
 
----
-
-## 3. The MSD Algorithm
+## 3. The Marginal Somers' D Algorithm
 
 ### Step-by-Step Process
 
 1. **Pre-processing**
    - Transform all features using WOE encoding
-   - Compute pairwise Somers' D correlation matrix
+   - Compute pairwise Somers' D correlation matrix between features
 
-2. **Initialization**
-   - Calculate univariate Somers' D for each feature
-   - Select feature with highest univariate Somers' D
+2. **Initialization (Step 1)**
+   - Calculate univariate Somers' D for each feature with target y
+   - Select feature with highest univariate Somers' D (no residuals yet)
 
-3. **Iterative Selection**
+3. **Iterative Selection (Step 2 onwards)**
    - Fit model with currently selected features
+   - Compute residuals: ε = y - model.predict_proba()
    - For each remaining feature:
-     - Compute univariate Somers' D between feature WOE and target
-     - Check correlation with already-selected features (using pairwise feature correlation)
-   - Add feature with highest Somers' D if correlation < threshold
+     - Compute Somers' D between feature WOE and residuals (marginal contribution)
+     - Check correlation with already-selected features (using pre-computed matrix)
+   - Select feature with highest |D(ε, feature)| if correlation < threshold
    - Repeat until stopping criteria met
 
 4. **Stopping Criteria**
-   - Marginal Somers' D < `min_msd`, OR
+   - MSD < `min_msd`, OR
    - Maximum features reached, OR
    - All remaining features too correlated with selected features
 
+### Algorithm Flowchart
+
+```mermaid
+flowchart TD
+    Start([Start Feature Selection]) --> Preprocess[Pre-compute WOE values<br/>for all features]
+    Preprocess --> CorrMatrix[Build pairwise<br/>correlation matrix]
+    CorrMatrix --> Step1[Step 1: Select feature with<br/>highest univariate Somers' D]
+    Step1 --> CheckMax{Reached<br/>max_features?}
+    CheckMax -->|Yes| End([Return selected features])
+    CheckMax -->|No| FitModel[Fit model with<br/>selected features]
+    FitModel --> ComputeResiduals[Compute residuals:<br/>ε = y - ŷ]
+    ComputeResiduals --> CalcMSD[For each remaining feature:<br/>Compute D(ε, feature_WOE)]
+    CalcMSD --> FindBest[Find feature with<br/>highest MSD]
+    FindBest --> CheckMinMSD{MSD ><br/>min_msd?}
+    CheckMinMSD -->|No| End
+    CheckMinMSD -->|Yes| CheckCorr{Correlation with<br/>selected features<br/>< threshold?}
+    CheckCorr -->|No| Skip[Skip this feature]
+    Skip --> AnyRemaining{Any remaining<br/>features?}
+    AnyRemaining -->|Yes| CalcMSD
+    AnyRemaining -->|No| End
+    CheckCorr -->|Yes| AddFeature[Add feature to<br/>selected set]
+    AddFeature --> CheckMax
+    style Step1 fill:#e1f5ff
+    style ComputeResiduals fill:#fff4e1
+    style FindBest fill:#e8f5e9
+    style End fill:#f3e5f5
+```
+
 ### What Makes It "Marginal"?
 
-The "marginal" aspect comes from:
-- **Iterative evaluation**: Features are evaluated at each step after some features are already selected
-- **Correlation filtering**: Features with Somers' D correlation > threshold with already-selected features are skipped
-- **Greedy selection**: The selection order implicitly accounts for redundancy through correlation filtering
+The "marginal" aspect comes from measuring against residuals:
+
+- **Step 1**: Uses univariate Somers' D with target y (no model exists yet)
+- **Step 2+**: Measures Somers' D against residuals (ε = y - current_predictions)
+- **Marginal selection**: Each new feature is selected based on how well it explains what the current model doesn't capture
+- **Rankable variance**: Features are selected based on their ability to explain monotonic patterns in residuals
 
 > [!NOTE]
-> The term "marginal" here refers to the iterative, step-wise evaluation process. At each step, features are evaluated using their univariate Somers' D with the target, but redundant features are filtered out based on their correlation with already-selected features.
+> **Residual-based selection starts from Step 2.** The method captures only rankable variance—monotonic relationships between features and residuals. Non-monotonic patterns cannot be detected by rank correlation.
+
+### The Algorithm in Plain English
+
+**Step 1**: Select the feature with highest univariate Somers' D with the target.
+
+**Steps 2+**: At each subsequent step:
+
+1. **Fit model** with currently selected features
+2. **Compute residuals**: ε = y - predictions (what the model doesn't explain)
+3. **Test each remaining feature**: "Can your WOE values rank the residuals? Do high WOE values correspond to positive errors and low WOE values to negative errors?"
+4. **Select winner**: Feature whose WOE values best rank the residuals
+5. **Repeat**: Residuals shrink and change, so rankings change
+
+Features are automatically penalized if redundant—they can't rank residuals well when the variance they'd explain is already captured by selected features.
+
+### Understanding Marginal Somers' D History
+
+```mermaid
+graph TD
+    Total[Total Variance in y<br/>100%] --> Step1{Step 1<br/>Time_with_Bank}
+    Step1 -->|Explained<br/>~64%| Explained1[Captured Variance]
+    Step1 -->|Residual<br/>~36%| Residual1[Remaining Variance]
+    Residual1 --> Step2{Step 2<br/>Age_of_Applicant}
+    Step2 -->|Explained<br/>~13% of residual| Explained2[Additional Variance]
+    Step2 -->|Residual<br/>~23%| Residual2[Still Remaining]
+    Residual2 --> Step3[Steps 3+<br/>Diminishing returns]
+    style Explained1 fill:#4caf50
+    style Explained2 fill:#8bc34a
+    style Residual2 fill:#ffeb3b
+    style Step3 fill:#e0e0e0
+```
+
+MSD values typically show this pattern:
+
+- **Step 1**: High (e.g., 0.64) - univariate correlation with target
+- **Step 2**: Sharp drop (e.g., 0.13) - now measuring against residuals
+- **Step 3+**: Gradual decrease (e.g., 0.07-0.19) - diminishing residual variance
+
+**This drop is expected and correct.** After the first feature explains most variance, subsequent features only capture what remains. Slight increases indicate a feature found orthogonal information.
 
 Feature correlation is computed as:
 
 ```math
 \text{correlation}(f_i, f_j) = \frac{|D_{f_i|f_j}| + |D_{f_j|f_i}|}{2}
 ```
-
----
 
 ## 4. Basic Usage
 
@@ -105,7 +169,7 @@ Feature correlation is computed as:
 ```python
 import numpy as np
 import pandas as pd
-from fastwoe.modeling import marginal_somersd_selection
+from fastwoe.screening import marginal_somersd_selection
 
 # Prepare data
 X = pd.DataFrame({
@@ -115,10 +179,10 @@ X = pd.DataFrame({
 })
 y = np.random.binomial(1, 0.3, 1000)
 
-# Run selection
+# Run marginal selection (Step 1: univariate, Step 2+: residual-based)
 result = marginal_somersd_selection(
     X, y,
-    min_msd=0.01,              # Minimum marginal Somers' D
+    min_msd=0.01,              # Minimum MSD
     max_features=5,            # Maximum features
     correlation_threshold=0.5  # Correlation threshold
 )
@@ -146,12 +210,11 @@ result = marginal_somersd_selection(
 # Monitor performance at each step
 # Note: test_performance has length len(selected_features) - 1
 # (computed at start of each iteration after first feature)
-for i, (feat, msd) in enumerate(zip(
-    result['selected_features'],
-    result['msd_history']
-)):
+for i, (feat, msd) in enumerate(
+    zip(result["selected_features"], result["msd_history"])
+):
     if i > 0:  # test_performance starts from step 2
-        test_perf = result['test_performance'][i - 1]
+        test_perf = result["test_performance"][i - 1]
         print(f"{feat}: Train MSD={msd:.4f}, Test D={test_perf:.4f}")
     else:
         print(f"{feat}: Train MSD={msd:.4f}")
@@ -169,8 +232,6 @@ result = marginal_somersd_selection(
 )
 ```
 
----
-
 ## 5. Output Structure
 
 The function returns a dictionary with:
@@ -178,36 +239,18 @@ The function returns a dictionary with:
 | Key | Type | Description |
 |-----|------|-------------|
 | `selected_features` | `list[str]` | Feature names in selection order |
-| `msd_history` | `list[float]` | Marginal Somers' D at each step (same length as selected_features) |
+| `msd_history` | `list[float]` | MSD at each step (same length as selected_features) |
 | `univariate_somersd` | `dict[str, float]` | Univariate Somers' D for all features |
 | `model` | `FastWoe` | Trained WOE model with selected features |
-| `test_performance` | `list[float]` | Test Somers' D at each step (length = len(selected_features) - 1, if test set provided) |
+| `test_performance` | `list[float]` | Test set Somers' D after adding each feature. Starts from Step 2 (after first feature added), so length = len(selected_features) - 1 |
 | `correlation_matrix` | `pd.DataFrame` | Pairwise correlations of selected features |
 
----
-
-## 6. When to Use MSD
-
-**Use MSD when:**
-- You have categorical or mixed-type features
-- You need rank correlation-based selection (robust to outliers)
-- You want to handle both binary and continuous targets
-- You want automatic redundancy filtering
-- You're building credit scoring or risk models
-
-**Consider alternatives when:**
-- You have extremely high-dimensional data (thousands of features)
-- You need very fast selection with minimal computation
-- Your features are already numeric and well-scaled
-
----
-
-## 7. Complete Example
+## 6. Complete Example
 
 ```python
 import numpy as np
 import pandas as pd
-from fastwoe.modeling import marginal_somersd_selection
+from fastwoe.screening import marginal_somersd_selection
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import train_test_split
 
@@ -234,7 +277,7 @@ X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.3, stratify=y, random_state=42
 )
 
-# Select features
+# Select features (Step 1: univariate, Step 2+: residual-based)
 result = marginal_somersd_selection(
     X_train, y_train,
     X_test=X_test,
@@ -257,10 +300,8 @@ y_pred = model.predict_proba(X_test[result["selected_features"]])[:, 1]
 print(f"\nTest AUC: {roc_auc_score(y_test, y_pred):.4f}")
 ```
 
----
-
 ## References
 
-1. Somers, R.H. (1962). A new asymmetric measure of association for ordinal variables. *American Sociological Review*, 27(6), 799-811.
+1. Somers, R.H. (1962). A New Asymmetric Measure of Association for Ordinal Variables. *American Sociological Review*, 27(6), 799-811.
 
-2. Spinella, F., & Krisciunas, T. (2025). Enhancing Credit Risk Models at Revolut by Combining Deep Feature Synthesis and Marginal Information Value. *Credit Research Centre, University of Edinburgh Business School*. Available at: https://www.crc.business-school.ed.ac.uk/sites/crc/files/2025-11/Enhancing-Credit-Risk-Models-at-Revolut-by-combining-Deep-Feature-Synthesis-and-Marginal-Information-Value-paper.pdf
+2. Spinella, F., & Krisciunas, T. (2025). Enhancing Credit Risk Models at Revolut by Combining Deep Feature Synthesis and Marginal Information Value. *Credit Research Centre, University of Edinburgh Business School*. Available at: https://www.crc.business-school.ed.ac.uk/sites/crc/files/2025-11/Enhancing-Credit-Risk-Models-at-Revolut-by-combining-Deep-Feature-Synthesis-and-Marginal-Information-Value-paper.pdf.

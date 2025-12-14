@@ -1,4 +1,4 @@
-"""test_fast_somersd.py."""
+"""test_metrics.py."""
 
 import time
 import warnings
@@ -335,13 +335,13 @@ def test_somersd_clustered_matrix():
     logger.info("✓ All somersd_clustered_matrix tests passed!")
 
 
-def test_somersd_clustered_matrix_continuous():
-    """Test clustered Somers' D matrix with continuous targets."""
+def test_somersd_clustered_matrix_requires_binary():
+    """Test that somersd_clustered_matrix raises error for non-binary labels."""
     import pandas as pd
 
-    from fastwoe.metrics import somersd_clustered_matrix, somersd_yx
+    from fastwoe.metrics import somersd_clustered_matrix
 
-    logger.info("Testing somersd_clustered_matrix with continuous targets...")
+    logger.info("Testing somersd_clustered_matrix error handling for non-binary labels...")
 
     # Create test data with continuous target
     np.random.seed(42)
@@ -354,140 +354,15 @@ def test_somersd_clustered_matrix_continuous():
         }
     )
 
-    # Compute clustered matrix
-    somersd_matrix, global_somersd = somersd_clustered_matrix(df, "score", "target", "cluster")
+    # Should raise ValueError for non-binary labels
+    try:
+        somersd_clustered_matrix(df, "score", "target", "cluster")
+        raise AssertionError("Should have raised ValueError for non-binary labels")
+    except ValueError as e:
+        assert "requires binary labels" in str(e).lower()
+        logger.info(f"✓ Correctly raised ValueError: {e}")
 
-    logger.info("=== Clustered Somers' D Matrix (Continuous) ===")
-    logger.info(f"\n{somersd_matrix}")
-    logger.info(f"Global Somers' D: {global_somersd:.8f}")
-
-    # Verify results are valid
-    assert global_somersd is not None
-    assert -1 <= global_somersd <= 1
-
-    # Verify matrix shape
-    clusters = sorted(df["cluster"].unique())
-    assert somersd_matrix.shape[0] == len(clusters)
-    assert somersd_matrix.shape[1] == len(clusters)
-
-    # For continuous targets, each row should have the same value (cluster-specific)
-    # Verify that diagonal elements match direct computation
-    for cluster in clusters:
-        cluster_data = df[df["cluster"] == cluster]
-        if len(cluster_data) > 0:
-            cluster_targets = cluster_data["target"].values
-            cluster_scores = cluster_data["score"].values
-            direct_somersd = somersd_yx(cluster_targets, cluster_scores).statistic
-
-            # All elements in this row should be the same
-            row_values = somersd_matrix.loc[cluster, :].values
-            assert np.allclose(row_values, direct_somersd, equal_nan=True, atol=1e-10), (
-                f"Row values for cluster {cluster} should match direct computation"
-            )
-
-    logger.info("✓ All continuous target tests passed!")
-
-
-def test_somersd_pairwise_continuous_target():
-    """Test pairwise Somers' D with continuous targets, comparing with scipy.somersd."""
-    logger.info("Testing somersd_pairwise with continuous targets...")
-
-    # Generate continuous target data
-    np.random.seed(42)
-    n = 200
-    y_continuous = np.random.uniform(0, 100, n)  # Continuous target
-    scores = y_continuous + np.random.normal(0, 10, n)  # Scores correlated with target
-
-    # Test 1: Using median threshold
-    logger.info("=== Test 1: Median threshold ===")
-    threshold = np.median(y_continuous)
-    y_binary = (y_continuous > threshold).astype(int)
-
-    # Split scores into positive and negative groups
-    pos_scores = scores[y_binary == 1]
-    neg_scores = scores[y_binary == 0]
-
-    # Compute pairwise Somers' D
-    somersd_pairwise_val = somersd_pairwise(pos_scores, neg_scores, ties="y")
-
-    # Compare with scipy's somersd on continuous target
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        scipy_somersd = stats.somersd(y_continuous, scores).statistic
-
-    logger.info(f"Pairwise Somers' D (binary split): {somersd_pairwise_val:.8f}")
-    logger.info(f"SciPy Somers' D (continuous):      {scipy_somersd:.8f}")
-
-    # They should be close but not necessarily identical since we're using binary split
-    # The pairwise Somers' D is computed on binary labels, while scipy uses continuous
-    assert somersd_pairwise_val is not None
-    assert -1 <= somersd_pairwise_val <= 1
-
-    # Test 2: Using different thresholds
-    logger.info("=== Test 2: Different thresholds ===")
-    thresholds = [np.percentile(y_continuous, p) for p in [25, 50, 75]]
-    gini_values = []
-
-    for thresh in thresholds:
-        y_bin = (y_continuous > thresh).astype(int)
-        pos = scores[y_bin == 1]
-        neg = scores[y_bin == 0]
-        somersd = somersd_pairwise(pos, neg, ties="y")
-        if somersd is not None:
-            gini_values.append(somersd)
-            logger.info(f"Threshold {thresh:.2f}: Somers' D = {somersd:.6f}")
-
-    # All should be valid Gini values
-    assert all(-1 <= g <= 1 for g in gini_values)
-
-    # Test 3: Compare with somersd_yx on binary labels
-    logger.info("=== Test 3: Compare with somersd_yx on binary labels ===")
-    threshold = np.median(y_continuous)
-    y_binary = (y_continuous > threshold).astype(int)
-
-    # Use our somersd_yx on binary labels
-    our_somersd = somersd_yx(y_binary, scores).statistic
-
-    # Split and use pairwise
-    pos_scores = scores[y_binary == 1]
-    neg_scores = scores[y_binary == 0]
-    pairwise_gini = somersd_pairwise(pos_scores, neg_scores)
-
-    logger.info(f"somersd_yx (binary): {our_somersd:.8f}")
-    logger.info(f"somersd_pairwise:    {pairwise_gini:.8f}")
-
-    # These should match exactly since both use binary labels
-    assert np.isclose(our_somersd, pairwise_gini, atol=1e-10), (
-        "somersd_yx on binary labels should match somersd_pairwise"
-    )
-
-    # Test 4: Continuous target with scipy comparison
-    logger.info("=== Test 4: Direct comparison with scipy.somersd ===")
-    # For continuous targets, we can't directly use somersd_pairwise
-    # But we can verify that when we convert to binary, our result is consistent
-    # with scipy's somersd on the binary version
-
-    threshold = np.median(y_continuous)
-    y_binary = (y_continuous > threshold).astype(int)
-
-    # Scipy on binary labels
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        scipy_binary = stats.somersd(y_binary, scores).statistic
-
-    # Our pairwise on binary split
-    pos_scores = scores[y_binary == 1]
-    neg_scores = scores[y_binary == 0]
-    pairwise_gini = somersd_pairwise(pos_scores, neg_scores, ties="y")
-
-    logger.info(f"SciPy Somers' D (binary labels): {scipy_binary:.8f}")
-    logger.info(f"somersd_pairwise:                {pairwise_gini:.8f}")
-
-    assert np.isclose(scipy_binary, pairwise_gini, atol=1e-10), (
-        "somersd_pairwise should match scipy.somersd on binary labels"
-    )
-
-    logger.info("✓ All continuous target tests passed!")
+    logger.info("✓ Non-binary label error handling test passed!")
 
 
 def test_somersd_pairwise_binary_vs_auc():
