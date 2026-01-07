@@ -43,6 +43,14 @@ jobs:
       run: |
         uv run python -m pytest tests/ -v --tb=short -m "not compatibility"
 
+    - name: Cleanup test artifacts
+      if: always()
+      run: |
+        rm -rf .pytest_cache/
+        rm -rf .venv/
+        rm -rf __pycache__/
+        find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+
     # Coverage reporting disabled until pytest-cov is added to dependencies
     # - name: Upload coverage to Codecov
     #   if: matrix.python-version == '3.11'
@@ -98,8 +106,6 @@ jobs:
       run: |
         uv sync --dev
 
-    - name: Run mypy (if configured)
+    - name: Run mypy
       run: |
-        # Add mypy configuration and uncomment when ready
-        # uv run mypy fastwoe/
-        echo "Type checking skipped - configure mypy when ready"
+        uv run mypy fastwoe/ --check-untyped-defs

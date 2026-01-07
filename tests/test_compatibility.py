@@ -3,9 +3,7 @@ Compatibility tests for FastWoe across Python and scikit-learn versions.
 Uses pytest with custom markers for optional execution.
 """
 
-import os
 import subprocess
-import tempfile
 
 import pytest
 
@@ -40,7 +38,7 @@ def get_numpy_constraint(python_ver, sklearn_ver):
 @pytest.mark.compatibility
 @pytest.mark.slow
 @pytest.mark.parametrize("python_ver,sklearn_ver,description", COMPATIBILITY_MATRIX)
-def test_python_sklearn_compatibility(python_ver, sklearn_ver, description):
+def test_python_sklearn_compatibility(python_ver, sklearn_ver, description, tmp_path):
     """Test FastWoe compatibility across Python and scikit-learn versions."""
     # Skip if uv not available
     success, _, _ = run_cmd("which uv")
@@ -55,12 +53,18 @@ def test_python_sklearn_compatibility(python_ver, sklearn_ver, description):
 import sys
 import warnings
 import gc
+import os
 warnings.filterwarnings("ignore")
+
+# Set environment variables to help with numba/llvmlite issues
+os.environ.setdefault("NUMBA_DISABLE_JIT", "0")
+os.environ.setdefault("NUMBA_CACHE_DIR", "/tmp/numba_cache")
 
 try:
     # Force garbage collection before imports
     gc.collect()
 
+    # Import fastwoe - should work even if numba has issues (will use fallback)
     import fastwoe
     import sklearn
     import pandas as pd
@@ -94,13 +98,10 @@ try:
 
     print("✅ All FastWoe functionality verified!")
 
-except MemoryError as e:
-    print(f"⚠️  Memory error (likely numba/llvmlite issue): {e}")
-    print("This is a known issue with Python 3.9 + numba/llvmlite in some environments")
-    # Don't fail the test for memory issues
-    print("SUCCESS")
 except Exception as e:
     print(f"❌ Error: {e}")
+    import traceback
+    traceback.print_exc()
     raise
 
 print("SUCCESS")
@@ -156,13 +157,14 @@ print("SUCCESS")
         if not success:
             pytest.fail(f"FastWoe installation failed: {stderr}")
 
-        # Run test
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(test_content)
-            test_file = f.name
+        # Run test - use pytest's tmp_path for automatic cleanup
+        test_file = tmp_path / f"test_{python_ver.replace('.', '_')}.py"
+        test_file.write_text(test_content)
+        # Use absolute path for external Python process
+        test_file_abs = str(test_file.resolve())
 
         try:
-            success, stdout, stderr = run_cmd(f"{python_exe} {test_file}")
+            success, stdout, stderr = run_cmd(f"{python_exe} {test_file_abs}")
 
             # Print output for debugging
             if stdout:
@@ -173,9 +175,10 @@ print("SUCCESS")
 
             # Verify success message
             assert "SUCCESS" in stdout, f"Test didn't complete successfully: {stdout}"
-
+        # tmp_path automatically cleans up, but we can add explicit cleanup if needed
         finally:
-            os.unlink(test_file)
+            if test_file.exists():
+                test_file.unlink(missing_ok=True)
 
     finally:
         # Cleanup

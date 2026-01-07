@@ -18,7 +18,7 @@ import pandas as pd
 
 from .fastwoe import FastWoe
 from .logging_config import _HAS_LOGGING, logger
-from .metrics import somersd_pairwise, somersd_xy, somersd_yx
+from .metrics import SomersDResult, somersd_pairwise, somersd_xy, somersd_yx
 
 
 def _compute_somersd(
@@ -32,12 +32,14 @@ def _compute_somersd(
         pos_scores = scores[y == 1]
         neg_scores = scores[y == 0]
         if len(pos_scores) > 0 and len(neg_scores) > 0:
-            result = somersd_pairwise(pos_scores, neg_scores, ties=ties)
-            return abs(result) if result is not None else 0.0
+            pairwise_result = somersd_pairwise(pos_scores, neg_scores, ties=ties)
+            return abs(pairwise_result) if pairwise_result is not None else 0.0
         return 0.0
     else:
-        result = somersd_yx(y, scores) if ties == "y" else somersd_xy(y, scores)
-        return 0.0 if np.isnan(result.statistic) else abs(result.statistic)
+        somers_result: SomersDResult = (
+            somersd_yx(y, scores) if ties == "y" else somersd_xy(y, scores)
+        )
+        return 0.0 if np.isnan(somers_result.statistic) else abs(somers_result.statistic)
 
 
 def _build_feature_correlation_matrix(
@@ -193,7 +195,7 @@ def marginal_somersd_selection(
 
     # Detect if target is binary (only 0 and 1) or continuous
     unique_labels = np.unique(y[~np.isnan(y)])
-    is_binary = set[Any](unique_labels).issubset({0, 1}) and len(unique_labels) <= 2
+    is_binary = set(unique_labels).issubset({0, 1}) and len(unique_labels) <= 2
 
     # Helper function for output
     # Only outputs when verbose=True, otherwise silent
@@ -216,7 +218,7 @@ def marginal_somersd_selection(
         try:
             woe_encoder.fit(X[[feature]], y)
             X_woe = woe_encoder.transform(X[[feature]])
-            woe_values_dict[feature] = X_woe.iloc[:, 0].values
+            woe_values_dict[feature] = np.asarray(X_woe.iloc[:, 0].values, dtype=float)
             woe_encoders_dict[feature] = woe_encoder
         except Exception:
             # If fitting fails, store zeros as placeholder
@@ -233,8 +235,11 @@ def marginal_somersd_selection(
 
     # Calculate univariate Somers' D for all features using pre-computed WOE values
     log_or_print("Calculating univariate Somers' D for all features...", use_logger=verbose)
+    y_arr = np.asarray(y, dtype=float)
     univariate_somersd = {
-        feature: _compute_somersd(y, woe_values_dict[feature], is_binary, ties)
+        feature: _compute_somersd(
+            y_arr, np.asarray(woe_values_dict[feature], dtype=float), is_binary, ties
+        )
         for feature in candidate_features
     }
 
@@ -276,7 +281,10 @@ def marginal_somersd_selection(
         # Calculate test performance
         try:
             test_scores = current_woe_model.predict_proba(X_eval[selected_features])[:, 1]
-            test_performance.append(_compute_somersd(y_eval, test_scores, is_binary, ties))
+            y_eval_arr = np.asarray(y_eval, dtype=float)
+            test_performance.append(
+                _compute_somersd(y_eval_arr, np.asarray(test_scores, dtype=float), is_binary, ties)
+            )
         except Exception:
             test_performance.append(0.0)
 
@@ -435,11 +443,11 @@ def somersd_shapley(
     score_names = list(scores.keys())
 
     if availability_mask is None:
-        availability_mask = {k: np.ones(n_samples, dtype=bool) for k in score_names}
+        availability_mask = {key: np.ones(n_samples, dtype=bool) for key in score_names}
     else:
-        availability_mask = {k: np.asarray(m, dtype=bool) for k, m in availability_mask.items()}
-        for k in score_names:
-            availability_mask.setdefault(k, np.ones(n_samples, dtype=bool))
+        availability_mask = {key: np.asarray(m, dtype=bool) for key, m in availability_mask.items()}
+        for key in score_names:
+            availability_mask.setdefault(key, np.ones(n_samples, dtype=bool))
 
     # Handle base score case
     if base_score_name is not None:
@@ -459,7 +467,7 @@ def somersd_shapley(
 
         # Detect if binary or continuous target
         unique_labels = np.unique(y_valid)
-        is_binary = set[Any](unique_labels).issubset({0, 1}) and len(unique_labels) <= 2
+        is_binary = set(unique_labels).issubset({0, 1}) and len(unique_labels) <= 2
 
         extras = [k for k in score_names if k != base_score_name]
 
@@ -473,7 +481,7 @@ def somersd_shapley(
 
         cache: dict[tuple[str, ...], float] = {}
 
-        def v(subset: tuple[str, ...]) -> float:
+        def v_base(subset: tuple[str, ...]) -> float:
             """Somers' D of averaged score: base + subset of extras."""
             subset = tuple[str, ...](sorted(subset))
             if subset in cache:
@@ -499,8 +507,8 @@ def somersd_shapley(
             cache[subset] = val
             return val
 
-        base_only_somersd = v(())
-        final_system_somersd = v(tuple[str, ...](extras))
+        base_only_somersd = v_base(())
+        final_system_somersd = v_base(tuple[str, ...](extras))
 
         # Exact Shapley for each extra component
         shapley = dict.fromkeys(extras, 0.0)
@@ -512,7 +520,7 @@ def somersd_shapley(
                 for S in itertools.combinations(others, r):
                     # Shapley weight: |S|! (M-|S|-1)! / M!
                     weight = math.factorial(r) * math.factorial(M - r - 1) / math.factorial(M)
-                    shapley[i] += weight * (v(S + (i,)) - v(S))
+                    shapley[i] += weight * (v_base(S + (i,)) - v_base(S))
 
         # Build output DataFrame
         rows = []
@@ -524,11 +532,11 @@ def somersd_shapley(
             }
         )
 
-        for k in sorted(extras, key=lambda z: shapley[z], reverse=True):
+        for component_name in sorted(extras, key=lambda z: shapley[z], reverse=True):
             rows.append(
                 {
-                    "component": k,
-                    "effect_on_somersd": shapley[k],
+                    "component": component_name,
+                    "effect_on_somersd": shapley[component_name],
                     "role": "increment_over_base",
                 }
             )
@@ -554,7 +562,7 @@ def somersd_shapley(
 
     # Detect if binary or continuous target
     unique_labels = np.unique(y_valid)
-    is_binary = set[Any](unique_labels).issubset({0, 1}) and len(unique_labels) <= 2
+    is_binary = set(unique_labels).issubset({0, 1}) and len(unique_labels) <= 2
 
     # Cache value function v(S)
     value_cache: dict[tuple[str, ...], float] = {}
@@ -583,7 +591,8 @@ def somersd_shapley(
     shapley = dict.fromkeys(score_names, 0.0)
     n_scores = len(score_names)
 
-    for k in range(n_scores + 1):
+    for k_int in range(n_scores + 1):
+        k: int = k_int
         for subset in itertools.combinations(score_names, k):
             subset = tuple[str, ...](sorted(subset))
             v_subset = v(subset)

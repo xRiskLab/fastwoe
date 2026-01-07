@@ -7,11 +7,32 @@ Implements Somers' D, Gini coefficient, and clustered Gini analysis.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 import pandas as pd
-from numba import njit
+
+# Try to import numba, with fallback for environments where it's not available or has issues
+try:
+    from numba import njit
+
+    _HAS_NUMBA = True
+except (ImportError, OSError, MemoryError) as e:
+    # Fallback: use a no-op decorator when numba is not available
+    # This allows the code to run, but without JIT compilation (slower)
+    import warnings
+
+    warnings.warn(
+        f"Numba not available or failed to import ({type(e).__name__}: {e}). "
+        "Performance will be degraded. If this is unexpected, check numba/llvmlite installation.",
+        UserWarning,
+        stacklevel=2,
+    )
+    _HAS_NUMBA = False
+
+    def njit(func: Callable) -> Callable:
+        """No-op decorator when numba is not available."""
+        return func
 
 
 @dataclass(frozen=True)
@@ -48,7 +69,7 @@ def _fenwick_update(bit: np.ndarray, i: int, delta: int) -> None:
 def _fenwick_query(bit: np.ndarray, i: int) -> int:
     s = 0
     while i > 0:
-        s += bit[i - 1]
+        s += int(bit[i - 1])
         i -= i & -i
     return s
 

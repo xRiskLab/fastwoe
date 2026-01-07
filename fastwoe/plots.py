@@ -5,25 +5,34 @@ This module provides visualization functions for model performance and WOE analy
 Requires matplotlib (install with: pip install fastwoe[plotting]).
 """
 
-from typing import Any, Literal, Optional, Union
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Literal, Optional, Union
 
 import numpy as np
 import pandas as pd
-from matplotlib import pyplot as plt
-from matplotlib import rcParams
 from scipy.special import expit, logit
 
-from .metrics import somersd_yx
+if TYPE_CHECKING:
+    from matplotlib import pyplot as plt
+    from matplotlib.axes import Axes
+else:
+    # Runtime import - needed for actual plotting
+    try:
+        from matplotlib import pyplot as plt  # noqa: F401
+        from matplotlib.axes import Axes  # noqa: F401
+    except ImportError:
+        plt = None  # type: ignore[assignment]
+        Axes = Any  # type: ignore[assignment, misc]
 
-# Set Arial as global font
-rcParams["font.family"] = "Arial"
+from .metrics import somersd_yx
 
 
 def plot_performance(
     y_true: Union[np.ndarray, pd.Series],
     y_pred: Union[np.ndarray, pd.Series, list],
     weights: Optional[Union[np.ndarray, pd.Series]] = None,
-    ax: Optional[plt.Axes] = None,
+    ax: Optional[Axes] = None,
     figsize: tuple = (6, 5),
     dpi: int = 100,
     show_plot: bool = True,
@@ -111,8 +120,13 @@ def plot_performance(
 
     # Calculate Gini for all predictions using fast Somers' D
     ginis = []
+    y_true_arr = np.asarray(y_true, dtype=float)
+    weights_arr: Optional[np.ndarray] = None
+    if has_weights and weights is not None:
+        weights_arr = np.asarray(weights, dtype=float)
     for yp in y_preds:
-        g = somersd_yx(y_true, yp, weights if has_weights else None).statistic
+        yp_arr = np.asarray(yp, dtype=float)
+        g = somersd_yx(y_true_arr, yp_arr, weights_arr).statistic
         ginis.append(g)
 
     # Create figure or use provided axes
@@ -242,7 +256,7 @@ def visualize_woe(
 
     if is_prediction_level:
         # Prediction-level visualization
-        if "feature_contributions" not in explanation:
+        if explanation is None or "feature_contributions" not in explanation:
             raise ValueError("explanation dict must contain 'feature_contributions' key")
 
         feature_contributions = explanation["feature_contributions"]
@@ -303,7 +317,8 @@ def visualize_woe(
                 f"Could not get WOE mappings for feature '{feature_name}'. Error: {e}"
             ) from e
 
-        frame = pd.DataFrame(mappings)[["category", "woe"]]
+        mapping_df = pd.DataFrame(mappings)
+        frame = pd.DataFrame(mapping_df[["category", "woe"]])
 
         try:
             prior = woe_encoder.y_prior_
@@ -574,12 +589,14 @@ def visualize_woe(
         plt.show()
 
     if mode == "proba":
-        return (
+        result = (
             frame[["feature", "woe", "proba", "proba_delta"]]
             if is_prediction_level
             else frame[["category", "woe", "proba", "proba_delta"]]
         )
+        return pd.DataFrame(result)
     if is_prediction_level:
-        return frame[["feature", "woe", "logit", "logit_delta"]]
+        result = frame[["feature", "woe", "logit", "logit_delta"]]
     else:
-        return frame[["category", "woe", "logit", "logit_delta"]]
+        result = frame[["category", "woe", "logit", "logit_delta"]]
+    return pd.DataFrame(result)

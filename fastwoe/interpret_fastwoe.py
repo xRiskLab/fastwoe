@@ -7,7 +7,7 @@ The explanations help users understand why a particular prediction was made and
 how much each feature contributed to the final decision.
 """
 
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -174,14 +174,17 @@ class WeightOfEvidence(BaseEstimator):
 
         # Update feature names to match WOE-transformed features if not set
         if feature_names is None:
-            self.feature_names: Optional[list[str]] = list(self._original_X_train.columns)
+            self.feature_names: list[str] = list(self._original_X_train.columns)
         else:
             self.feature_names = feature_names
 
         # Auto-infer class names
         if auto_infer and class_names is None:
             class_names = self._infer_class_names(y_train)
-        self.class_names: Optional[list[str]] = class_names
+        if class_names is None:
+            self.class_names: list[str] = self._infer_class_names(y_train)
+        else:
+            self.class_names = class_names
 
         # Initialize fitted attributes
         self.is_fitted_ = False
@@ -220,10 +223,8 @@ class WeightOfEvidence(BaseEstimator):
                 raise ValueError(f"Class index {class_id} out of range")
             return class_id
         elif isinstance(class_id, str):
-            # type: ignore[unsupported-operation]
-            if class_id not in self.class_names:
+            if self.class_names is None or class_id not in self.class_names:
                 raise ValueError(f"Class name '{class_id}' not found in {self.class_names}")
-            # type: ignore[missing-attribute]
             return self.class_names.index(class_id)
         else:
             # Raise error if class identifier is not int or str
@@ -258,26 +259,22 @@ class WeightOfEvidence(BaseEstimator):
             )
 
         # Check feature names
-        # type: ignore[bad-argument-type]
-        if len(self.feature_names) != self.n_features_:
+        if self.feature_names is None or len(self.feature_names) != self.n_features_:
             raise ValueError(
-                # type: ignore[bad-argument-type]
-                f"feature_names length ({len(self.feature_names)}) must match "
+                f"feature_names length ({len(self.feature_names) if self.feature_names else 'None'}) must match "
                 f"n_features ({self.n_features_})"
             )
 
         # Check class names
-        # type: ignore[bad-argument-type]
-        if len(self.class_names) != self.n_classes_:
+        if self.class_names is None or len(self.class_names) != self.n_classes_:
             raise ValueError(
-                # type: ignore[bad-argument-type]
-                f"class_names length ({len(self.class_names)}) must match "
+                f"class_names length ({len(self.class_names) if self.class_names else 'None'}) must match "
                 f"n_classes ({self.n_classes_})"
             )
 
         # Check for minimum samples per class
         for cls in self.classes_:
-            n_samples_cls = np.sum(self.y_train_ == cls)
+            n_samples_cls: int = int(np.sum(self.y_train_ == cls))
             if n_samples_cls < 2:
                 raise ValueError(
                     f"Class {cls} has only {n_samples_cls} samples. "
@@ -334,15 +331,23 @@ class WeightOfEvidence(BaseEstimator):
             # Dataset + index pattern: extract sample and explain
             if isinstance(x, pd.DataFrame):
                 sample = x.iloc[sample_idx]
+                sample_series: pd.Series = sample  # Use DataFrame row as Series
                 sample_dict = {
                     k: v.item() if hasattr(v, "item") else v for k, v in sample.to_dict().items()
                 }
             else:
-                sample = x[sample_idx]
+                sample_val = x[sample_idx]
+                if isinstance(sample_val, pd.Series):
+                    sample_series = sample_val
+                elif isinstance(sample_val, np.ndarray):
+                    sample_series = pd.Series(sample_val)
+                else:
+                    sample_series = pd.Series(np.asarray(sample_val, dtype=float))
+                if self.feature_names is None:
+                    raise ValueError("feature_names must be set")
                 sample_dict = {
                     k: v.item() if hasattr(v, "item") else v
-                    # type: ignore[no-matching-overload]
-                    for k, v in zip(self.feature_names, sample)
+                    for k, v in zip(self.feature_names, sample_series)
                 }
 
             # Get true label from true_labels if provided
@@ -391,11 +396,23 @@ class WeightOfEvidence(BaseEstimator):
                     f"Use explain(dataset, sample_idx=i) or extract single sample: dataset[i]"
                 )
             # Extract true_label from true_labels for single sample
-            true_label = None
+            true_label_single: Optional[Union[int, str]] = None
             if true_labels is not None:
                 if isinstance(x, pd.Series) and isinstance(true_labels, pd.Series):
                     if hasattr(x, "name") and x.name is not None and x.name in true_labels.index:
-                        true_label = true_labels.loc[x.name]
+                        # Use iloc with position to avoid type checker issues
+                        idx_pos = list(true_labels.index).index(x.name)
+                        # Pandas iloc typing is complex - ignore type checker here
+                        true_label_raw: Any = true_labels.iloc[idx_pos]  # type: ignore[assignment]
+                        # Convert to int or str
+                        if isinstance(true_label_raw, (int, str, np.integer)):
+                            true_label_single = (
+                                int(true_label_raw)
+                                if isinstance(true_label_raw, (int, np.integer))
+                                else str(true_label_raw)
+                            )
+                        else:
+                            true_label_single = None
                     else:
                         raise ValueError(
                             f"Cannot automatically extract true_label from true_labels. "
@@ -403,15 +420,28 @@ class WeightOfEvidence(BaseEstimator):
                             f"Please use true_labels.iloc[position] or true_labels.loc[index] explicitly."
                         )
                 else:
-                    true_label = (
+                    true_label_raw = (
                         true_labels[-1] if hasattr(true_labels, "__getitem__") else true_labels
                     )
-            # type: ignore[bad-argument-type]
-            explanation = self._explain_single_sample(x, class_to_explain, true_label)
+                    if isinstance(true_label_raw, (int, str, np.integer)):
+                        true_label_single = (
+                            int(true_label_raw)
+                            if isinstance(true_label_raw, (int, np.integer))
+                            else str(true_label_raw)
+                        )
+                    else:
+                        true_label_single = None
+            # Convert DataFrame to Series/ndarray for _explain_single_sample
+            if isinstance(x, pd.DataFrame):
+                x_input: Union[np.ndarray, pd.Series] = x.iloc[0] if len(x) == 1 else x.iloc[0]
+            else:
+                x_input = x
+            explanation = self._explain_single_sample(x_input, class_to_explain, true_label_single)
             if not return_dict:
                 if isinstance(x, pd.Series):
                     sample_dict = {
-                        k: v.item() if hasattr(v, "item") else v for k, v in x.to_dict().items()
+                        str(k): (v.item() if hasattr(v, "item") else v)  # type: ignore[call-arg]
+                        for k, v in x.to_dict().items()
                     }
                 elif isinstance(x, np.ndarray):
                     sample_dict = {
@@ -422,11 +452,11 @@ class WeightOfEvidence(BaseEstimator):
                 else:
                     raw_dict = x.to_dict() if hasattr(x, "to_dict") else dict(x)
                     sample_dict = {
-                        k: v.item() if hasattr(v, "item") else v for k, v in raw_dict.items()
+                        str(k): v.item() if hasattr(v, "item") else v for k, v in raw_dict.items()
                     }
                 sample_info = f"**Original Features**: {sample_dict}"
-                if true_label is not None:
-                    sample_info += f"\n**True Label**: {self._format_class_name(true_label)}"
+                if true_label_single is not None:
+                    sample_info += f"\n**True Label**: {self._format_class_name(true_label_single)}"
                 sample_info += f"""
                     Predicted Label: {explanation["predicted_label"]}
                     Predicted Probabilities: {explanation["predicted_proba"]}
@@ -472,12 +502,22 @@ class WeightOfEvidence(BaseEstimator):
 
         # Determine class to explain
         if class_to_explain is None:
-            # type: ignore[bad-assignment]
-            class_to_explain = prediction
+            # Convert prediction to int or str
+            if isinstance(prediction, (int, np.integer)):
+                class_to_explain = int(prediction)
+            elif isinstance(prediction, str):
+                class_to_explain = prediction
+            else:
+                # Fallback: try to convert
+                class_to_explain = (
+                    int(prediction) if hasattr(prediction, "__int__") else str(prediction)
+                )
 
         # Convert to index if needed
-        # type: ignore[bad-argument-type]
-        class_idx = self._resolve_class_identifier(class_to_explain)
+        if class_to_explain is not None:
+            class_idx = self._resolve_class_identifier(class_to_explain)
+        else:
+            raise ValueError("class_to_explain cannot be None at this point")
 
         return {
             "predicted_label": self._format_class_name(prediction),
@@ -596,9 +636,11 @@ class WeightOfEvidence(BaseEstimator):
         _, counts = np.unique(self.y_train_, return_counts=True)
         class_dist = counts / len(self.y_train_)
 
-        # type: ignore[no-matching-overload]
+        if self.feature_names is None:
+            raise ValueError("feature_names must be set")
+        if self.class_names is None:
+            raise ValueError("class_names must be set")
         features_str = ", ".join(self.feature_names)
-        # type: ignore[no-matching-overload]
         classes_str = ", ".join(self.class_names)
 
         return f"""
@@ -647,17 +689,27 @@ class WeightOfEvidence(BaseEstimator):
 
         if sample_idx is not None:
             if isinstance(x, pd.DataFrame):
-                sample = x.iloc[sample_idx]
+                sample_df = x.iloc[sample_idx]
+                sample_series: pd.Series = sample_df  # Use DataFrame row as Series
                 sample_dict = {
-                    col: sample[col].item() if hasattr(sample[col], "item") else sample[col]
+                    col: sample_df[col].item()
+                    if hasattr(sample_df[col], "item")
+                    else sample_df[col]
                     for col in x.columns
                 }
             else:
-                sample = x[sample_idx]
+                sample_val = x[sample_idx]
+                if isinstance(sample_val, pd.Series):
+                    sample_series = sample_val
+                elif isinstance(sample_val, np.ndarray):
+                    sample_series = pd.Series(sample_val)
+                else:
+                    sample_series = pd.Series(np.asarray(sample_val, dtype=float))
+                if self.feature_names is None:
+                    raise ValueError("feature_names must be set")
                 sample_dict = {
                     k: v.item() if hasattr(v, "item") else v
-                    # type: ignore[no-matching-overload]
-                    for k, v in zip(self.feature_names, sample)
+                    for k, v in zip(self.feature_names, sample_series)
                 }
             if true_labels is not None and hasattr(true_labels, "iloc"):
                 # true_labels is a pandas Series
@@ -669,7 +721,7 @@ class WeightOfEvidence(BaseEstimator):
                 true_label = None
             explanation = self._explain_single_sample_ci(
                 # type: ignore[bad-argument-type]
-                sample,
+                sample_series,
                 class_to_explain,
                 # type: ignore[bad-argument-type]
                 true_label,
@@ -693,23 +745,41 @@ class WeightOfEvidence(BaseEstimator):
                     f"explain_ci() received array with shape {x.shape} but no sample_idx. "
                     f"Use explain_ci(dataset, sample_idx=i) or extract single sample: dataset[i]"
                 )
-            true_label = None
+            true_label_single_ci: Optional[Union[int, str]] = None
             if true_labels is not None:
                 if hasattr(true_labels, "__len__") and len(true_labels) > 1:
                     raise ValueError("true_labels has multiple values but no sample_idx specified")
-                true_label = true_labels[0] if hasattr(true_labels, "__getitem__") else true_labels
+                true_label_raw = (
+                    true_labels[0] if hasattr(true_labels, "__getitem__") else true_labels
+                )
+                if isinstance(true_label_raw, (int, str, np.integer)):
+                    true_label_single_ci = (
+                        int(true_label_raw)
+                        if isinstance(true_label_raw, (int, np.integer))
+                        else str(true_label_raw)
+                    )
+                else:
+                    true_label_single_ci = None
+            # Convert DataFrame to Series/ndarray for _explain_single_sample_ci
+            if isinstance(x, pd.DataFrame):
+                x_input: Union[np.ndarray, pd.Series] = x.iloc[0] if len(x) == 1 else x.iloc[0]
+            else:
+                x_input = x
             explanation = self._explain_single_sample_ci(
-                # type: ignore[bad-argument-type]
-                x,
+                x_input,
                 class_to_explain,
-                # type: ignore[bad-argument-type]
-                true_label,
+                true_label_single_ci,
                 alpha,
             )
             if not return_dict:
                 if isinstance(x, pd.Series):
                     sample_dict = {
-                        col: x[col].item() if hasattr(x[col], "item") else x[col] for col in x.index
+                        str(col): (
+                            x[col].item()
+                            if hasattr(x[col], "item") and callable(getattr(x[col], "item", None))
+                            else x[col]
+                        )
+                        for col in list(x.index)
                     }
                 elif isinstance(x, np.ndarray):
                     sample_dict = {
@@ -720,11 +790,13 @@ class WeightOfEvidence(BaseEstimator):
                 else:
                     raw_dict = x.to_dict() if hasattr(x, "to_dict") else dict(x)
                     sample_dict = {
-                        k: v.item() if hasattr(v, "item") else v for k, v in raw_dict.items()
+                        str(k): v.item() if hasattr(v, "item") else v for k, v in raw_dict.items()
                     }
                 sample_info = f"**Original Features**: {sample_dict}"
-                if true_label is not None:
-                    sample_info += f"\n**True Label**: {self._format_class_name(true_label)}"
+                if true_label_single_ci is not None:
+                    sample_info += (
+                        f"\n**True Label**: {self._format_class_name(true_label_single_ci)}"
+                    )
                 console.print(Panel(sample_info, title="🎯 Sample with Confidence Intervals"))
                 self._print_ci_explanation(explanation)
                 return None
@@ -745,7 +817,11 @@ class WeightOfEvidence(BaseEstimator):
         ci_upper_probs = ci_results[:, 1]  # Upper confidence bounds
         if self.classifier.y_prior_ is None:
             raise ValueError("Classifier must be fitted before explaining confidence intervals")
-        odds_prior = self.classifier.y_prior_ / (1 - self.classifier.y_prior_)
+        # Type narrowing: for binary classification, y_prior_ is a float
+        if isinstance(self.classifier.y_prior_, dict):
+            raise ValueError("Confidence intervals not supported for multiclass targets")
+        y_prior_float: float = float(self.classifier.y_prior_)
+        odds_prior = y_prior_float / (1 - y_prior_float)
         eps = 1e-15
         ci_lower_safe = np.clip(ci_lower_probs, eps, 1 - eps)
         ci_upper_safe = np.clip(ci_upper_probs, eps, 1 - eps)
@@ -903,8 +979,9 @@ class WeightOfEvidence(BaseEstimator):
             if hasattr(self, "_original_X_train"):
                 feature_names = list(self._original_X_train.columns)
             else:
+                if self.feature_names is None:
+                    raise ValueError("feature_names must be set")
                 feature_names = self.feature_names
-            # type: ignore[bad-argument-type], no-matching-overload
             X_df = pd.DataFrame(X, columns=list(feature_names))
         else:
             X_df = X.copy()
@@ -926,7 +1003,11 @@ class WeightOfEvidence(BaseEstimator):
         # Calculate WOE confidence intervals
         if self.classifier.y_prior_ is None:
             raise ValueError("Classifier must be fitted before explaining confidence intervals")
-        odds_prior = self.classifier.y_prior_ / (1 - self.classifier.y_prior_)
+        # Type narrowing: for binary classification, y_prior_ is a float
+        if isinstance(self.classifier.y_prior_, dict):
+            raise ValueError("Confidence intervals not supported for multiclass targets")
+        y_prior_float: float = float(self.classifier.y_prior_)
+        odds_prior = y_prior_float / (1 - y_prior_float)
 
         # Convert probability bounds back to WOE bounds
         eps = 1e-15

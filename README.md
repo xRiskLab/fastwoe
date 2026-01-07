@@ -1,4 +1,4 @@
-# FastWoe: Fast Weight of Evidence (WOE) encoding and inference
+# FastWoe: Fast Weight of Evidence (WOE) Encoding and Inference
 
 [![CI](https://github.com/xRiskLab/fastwoe/workflows/CI/badge.svg)](https://github.com/xRiskLab/fastwoe/actions)
 [![Compatibility](https://github.com/xRiskLab/fastwoe/workflows/Python%20Version%20Compatibility/badge.svg)](https://github.com/xRiskLab/fastwoe/actions)

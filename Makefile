@@ -32,6 +32,11 @@ typecheck:  ## Run type checking (lenient mode)
 	}
 	@echo "✅ Type checking passed"
 
+mypy:  ## Run mypy type checking
+	@echo "Running mypy type checking..."
+	@uv run mypy fastwoe/ --check-untyped-defs
+	@echo "✅ Mypy type checking passed"
+
 typecheck-strict:  ## Run type checking (strict mode)
 	@echo "Running ty type checking (strict mode)..."
 	@echo "🔒 Strict mode enabled"
@@ -40,14 +45,18 @@ typecheck-strict:  ## Run type checking (strict mode)
 		exit 1; \
 	}
 
-clean:  ## Clean build artifacts
+clean:  ## Clean build artifacts and virtual environments
 	rm -rf build/
 	rm -rf dist/
 	rm -rf *.egg-info/
+	rm -rf .venv/
+	rm -rf .venv.*/
 	find . -type d -name __pycache__ -exec rm -rf {} +
 	find . -type f -name "*.pyc" -delete
+	find . -type d -name ".pytest_cache" -exec rm -rf {} +
+	find . -type d -name ".ruff_cache" -exec rm -rf {} +
 
-check-all: format-check lint typecheck  ## Run all checks (format, lint, typecheck)
+check-all: format-check lint typecheck mypy  ## Run all checks (format, lint, typecheck, mypy)
 
 # CI-friendly target
 ci-check: format-check lint  ## Run CI checks (without strict type checking)
@@ -60,3 +69,6 @@ ci-check: format-check lint  ## Run CI checks (without strict type checking)
 		exit 0; \
 	}
 	@echo "✅ CI type checking passed"
+	@echo "🔍 Running mypy type checking..."
+	@uv run mypy fastwoe/ --check-untyped-defs
+	@echo "✅ Mypy type checking passed"

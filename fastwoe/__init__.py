@@ -35,7 +35,7 @@ except ImportError:
     plot_performance = _plotting_not_available
     visualize_woe = _plotting_not_available
 
-__version__ = "0.1.6a3"
+__version__ = "0.1.6"
 __author__ = "xRiskLab"
 __email__ = "contact@xrisklab.ai"
 

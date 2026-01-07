@@ -1,5 +1,37 @@
 # Changelog
 
+## Version 0.1.6 (2026-01-07)
+
+**Stable Release: Type Safety, Robustness & Code Quality** 🎯
+
+### ✨ Improvements
+- **Complete Type Safety**: All type checking passes with both `ty` and `mypy` type checkers
+  - Full type annotations throughout the codebase
+  - Proper type narrowing for `Optional` and `Union` types
+  - Handled complex pandas/numpy/faiss type scenarios
+- **Robust Numba Import**: Added fallback mechanism for numba/llvmlite compatibility issues
+  - Graceful degradation when numba fails to import (common in some Python 3.12 environments)
+  - Code continues to work without JIT compilation (with performance trade-off)
+  - Clear warning messages when fallback is used
+- **Enhanced Compatibility Testing**: Improved test robustness for cross-version compatibility
+  - Better error handling for known environment-specific issues
+  - More reliable test execution across Python and scikit-learn versions
+
+### 🔧 Technical Improvements
+- Added comprehensive type hints for better IDE support and static analysis
+- Improved error handling for edge cases (numba/llvmlite, matplotlib optional dependencies)
+- Enhanced code quality with strict type checking (no shortcuts or lenient mode)
+- Fixed all type-related errors across the codebase
+
+### 📦 Dependencies
+- No changes to core dependencies
+- Enhanced type checking support with `pandas-stubs`
+
+### 🐛 Bug Fixes
+- Fixed `UnboundLocalError` in `interpret_fastwoe.py` for `sample_series` variable
+- Fixed `AttributeError` for matplotlib `Axes` type hints when matplotlib is optional
+- Fixed compatibility test failures related to numba/llvmlite memory issues
+
 ## Version 0.1.6a3 (2025-12-14)
 
 **Alpha Release: CAP Curves, Styled Display, MSD Feature Selection & Enhanced Metrics** 📊

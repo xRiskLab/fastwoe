@@ -59,6 +59,14 @@ jobs:
         uv run python -c "import fastwoe; print(f'fastwoe version: {fastwoe.__version__}')"
         uv run python -m pytest tests/test_compatibility.py -v --tb=short
 
+    - name: Cleanup test artifacts
+      if: always()
+      run: |
+        rm -rf .pytest_cache/
+        rm -rf .venv/
+        rm -rf __pycache__/
+        find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+
     - name: Upload test results
       uses: actions/upload-artifact@v4
       if: always()

@@ -2,7 +2,12 @@
 
 import contextlib
 import warnings
-from typing import Any, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union, cast
+
+if TYPE_CHECKING:
+    import faiss  # noqa: F401
+    from faiss.extra_wrappers import Kmeans  # noqa: F401
+    from packaging import version  # noqa: F401
 
 import numpy as np
 import pandas as pd
@@ -48,11 +53,14 @@ class WoePreprocessor(BaseEstimator, TransformerMixin):
     # pylint: disable=invalid-name, unused-argument
     def fit(self, X: pd.DataFrame, y=None, cat_features: Union[list[str], None] = None):
         """Fit the preprocessor to identify top categories."""
-        self.cat_features_ = (
-            cat_features
-            if cat_features is not None
-            else X.select_dtypes(include=["object", "category"]).columns.tolist()
-        )
+        if cat_features is not None:
+            self.cat_features_ = cat_features
+        else:
+            numeric_cols: Any = X.select_dtypes(include=["object", "category"])
+            if hasattr(numeric_cols, "columns"):
+                self.cat_features_ = numeric_cols.columns.tolist()
+            else:
+                self.cat_features_ = []
 
         for col in self.cat_features_:
             vc = X[col].astype(str).value_counts(dropna=False).sort_values(ascending=False)
@@ -65,18 +73,23 @@ class WoePreprocessor(BaseEstimator, TransformerMixin):
 
             # Apply min_count filter
             vc_filtered = vc[vc >= self.min_count]
+            # Type assertion: vc[vc >= self.min_count] returns a Series
+            assert isinstance(vc_filtered, pd.Series), "vc_filtered should be a Series"
 
             # Fallback: if ALL categories are below min_count, keep the most frequent
             if vc_filtered.empty:
                 top_cats = [vc.idxmax()]
             elif self.top_p is not None:
                 # Calculate cumulative as percentage of ORIGINAL total
-                cumulative = vc_filtered.cumsum() / vc.sum()
+                cumulative: pd.Series = vc_filtered.cumsum() / vc.sum()
                 top_cats = cumulative[cumulative <= self.top_p].index.tolist() or [
                     vc_filtered.idxmax()
                 ]
             else:
-                top_cats = vc_filtered.nlargest(self.max_categories).index.tolist()
+                if self.max_categories is None:
+                    raise ValueError("max_categories must be set when top_p is None")
+                nlargest_result = vc_filtered.nlargest(self.max_categories)
+                top_cats = list(nlargest_result.index)
 
             self.category_maps[col] = set(top_cats)
 
@@ -86,6 +99,8 @@ class WoePreprocessor(BaseEstimator, TransformerMixin):
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
         """Transform by replacing rare categories with other_token."""
         X_ = X.copy()
+        if self.cat_features_ is None:
+            return X_
         for col in self.cat_features_:
             if col in X_.columns:
                 allowed = self.category_maps[col]
@@ -99,7 +114,8 @@ class WoePreprocessor(BaseEstimator, TransformerMixin):
     def fit_transform(self, X: pd.DataFrame, y=None, **fit_params) -> pd.DataFrame:
         """Fit and transform in one step."""
         cat_features = fit_params.get("cat_features", None)
-        return self.fit(X, y, cat_features).transform(X)
+        result = self.fit(X, y, cat_features).transform(X)
+        return pd.DataFrame(result)  # type: ignore[no-any-return]
 
     def get_category_mapping(self) -> dict:
         """Get mapping of kept categories per feature."""
@@ -107,7 +123,9 @@ class WoePreprocessor(BaseEstimator, TransformerMixin):
 
     def get_reduction_summary(self, X: pd.DataFrame) -> pd.DataFrame:  # pylint: disable=invalid-name
         """Get summary of cardinality reduction per feature."""
-        summary = []
+        summary: list[dict[str, Any]] = []
+        if self.cat_features_ is None:
+            return pd.DataFrame(summary)
         for col in self.cat_features_:
             if col in X.columns:
                 original_cats = X[col].nunique()
@@ -253,7 +271,7 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
         self.feature_stats_: dict[str, dict[str, Any]] = {}
         self.binners_: dict[str, Any] = {}  # Store fitted binners for numerical features
         self.binning_info_: dict[str, dict[str, Any]] = {}  # Store binning summary info
-        self.y_prior_: Optional[Union[float, Dict[Union[int, str], float]]] = None
+        self.y_prior_: Union[float, dict[Any, float]] = None  # type: ignore[assignment]
         self.odds_prior_: Optional[float] = None
         self.is_fitted_: bool = False
         self.is_continuous_target: Optional[bool] = None
@@ -279,17 +297,19 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
             else:
                 self.faiss_kwargs = default_kwargs
             # For backward compatibility, also set binner_kwargs and tree_kwargs
-            self.binner_kwargs = {}
-            self.tree_kwargs = {}
+            self.binner_kwargs: dict[str, Any] = {}
+            self.tree_kwargs: dict[str, Any] = {}
         elif binning_method == "kbins":
             # KBinsDiscretizer parameters
-            default_kwargs = {
+            kbins_default_kwargs: dict[str, Any] = {
                 "n_bins": 5,
                 "strategy": "quantile",
                 "encode": "ordinal",
             }
             self.binner_kwargs = (
-                default_kwargs if binner_kwargs is None else {**default_kwargs, **binner_kwargs}
+                kbins_default_kwargs
+                if binner_kwargs is None
+                else {**kbins_default_kwargs, **binner_kwargs}
             )
             # For backward compatibility, also set tree_kwargs and faiss_kwargs to empty
             self.tree_kwargs = {}
@@ -419,7 +439,7 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
         else:
             variance = 1.0 / good_count + 1.0 / bad_count
 
-        return np.sqrt(variance)
+        return float(np.sqrt(variance))  # type: ignore[no-any-return]
 
     def _calculate_woe_ci(self, woe_value, se_value, alpha=0.05):
         """
@@ -572,7 +592,7 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
             # For multiclass, we need to pass the class-specific prior
             woe_values = mapping_df["woe"].values
         else:
-            if self.y_prior_ is None:
+            if self.y_prior_ is None or isinstance(self.y_prior_, dict):
                 raise ValueError("Model must be fitted before calculating WOE values")
             odds_prior = self.y_prior_ / (1 - self.y_prior_)
             enc = self.encoders_[col]
@@ -676,9 +696,9 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
         self.is_binary_target = None
         self.is_multiclass_target = None
 
-        self.is_continuous_target = is_continuous
-        self.is_binary_target = is_binary
-        self.is_multiclass_target = is_multiclass
+        self.is_continuous_target = bool(is_continuous)
+        self.is_binary_target = bool(is_binary)
+        self.is_multiclass_target = bool(is_multiclass)
 
         # Update encoder_kwargs based on target type
         if is_continuous:
@@ -846,6 +866,8 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
             raise ValueError("Model must be fitted before transforming data")
 
         if not self.is_multiclass_target:
+            if self.y_prior_ is None or isinstance(self.y_prior_, dict):
+                raise ValueError("y_prior_ must be a float for binary/continuous targets")
             odds_prior = self.y_prior_ / (1 - self.y_prior_)
         woe_df = pd.DataFrame(index=X.index)
 
@@ -896,6 +918,7 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
                         else:
                             col_values = np.array(col_data)
                         data = col_values.astype(np.float32).reshape(-1, 1)
+                        # type: ignore
                         _, labels = faiss_model.index.search(data, 1)
                         cluster_labels = labels.flatten() + 1  # Convert to 1-based indexing
 
@@ -984,7 +1007,7 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
 
     def fit_transform(self, X: pd.DataFrame, y=None, **_fit_params) -> pd.DataFrame:
         """Fit and transform in one step."""
-        return self.fit(X, y).transform(X)
+        return self.fit(X, y).transform(X)  # type: ignore[no-any-return]
 
     def get_mapping(
         self, feature: str, class_label: Optional[Union[int, str]] = None
@@ -1092,8 +1115,8 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
             # Convert WOE SE to probability SE using delta method
             # For probability p, if WOE = log(p/(1-p)), then dWOE/dp = 1/(p*(1-p))
             # So SE(p) = SE(WOE) * p * (1-p)
-            probabilities = mapping["event_rate"].values
-            woe_se = mapping["woe_se"].values
+            probabilities = np.asarray(mapping["event_rate"].values, dtype=float)
+            woe_se = np.asarray(mapping["woe_se"].values, dtype=float)
             prob_se = woe_se * probabilities * (1 - probabilities)
             prob_mapping["probability_se"] = prob_se
 
@@ -1120,9 +1143,10 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
     def get_feature_summary(self) -> pd.DataFrame:
         """Get a summary table of all features ranked by predictive power."""
         stats_df = self.get_feature_stats()
-        return stats_df.sort_values("gini", ascending=False)[
+        result = stats_df.sort_values("gini", ascending=False)[
             ["feature", "gini", "iv", "n_categories"]
         ].round(4)
+        return pd.DataFrame(result)
 
     def get_iv_analysis(
         self,
@@ -1217,13 +1241,16 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
         if self.is_multiclass_target:
             return self._predict_multiclass_proba(X)
         # Binary case
-        if self.y_prior_ is None:
+        if self.y_prior_ is None or isinstance(self.y_prior_, dict):
+            raise ValueError("Model must be fitted before predicting probabilities")
+        if self.odds_prior_ is None:
             raise ValueError("Model must be fitted before predicting probabilities")
         woe_score = X_woe.sum(axis=1) + np.log(self.odds_prior_)
 
         # Convert to probability (simple sigmoid transformation)
-        prob = sigmoid(woe_score)
-        return np.column_stack([1 - prob, prob])
+        prob = sigmoid(woe_score)  # type: ignore[no-any-return]
+        result = np.column_stack([1 - prob, prob])
+        return np.asarray(result, dtype=float)  # type: ignore[no-any-return]
 
     def predict_ci(self, X: Union[pd.DataFrame, np.ndarray], alpha=0.05) -> np.ndarray:
         """
@@ -1295,7 +1322,9 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
         woe_score_upper = woe_ci_upper.sum(axis=1)
 
         # Convert to probability scale
-        if self.y_prior_ is None:
+        if self.y_prior_ is None or isinstance(self.y_prior_, dict):
+            raise ValueError("Model must be fitted before predicting confidence intervals")
+        if self.odds_prior_ is None:
             raise ValueError("Model must be fitted before predicting confidence intervals")
         logit_lower = woe_score_lower + np.log(self.odds_prior_)
         logit_upper = woe_score_upper + np.log(self.odds_prior_)
@@ -1304,7 +1333,8 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
         prob_upper = sigmoid(logit_upper)
 
         # Return numpy array with shape (n_samples, 2)
-        return np.column_stack([prob_lower, prob_upper])
+        result = np.column_stack([prob_lower, prob_upper])
+        return np.asarray(result, dtype=float)  # type: ignore[no-any-return]
 
     def predict_proba_class(
         self, X: Union[pd.DataFrame, np.ndarray], class_label: Union[int, str]
@@ -1413,7 +1443,10 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
         X_woe = self.transform(X)
 
         # Filter to specific column if requested
-        cols_to_process = [col_name] if col_name and col_name in X.columns else X.columns
+        if col_name and col_name in X.columns:
+            cols_to_process: list[str] = [col_name]
+        else:
+            cols_to_process = list(X.columns)
         cols_to_process = [col for col in cols_to_process if col in self.encoders_]
 
         # Calculate standardized WOE scores (z-scores)
@@ -1482,7 +1515,8 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
             return self._predict_multiclass(X)
         # Binary case
         woe_score = self.transform(X).sum(axis=1)
-        return (woe_score > 0).astype(int).values
+        result = (woe_score > 0).astype(int).values
+        return np.asarray(result, dtype=int)  # type: ignore[no-any-return]
 
     def _detect_numerical_features(self, X: pd.DataFrame) -> list[str]:
         """
@@ -1517,16 +1551,26 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
 
         if mask_missing.any():
             # Check if we have enough non-missing values
-            X_fit = X_col[~mask_missing]
-            if len(X_fit) == 0:
+            X_fit_raw = X_col[~mask_missing]
+            if len(X_fit_raw) == 0:
                 raise ValueError(f"Column '{col}' has no non-missing values for binning")
+            # Ensure X_fit is a DataFrame
+            if isinstance(X_fit_raw, pd.DataFrame):
+                X_fit: pd.DataFrame = X_fit_raw
+            else:
+                X_fit = pd.DataFrame(X_fit_raw)
         else:
-            X_fit = X_col
+            # Ensure X_fit is a DataFrame
+            if isinstance(X_col, pd.DataFrame):
+                X_fit = X_col
+            else:
+                X_fit = pd.DataFrame(X_col)
 
+        X_col_df = pd.DataFrame(X_col)
         if self.binning_method == "kbins":
-            return self._bin_with_kbins(X_col, col, mask_missing, X_fit)
+            return self._bin_with_kbins(X_col_df, col, mask_missing, X_fit)
         elif self.binning_method == "faiss_kmeans":
-            return self._bin_with_faiss_kmeans(X_col, col, mask_missing, X_fit)
+            return self._bin_with_faiss_kmeans(X_col_df, col, mask_missing, X_fit)
         else:  # tree method
             # Determine if target is continuous (proportions) or binary
             unique_targets = y.nunique()
@@ -1538,12 +1582,12 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
                 and unique_targets > 2
             )
             return self._bin_with_tree(
-                X_col,
+                pd.DataFrame(X_col),
                 col,
                 y,
                 mask_missing,
                 X_fit,
-                is_continuous,
+                bool(is_continuous),
             )
 
     def _bin_with_kbins(
@@ -1661,9 +1705,9 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
         # Create bin edges from split points
         col_data = X_fit[col]
         if hasattr(col_data, "values"):
-            col_values = col_data.values
+            col_values = np.asarray(col_data.values, dtype=float)
         else:
-            col_values = np.array(col_data)
+            col_values = np.asarray(col_data, dtype=float)
         bin_edges = self._create_bin_edges_from_splits(split_points, col_values)
 
         # Create bin labels
@@ -1768,7 +1812,13 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
 
         # Assign cluster labels
         n_samples = data.shape[0]
-        distances, labels = faiss_kmeans.index.search(data, 1)
+        # FAISS search returns (distances, labels) tuple
+        # The faiss.extra_wrappers.Kmeans.search method signature differs from base FAISS
+        # The wrapper provides a simplified interface that returns (distances, labels)
+        # The type stubs don't reflect the wrapper's simplified interface
+        # Use cast to work around type checker limitations
+        search_method = cast(Any, faiss_kmeans.index.search)
+        distances, labels = search_method(data, 1)  # type: ignore
         cluster_labels = labels.flatten() + 1  # Convert to 1-based indexing
 
         # Create bin edges from cluster centroids
@@ -1862,7 +1912,7 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
                 extract_splits_recursive(tree_obj.children_right[node_id], depth + 1)
 
         extract_splits_recursive(0)
-        return np.array(sorted(split_points))
+        return np.asarray(sorted(split_points), dtype=float)  # type: ignore[no-any-return]
 
     def _create_bin_edges_from_splits(
         self, split_points: np.ndarray, data: np.ndarray
@@ -1870,23 +1920,25 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
         """Create bin edges from split points, including min and max boundaries."""
         if len(split_points) == 0:
             # No splits found, create single bin
-            return np.array([-np.inf, np.inf])
+            result = np.array([-np.inf, np.inf], dtype=float)
+            return result  # type: ignore[no-any-return]
 
         # Remove duplicate split points and sort
         unique_splits = np.unique(split_points)
 
         # Ensure we have valid splits that actually divide the data
-        min_val = np.min(data)
-        max_val = np.max(data)
+        min_val: float = float(np.min(data))
+        max_val: float = float(np.max(data))
 
         # Filter out splits that are at the boundaries (they don't create meaningful bins)
         valid_splits = unique_splits[(unique_splits > min_val) & (unique_splits < max_val)]
 
         if len(valid_splits) == 0:
             # No valid splits found, create single bin
-            return np.array([-np.inf, np.inf])
+            result = np.array([-np.inf, np.inf], dtype=float)
+            return result  # type: ignore[no-any-return]
 
-        return np.concatenate([[-np.inf], valid_splits, [np.inf]])
+        return np.asarray(np.concatenate([[-np.inf], valid_splits, [np.inf]]), dtype=float)  # type: ignore[no-any-return]
 
     def get_binning_summary(self) -> pd.DataFrame:
         """
@@ -2019,4 +2071,7 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
         edges[0] = -np.inf
         edges[-1] = np.inf
 
-        return edges if as_array else edges.tolist()
+        if as_array:
+            return np.asarray(edges, dtype=float)  # type: ignore[no-any-return]
+        else:
+            return edges.tolist()  # type: ignore[no-any-return]

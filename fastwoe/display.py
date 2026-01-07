@@ -4,202 +4,255 @@ Display utilities for rich HTML rendering of DataFrames in Jupyter notebooks.
 Provides styled HTML output similar to scikit-learn's estimator HTML representation.
 """
 
+import uuid
 from functools import wraps
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import pandas as pd
 
 
-def _get_light_mode_css() -> str:
+def _get_light_mode_css(container_id: str) -> str:
     """Get light mode CSS based on baseline foundation design."""
-    return """
+    return f"""
     <style>
-    .fastwoe-container {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-        margin: 20px 0;
+    #{container_id}.fastwoe-container {{
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        margin: 20px auto;
         padding: 0;
         background: #FFFFFF;
-    }
-    .fastwoe-title {
+        width: 95%;
+        max-width: 95%;
+        height: auto;
+        box-sizing: border-box;
+        overflow-x: auto;
+        overflow-y: visible;
+        display: block;
+        position: relative;
+        min-width: 0;
+        border: 1px solid #e6eaed;
+        border-radius: 4px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    }}
+    #{container_id} .fastwoe-title {{
         font-size: 18px;
-        font-weight: 500;
-        color: #202020;
+        font-weight: 600;
+        color: #383a42;
         margin-bottom: 8px;
         padding: 12px 16px;
-        background: #FCFCFC;
-        border-left: 3px solid #646464;
-        border-radius: 0;
-    }
-    .fastwoe-subtitle {
+        background: #f8f9fa;
+        border-left: 3px solid #528bff;
+        border-radius: 4px 0 0 0;
+    }}
+    #{container_id} .fastwoe-subtitle {{
         font-size: 13px;
-        color: #838383;
+        color: #5c6370;
         margin-bottom: 12px;
         padding: 0 16px;
         font-style: italic;
-    }
-    .fastwoe-table {
+    }}
+    #{container_id} .fastwoe-table {{
         border-collapse: collapse;
         width: 100%;
         font-size: 13px;
-        border: 1px solid #E8E8E8;
+        border: none;
         border-radius: 0;
         background: #FFFFFF;
-    }
-    .fastwoe-table thead {
-        background: #FCFCFC;
-        border-bottom: 2px solid #E8E8E8;
-    }
-    .fastwoe-table th {
-        padding: 12px 16px;
-        text-align: left;
+        table-layout: auto;
+        margin: 0;
+        box-sizing: border-box;
+    }}
+    #{container_id} .fastwoe-table thead {{
+        background: #f8f9fa;
+        border-bottom: 2px solid #e6eaed;
+        box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05);
+    }}
+    #{container_id} .fastwoe-table th {{
+        padding: 12px 12px;
+        text-align: center;
         font-weight: 500;
         text-transform: uppercase;
         font-size: 11px;
         letter-spacing: 0.5px;
-        color: #646464;
-    }
-    .fastwoe-table td {
-        padding: 10px 16px;
-        border-bottom: 1px solid #E8E8E8;
-        color: #444444;
+        color: #383a42;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+        white-space: normal;
+        box-sizing: border-box;
+    }}
+    #{container_id} .fastwoe-table td {{
+        padding: 10px 12px;
+        border-bottom: 1px solid #e6eaed;
+        color: #383a42;
         background: #FFFFFF;
-    }
-    .fastwoe-table tbody tr:nth-child(even) td {
-        background-color: #FCFCFC;
-    }
-    .fastwoe-table tbody tr:hover td {
-        background-color: #F0F0F0;
-        transition: background-color 0.2s cubic-bezier(0.32, 0.72, 0, 1);
-    }
-    .fastwoe-table tbody tr:last-child td {
+        font-size: 13px;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+        white-space: normal;
+        box-sizing: border-box;
+    }}
+    #{container_id} .fastwoe-table tbody tr:nth-child(even) td {{
+        background-color: #f8f9fa;
+    }}
+    #{container_id} .fastwoe-table tbody tr:hover td {{
+        background-color: #e6eaed;
+        transition: background-color 0.15s cubic-bezier(0.32, 0.72, 0, 1);
+        cursor: default;
+    }}
+    #{container_id} .fastwoe-table tbody tr:last-child td {{
         border-bottom: none;
-    }
-    .numeric-cell {
-        font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+    }}
+    #{container_id} .numeric-cell {{
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
         text-align: right;
-    }
-    .highlight-high {
+    }}
+    #{container_id} .highlight-high {{
         background: rgba(76, 175, 80, 0.12) !important;
         font-weight: 500;
-    }
-    .highlight-medium {
+    }}
+    #{container_id} .highlight-medium {{
         background: rgba(255, 193, 7, 0.12) !important;
-    }
-    .highlight-low {
+    }}
+    #{container_id} .highlight-low {{
         background: rgba(244, 67, 54, 0.12) !important;
-    }
-    .significance-badge {
+    }}
+    #{container_id} .significance-badge {{
         display: inline-block;
         padding: 3px 8px;
         border-radius: 16px;
         font-size: 11px;
         font-weight: 500;
-    }
-    .sig-yes {
+    }}
+    #{container_id} .sig-yes {{
         background-color: rgba(76, 175, 80, 0.15);
         color: #2d5016;
-    }
-    .sig-no {
+    }}
+    #{container_id} .sig-no {{
         background-color: rgba(244, 67, 54, 0.15);
         color: #7f1d1d;
-    }
+    }}
     </style>
     """
 
 
-def _get_dark_mode_css() -> str:
+def _get_dark_mode_css(container_id: str) -> str:
     """Get dark mode CSS based on baseline foundation design."""
-    return """
+    return f"""
     <style>
-    .fastwoe-container {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-        margin: 20px 0;
+    #{container_id}.fastwoe-container {{
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        margin: 20px auto;
         padding: 0;
-        background: #0B0B0B;
-    }
-    .fastwoe-title {
+        background: #1e1e1e;
+        width: 95%;
+        max-width: 95%;
+        height: auto;
+        box-sizing: border-box;
+        overflow-x: auto;
+        overflow-y: visible;
+        display: block;
+        position: relative;
+        min-width: 0;
+        border: 1px solid #3b4048;
+        border-radius: 4px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    }}
+    #{container_id} .fastwoe-title {{
         font-size: 18px;
-        font-weight: 500;
-        color: #EEEEEE;
+        font-weight: 600;
+        color: #abb2bf;
         margin-bottom: 8px;
         padding: 12px 16px;
-        background: #161616;
-        border-left: 3px solid #B5B5B5;
-        border-radius: 0;
-    }
-    .fastwoe-subtitle {
+        background: #282c34;
+        border-left: 3px solid #528bff;
+        border-radius: 4px 0 0 0;
+    }}
+    #{container_id} .fastwoe-subtitle {{
         font-size: 13px;
-        color: #7B7B7B;
+        color: #5c6370;
         margin-bottom: 12px;
         padding: 0 16px;
         font-style: italic;
-    }
-    .fastwoe-table {
+    }}
+    #{container_id} .fastwoe-table {{
         border-collapse: collapse;
         width: 100%;
         font-size: 13px;
-        border: 1px solid #222222;
+        border: none;
         border-radius: 0;
-        background: #0B0B0B;
-    }
-    .fastwoe-table thead {
-        background: #161616;
-        border-bottom: 2px solid #222222;
-    }
-    .fastwoe-table th {
-        padding: 12px 16px;
-        text-align: left;
+        background: #1e1e1e;
+        table-layout: auto;
+        margin: 0;
+        box-sizing: border-box;
+    }}
+    #{container_id} .fastwoe-table thead {{
+        background: #282c34;
+        border-bottom: 2px solid #3b4048;
+        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05);
+    }}
+    #{container_id} .fastwoe-table th {{
+        padding: 12px 12px;
+        text-align: center;
         font-weight: 500;
         text-transform: uppercase;
         font-size: 11px;
         letter-spacing: 0.5px;
-        color: #B5B5B5;
-    }
-    .fastwoe-table td {
-        padding: 10px 16px;
-        border-bottom: 1px solid #222222;
-        color: #C8C8C8;
-        background: #0B0B0B;
-    }
-    .fastwoe-table tbody tr:nth-child(even) td {
-        background-color: #0F0F0F;
-    }
-    .fastwoe-table tbody tr:hover td {
-        background-color: #222222;
-        transition: background-color 0.2s cubic-bezier(0.32, 0.72, 0, 1);
-    }
-    .fastwoe-table tbody tr:last-child td {
+        color: #abb2bf;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+        white-space: normal;
+        box-sizing: border-box;
+    }}
+    #{container_id} .fastwoe-table td {{
+        padding: 10px 12px;
+        border-bottom: 1px solid #3b4048;
+        color: #abb2bf;
+        background: #1e1e1e;
+        font-size: 13px;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+        white-space: normal;
+        box-sizing: border-box;
+    }}
+    #{container_id} .fastwoe-table tbody tr:nth-child(even) td {{
+        background-color: #282c34;
+    }}
+    #{container_id} .fastwoe-table tbody tr:hover td {{
+        background-color: #3e4451;
+        transition: background-color 0.15s cubic-bezier(0.32, 0.72, 0, 1);
+        cursor: default;
+    }}
+    #{container_id} .fastwoe-table tbody tr:last-child td {{
         border-bottom: none;
-    }
-    .numeric-cell {
-        font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+    }}
+    #{container_id} .numeric-cell {{
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
         text-align: right;
-    }
-    .highlight-high {
+    }}
+    #{container_id} .highlight-high {{
         background: rgba(76, 175, 80, 0.2) !important;
         font-weight: 500;
-    }
-    .highlight-medium {
+    }}
+    #{container_id} .highlight-medium {{
         background: rgba(255, 193, 7, 0.2) !important;
-    }
-    .highlight-low {
+    }}
+    #{container_id} .highlight-low {{
         background: rgba(244, 67, 54, 0.2) !important;
-    }
-    .significance-badge {
+    }}
+    #{container_id} .significance-badge {{
         display: inline-block;
         padding: 3px 8px;
         border-radius: 16px;
         font-size: 11px;
         font-weight: 500;
-    }
-    .sig-yes {
+    }}
+    #{container_id} .sig-yes {{
         background-color: rgba(76, 175, 80, 0.25);
         color: #69db7c;
-    }
-    .sig-no {
+    }}
+    #{container_id} .sig-no {{
         background-color: rgba(244, 67, 54, 0.25);
         color: #ff6b6b;
-    }
+    }}
     </style>
     """
 
@@ -290,13 +343,24 @@ def render_dataframe_html(
         HTML string with styled table
     """
     # CSS styling inspired by baseline foundation design system
-    if theme == "dark":
-        css = _get_dark_mode_css()
-    else:
-        css = _get_light_mode_css()
+    # Normalize theme to lowercase for case-insensitive matching
+    theme_normalized = theme.lower() if theme else "light"
 
-    # Start HTML
-    html_parts = [css, '<div class="fastwoe-container">']
+    # Generate unique ID for this table instance to scope CSS
+    container_id = f"fastwoe-{uuid.uuid4().hex[:8]}"
+
+    # Get CSS scoped to this container
+    css = (
+        _get_dark_mode_css(container_id)
+        if theme_normalized == "dark"
+        else _get_light_mode_css(container_id)
+    )
+
+    # Start HTML with explicit width constraint (95% of canvas with scrollable area)
+    html_parts = [
+        css,
+        f'<div id="{container_id}" class="fastwoe-container" style="overflow-x: auto; -webkit-overflow-scrolling: touch;">',
+    ]
 
     # Add title if provided
     if title:
@@ -312,7 +376,11 @@ def render_dataframe_html(
 
     # Determine which columns to highlight
     if highlight_cols is None:
-        highlight_cols = df.select_dtypes(include=["float64", "int64"]).columns.tolist()
+        numeric_cols: Any = df.select_dtypes(include=["float64", "int64"])
+        if hasattr(numeric_cols, "columns"):
+            highlight_cols = numeric_cols.columns.tolist()
+        else:
+            highlight_cols = []
 
     # Calculate value ranges for gradient highlighting
     col_ranges = {}
