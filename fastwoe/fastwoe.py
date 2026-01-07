@@ -697,7 +697,7 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
         self.is_multiclass_target = None
 
         self.is_continuous_target = bool(is_continuous)
-        self.is_binary_target = bool(is_binary)
+        self.is_binary_target = is_binary
         self.is_multiclass_target = bool(is_multiclass)
 
         # Update encoder_kwargs based on target type
@@ -865,10 +865,10 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
         if not self.is_fitted_:
             raise ValueError("Model must be fitted before transforming data")
 
-        if not self.is_multiclass_target:
-            if self.y_prior_ is None or isinstance(self.y_prior_, dict):
-                raise ValueError("y_prior_ must be a float for binary/continuous targets")
-            odds_prior = self.y_prior_ / (1 - self.y_prior_)
+        if not self.is_multiclass_target and (
+            self.y_prior_ is None or isinstance(self.y_prior_, dict)
+        ):
+            raise ValueError("y_prior_ must be a float for binary/continuous targets")
         woe_df = pd.DataFrame(index=X.index)
 
         # Apply binning to numerical features if they were binned during fit
