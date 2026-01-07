@@ -172,6 +172,7 @@ dev = [
     "seaborn>=0.11.0",
     "rich>=13.7.0", # Required for pretty printing
     "ty>=0.0.1a21",
+    "mypy>=1.11.0", # Type checker
     "faiss-cpu>=1.12.0", # Required for FAISS tests
     "pandas-stubs>=2.0.0", # Type stubs for pandas (for mypy/type checking)
 ]

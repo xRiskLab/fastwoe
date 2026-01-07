@@ -697,7 +697,7 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
         self.is_multiclass_target = None
 
         self.is_continuous_target = bool(is_continuous)
-        self.is_binary_target = is_binary
+        self.is_binary_target = bool(is_binary)
         self.is_multiclass_target = bool(is_multiclass)
 
         # Update encoder_kwargs based on target type
@@ -1730,7 +1730,7 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
             # Bin the non-missing values
             col_data = X_fit[col]
             if hasattr(col_data, "values"):
-                col_values = col_data.values
+                col_values = np.asarray(col_data.values, dtype=float)
             else:
                 col_values = np.array(col_data)
             # Custom binning logic to handle right-inclusive intervals correctly

@@ -5,6 +5,8 @@ This module provides a standardized logger setup with RichHandler for consistent
 logging across the entire codebase.
 """
 
+from typing import Any
+
 _HAS_LOGGING = False
 
 try:
@@ -22,7 +24,7 @@ except ImportError:
 
         info = debug = warning = error = critical = _noop
 
-    logger = _NullLogger()
+    logger: Any = _NullLogger()  # type: ignore[assignment, no-redef]
 
 
 def setup_logger(level: str = "INFO") -> None:

@@ -16,14 +16,17 @@ from scipy.special import expit, logit
 if TYPE_CHECKING:
     from matplotlib import pyplot as plt
     from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
 else:
     # Runtime import - needed for actual plotting
     try:
         from matplotlib import pyplot as plt  # noqa: F401
         from matplotlib.axes import Axes  # noqa: F401
+        from matplotlib.figure import Figure  # noqa: F401
     except ImportError:
         plt = None  # type: ignore[assignment]
         Axes = Any  # type: ignore[assignment, misc]
+        Figure = Any  # type: ignore[assignment, misc]
 
 from .metrics import somersd_yx
 
@@ -134,7 +137,11 @@ def plot_performance(
         fig, ax1 = plt.subplots(1, 1, figsize=figsize, dpi=dpi)
     else:
         ax1 = ax
-        fig = ax1.get_figure()
+        fig_raw = ax1.get_figure()
+        if fig_raw is None:
+            raise ValueError("Could not get figure from axes")
+        # Type narrowing for matplotlib figure
+        fig = fig_raw  # type: ignore[assignment, no-redef]
 
     # CAP curve for binary and continuous targets
     n = len(y_true)
