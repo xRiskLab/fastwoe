@@ -21,6 +21,12 @@ jobs:
           - python-version: '3.12'
             python-version-short: 'py312'
             sklearn-version: '1.6.1'
+          - python-version: '3.13'
+            python-version-short: 'py313'
+            sklearn-version: 'latest'
+          - python-version: '3.14'
+            python-version-short: 'py314'
+            sklearn-version: 'latest'
 
     steps:
     - uses: actions/checkout@v4

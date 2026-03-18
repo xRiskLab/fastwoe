@@ -16,6 +16,7 @@ Features:
 from .display import StyledDataFrame, iv_styled, style_iv_analysis, style_woe_mapping, styled
 from .fastwoe import FastWoe, WoePreprocessor
 from .interpret_fastwoe import WeightOfEvidence
+from .metrics import gini_contributions
 
 # Optional plotting functionality
 try:
@@ -35,7 +36,7 @@ except ImportError:
     plot_performance = _plotting_not_available
     visualize_woe = _plotting_not_available
 
-__version__ = "0.1.6"
+__version__ = "0.1.7a0"
 __author__ = "xRiskLab"
 __email__ = "contact@xrisklab.ai"
 
@@ -50,4 +51,5 @@ __all__ = [
     "style_woe_mapping",
     "styled",
     "iv_styled",
+    "gini_contributions",
 ]

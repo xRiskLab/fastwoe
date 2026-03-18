@@ -132,7 +132,7 @@ def _somers_yx_core(y: np.ndarray, x: np.ndarray) -> tuple[float, int, int, int,
     m = len(uniq)
 
     # ranks array
-    y_rank = np.empty(n, dtype=np.int64)
+    y_rank: np.ndarray = np.empty(n, dtype=np.int64)
     for i in range(n):
         lo, hi = 0, m
         v = y[i]
@@ -145,7 +145,7 @@ def _somers_yx_core(y: np.ndarray, x: np.ndarray) -> tuple[float, int, int, int,
         y_rank[i] = lo + 1
 
     idx = np.argsort(x, kind="mergesort")
-    bit = np.zeros(m, dtype=np.int64)
+    bit: np.ndarray = np.zeros(m, dtype=np.int64)
     processed = 0
     S = 0
 
@@ -208,7 +208,7 @@ def _somers_xy_core(y: np.ndarray, x: np.ndarray) -> tuple[float, int, int, int,
     m = len(uniq)
 
     # Rank Y values
-    y_rank = np.empty(n, dtype=np.int64)
+    y_rank: np.ndarray = np.empty(n, dtype=np.int64)
     for i in range(n):
         lo, hi = 0, m
         v = y[i]
@@ -222,7 +222,7 @@ def _somers_xy_core(y: np.ndarray, x: np.ndarray) -> tuple[float, int, int, int,
 
     # Sort by X values and process with Fenwick tree
     idx = np.argsort(x, kind="mergesort")
-    bit = np.zeros(m, dtype=np.int64)
+    bit: np.ndarray = np.zeros(m, dtype=np.int64)
     processed = 0
     S = 0
 
@@ -373,6 +373,79 @@ def somersd_pairwise(
     statistic = result.statistic
 
     return None if np.isnan(statistic) else float(statistic)
+
+
+def gini_contributions(
+    scores: np.ndarray,
+    labels: np.ndarray,
+) -> tuple[np.ndarray, float]:
+    """Calculate each observation's contribution to the Gini coefficient.
+
+    Assigns a signed contribution to every observation based on how well it is
+    ranked relative to observations of the opposite class (Somers' D definition,
+    so ties receive zero credit).
+
+    - A **positive** (label=1) earns credit for each negative it outranks and
+      gets penalised for each negative that outranks it.
+    - A **negative** (label=0) earns credit for each positive that outranks it
+      and gets penalised for each positive it outranks.
+
+    The contributions are normalised so that their sum equals the overall Gini
+    coefficient (Somers' D_{Y|X}), making the array directly comparable to
+    SHAP-style decompositions.
+
+    The algorithm is O(n log n) via ``np.searchsorted`` on sorted sub-arrays,
+    avoiding the O(n²) loop of a naive pairwise implementation.
+
+    Args:
+        scores: Model scores, shape (n,).
+        labels: Binary labels (0/1), shape (n,).
+
+    Returns:
+        contributions: Per-observation contributions, shape (n,).
+            ``contributions.sum()`` equals ``gini``.
+        gini: Overall Gini coefficient (Somers' D_{Y|X}).
+
+    Examples:
+        >>> import numpy as np
+        >>> scores = np.array([0.9, 0.8, 0.4, 0.3])
+        >>> labels = np.array([1, 1, 0, 0])
+        >>> contribs, gini = gini_contributions(scores, labels)
+        >>> np.isclose(contribs.sum(), gini)
+        True
+    """
+    scores = np.asarray(scores, dtype=np.float64)
+    labels = np.asarray(labels, dtype=np.int32)
+
+    n_pos: int = int(np.sum(labels))
+    n_neg: int = len(labels) - n_pos
+    n_pairs: int = n_pos * n_neg
+
+    if n_pairs == 0:
+        return np.zeros(len(scores), dtype=np.float64), 0.0
+
+    pos_mask = labels == 1
+    neg_mask = ~pos_mask
+
+    pos_scores_sorted = np.sort(scores[pos_mask])
+    neg_scores_sorted = np.sort(scores[neg_mask])
+
+    contributions: np.ndarray = np.empty(len(scores), dtype=np.float64)
+
+    # Positives: credit for each negative they outrank, penalty for each that outranks them
+    pos_scores = scores[pos_mask]
+    concordant_pos = np.searchsorted(neg_scores_sorted, pos_scores, side="left")
+    discordant_pos = n_neg - np.searchsorted(neg_scores_sorted, pos_scores, side="right")
+    contributions[pos_mask] = (concordant_pos - discordant_pos) / (2 * n_pairs)
+
+    # Negatives: credit for each positive that outranks them, penalty for each they outrank
+    neg_scores = scores[neg_mask]
+    concordant_neg = n_pos - np.searchsorted(pos_scores_sorted, neg_scores, side="right")
+    discordant_neg = np.searchsorted(pos_scores_sorted, neg_scores, side="left")
+    contributions[neg_mask] = (concordant_neg - discordant_neg) / (2 * n_pairs)
+
+    gini = float(contributions.sum())
+    return contributions, gini
 
 
 def somersd_clustered_matrix(

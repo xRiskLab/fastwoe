@@ -62,6 +62,7 @@ class WoePreprocessor(BaseEstimator, TransformerMixin):
             else:
                 self.cat_features_ = []
 
+        assert self.cat_features_ is not None
         for col in self.cat_features_:
             vc = X[col].astype(str).value_counts(dropna=False).sort_values(ascending=False)
             original_cats = len(vc)
@@ -1734,7 +1735,7 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
             else:
                 col_values = np.array(col_data)
             # Custom binning logic to handle right-inclusive intervals correctly
-            binned_values = np.zeros(len(col_values), dtype=int)
+            binned_values: np.ndarray = np.zeros(len(col_values), dtype=int)
             for i, val in enumerate(col_values):
                 for bin_idx in range(len(bin_edges) - 1):
                     if bin_edges[bin_idx] < val <= bin_edges[bin_idx + 1]:

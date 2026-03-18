@@ -1,6 +1,6 @@
 # FastWoe Development Makefile
 
-.PHONY: help install test lint format typecheck typecheck-strict clean check-all
+.PHONY: help install test test-all lint format typecheck typecheck-strict clean check-all
 
 help:  ## Show this help message
 	@echo "FastWoe Development Commands:"
@@ -10,8 +10,16 @@ help:  ## Show this help message
 install:  ## Install development dependencies
 	uv sync --dev
 
-test:  ## Run tests
+test:  ## Run tests (current Python)
 	uv run pytest
+
+test-all:  ## Run tests across all supported Python versions (3.9 → 3.14)
+	@for ver in 3.9 3.10 3.11 3.12 3.13 3.14; do \
+		echo "\n▶ Python $$ver"; \
+		uv run --python $$ver pytest tests/ -q -m "not compatibility" || exit 1; \
+	done
+	@echo "\n✅ All versions passed"
+
 
 lint:  ## Run linting
 	uv run ruff check fastwoe

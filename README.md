@@ -469,7 +469,7 @@ print(summary[['feature', 'monotonic_constraint']])
 - Performance may be slightly different but more interpretable
 - Essential for regulatory compliance in credit scoring
 
-For a complete example, see [examples/monotonic_constraints_example.py](examples/monotonic_constraints_example.py).
+For a complete example, see [examples/scripts/fastwoe_monotonic.py](examples/scripts/fastwoe_monotonic.py).
 
 ## 📋 API Reference
 
