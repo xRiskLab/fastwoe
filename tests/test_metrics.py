@@ -121,7 +121,7 @@ def test_weighted_somersd():
     auc_unweighted = roc_auc_score(y_true, y_pred)
     gini_unweighted = 2 * auc_unweighted - 1
 
-    logger.info(f"Somers' D (unweighted):     {somers_unweighted:.8f}")
+    logger.info(f"Somers' D (unweighted): {somers_unweighted:.8f}")
     logger.info(f"Gini from AUC (unweighted): {gini_unweighted:.8f}")
 
     assert np.isclose(somers_unweighted, gini_unweighted, atol=1e-10), (
@@ -134,8 +134,8 @@ def test_weighted_somersd():
     auc_weighted = roc_auc_score(y_true, y_pred, sample_weight=weights)
     gini_weighted = 2 * auc_weighted - 1
 
-    logger.info(f"Somers' D (weighted):       {somers_weighted:.8f}")
-    logger.info(f"Gini from AUC (weighted):   {gini_weighted:.8f}")
+    logger.info(f"Somers' D (weighted): {somers_weighted:.8f}")
+    logger.info(f"Gini from AUC (weighted): {gini_weighted:.8f}")
 
     assert np.isclose(somers_weighted, gini_weighted, atol=1e-10), (
         "Weighted Somers' D should match weighted Gini"
@@ -144,8 +144,8 @@ def test_weighted_somersd():
     # Test 3: Verify weights have effect
     logger.info("=== Test 3: Weights Effect ===")
     logger.info(f"Unweighted Gini: {gini_unweighted:.6f}")
-    logger.info(f"Weighted Gini:   {gini_weighted:.6f}")
-    logger.info(f"Difference:      {abs(gini_weighted - gini_unweighted):.6f}")
+    logger.info(f"Weighted Gini: {gini_weighted:.6f}")
+    logger.info(f"Difference: {abs(gini_weighted - gini_unweighted):.6f}")
 
     assert not np.isclose(gini_weighted, gini_unweighted, atol=1e-3), (
         "Weights should change the result"
@@ -297,7 +297,7 @@ def test_somersd_clustered_matrix():
     gini_from_auc = 2 * auc - 1
 
     logger.info(f"Global Somers' D (from matrix): {global_somersd:.8f}")
-    logger.info(f"Gini from AUC:                  {gini_from_auc:.8f}")
+    logger.info(f"Gini from AUC: {gini_from_auc:.8f}")
 
     assert np.isclose(global_somersd, gini_from_auc, atol=1e-10), (
         "Global Somers' D should match Gini from AUC"
@@ -606,6 +606,110 @@ def test_somersd_pairwise_vs_scipy():
             )
 
     logger.info("✓ All scipy comparison tests passed!")
+
+
+class TestGiniContributions:
+    """Tests for gini_contributions() instance-level decomposition."""
+
+    def test_contributions_sum_equals_gini(self):
+        """contributions.sum() must equal the overall Gini coefficient."""
+        from fastwoe.metrics import gini_contributions
+
+        rng = np.random.default_rng(42)
+        n = 200
+        scores = rng.uniform(0, 1, n)
+        labels = rng.binomial(1, 0.1 + 0.6 * scores, n).astype(int)
+
+        contribs, gini = gini_contributions(scores, labels)
+
+        assert np.isclose(contribs.sum(), gini, atol=1e-10), (
+            f"contributions.sum()={contribs.sum():.6f} != gini={gini:.6f}"
+        )
+
+    def test_matches_somersd_yx(self):
+        """Gini from contributions must match somersd_yx."""
+        from fastwoe.metrics import gini_contributions, somersd_yx
+
+        rng = np.random.default_rng(42)
+        n = 200
+        scores = rng.uniform(0, 1, n)
+        labels = rng.binomial(1, 0.1 + 0.6 * scores, n).astype(int)
+
+        _, gini = gini_contributions(scores, labels)
+        gini_ref = somersd_yx(labels.astype(float), scores).statistic
+
+        assert np.isclose(gini, gini_ref, atol=1e-10), (
+            f"gini_contributions={gini:.6f} != somersd_yx={gini_ref:.6f}"
+        )
+
+    def test_known_values(self):
+        """Verify contributions on a small known dataset."""
+        from fastwoe.metrics import gini_contributions
+
+        labels = np.array([0] * 10 + [1] * 10)
+        scores = np.concatenate(
+            [
+                np.array([0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65]),
+                np.array([0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85]),
+            ]
+        )
+
+        contribs, gini = gini_contributions(scores, labels)
+
+        assert np.isclose(gini, 0.64, atol=1e-6), f"Expected Gini=0.64, got {gini:.6f}"
+        assert np.isclose(contribs.sum(), gini, atol=1e-10)
+        assert len(contribs) == len(scores)
+
+    def test_perfect_separation(self):
+        """Perfect model: all positives score above all negatives → Gini = 1."""
+        from fastwoe.metrics import gini_contributions
+
+        labels = np.array([0, 0, 0, 1, 1, 1])
+        scores = np.array([0.1, 0.2, 0.3, 0.7, 0.8, 0.9])
+
+        contribs, gini = gini_contributions(scores, labels)
+
+        assert np.isclose(gini, 1.0, atol=1e-10)
+        assert np.isclose(contribs.sum(), 1.0, atol=1e-10)
+        assert np.all(contribs >= 0), "Perfect model should have no negative contributions"
+
+    def test_worst_separation(self):
+        """Worst model: all positives score below all negatives → Gini = -1."""
+        from fastwoe.metrics import gini_contributions
+
+        labels = np.array([0, 0, 0, 1, 1, 1])
+        scores = np.array([0.7, 0.8, 0.9, 0.1, 0.2, 0.3])
+
+        contribs, gini = gini_contributions(scores, labels)
+
+        assert np.isclose(gini, -1.0, atol=1e-10)
+        assert np.isclose(contribs.sum(), -1.0, atol=1e-10)
+        assert np.all(contribs <= 0), "Worst model should have no positive contributions"
+
+    def test_no_pairs_returns_zeros(self):
+        """All-positive or all-negative labels → zero contributions and zero Gini."""
+        from fastwoe.metrics import gini_contributions
+
+        scores = np.array([0.1, 0.5, 0.9])
+        labels_all_pos = np.array([1, 1, 1])
+        labels_all_neg = np.array([0, 0, 0])
+
+        for labels in (labels_all_pos, labels_all_neg):
+            contribs, gini = gini_contributions(scores, labels)
+            assert gini == 0.0
+            assert np.all(contribs == 0.0)
+
+    def test_output_shape(self):
+        """contributions array must have the same length as the input."""
+        from fastwoe.metrics import gini_contributions
+
+        rng = np.random.default_rng(0)
+        n = 500
+        scores = rng.uniform(0, 1, n)
+        labels = rng.integers(0, 2, n)
+
+        contribs, _ = gini_contributions(scores, labels)
+        assert contribs.shape == (n,)
 
 
 if __name__ == "__main__":

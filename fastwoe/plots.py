@@ -20,13 +20,13 @@ if TYPE_CHECKING:
 else:
     # Runtime import - needed for actual plotting
     try:
-        from matplotlib import pyplot as plt  # noqa: F401
-        from matplotlib.axes import Axes  # noqa: F401
-        from matplotlib.figure import Figure  # noqa: F401
+        from matplotlib import pyplot as plt
+        from matplotlib.axes import Axes
+        from matplotlib.figure import Figure
     except ImportError:
-        plt = None  # type: ignore[assignment]
-        Axes = Any  # type: ignore[assignment, misc]
-        Figure = Any  # type: ignore[assignment, misc]
+        plt = None
+        Axes = Any
+        Figure = Any
 
 from .metrics import somersd_yx
 
@@ -36,11 +36,12 @@ def plot_performance(
     y_pred: Union[np.ndarray, pd.Series, list],
     weights: Optional[Union[np.ndarray, pd.Series]] = None,
     ax: Optional[Axes] = None,
-    figsize: tuple = (6, 5),
-    dpi: int = 100,
+    figsize: tuple = (6, 4),
+    dpi: int = 110,
     show_plot: bool = True,
     labels: Optional[list[str]] = None,
     colors: Optional[list[str]] = None,
+    top_p: Optional[float] = None,
 ) -> tuple:
     """
     Plot model performance curve (CAP for binary, Power curve for continuous).
@@ -55,11 +56,15 @@ def plot_performance(
             - List of arrays: multiple models for comparison
         weights: Optional weights (e.g., EAD for LGD models)
         ax: Optional matplotlib axes to plot on. If None, creates new figure.
-        figsize: Figure size as (width, height). Only used if ax is None.
-        dpi: Figure resolution. Only used if ax is None.
+        figsize: Figure size as (width, height). Only used if ax is None. Defaults to (6, 4).
+        dpi: Figure resolution. Only used if ax is None. Defaults to 110.
         show_plot: Whether to display the plot. Only used if ax is None.
         labels: Optional labels for multiple predictions. If None, uses "Model 1", "Model 2", etc.
         colors: Optional colors for multiple predictions. If None, uses default colormap.
+        top_p: Optional float in (0, 1] to zoom the x-axis to the top p fraction of the
+            population (e.g., top_p=0.2 shows the top 20%). When set, the x-axis ticks
+            are adjusted to the zoomed range. Useful for inspecting model lift at the top
+            of the score distribution.
 
     Returns:
         Tuple of (figure, axes, gini_coefficient(s))
@@ -105,8 +110,8 @@ def plot_performance(
     if colors is None:
         # Default colormap
         default_colors = [
-            "#69db7c",
             "#55d3ed",
+            "#69db7c",
             "#ffa94d",
             "#c430c1",
             "#ff6b6b",
@@ -140,46 +145,36 @@ def plot_performance(
         fig_raw = ax1.get_figure()
         if fig_raw is None:
             raise ValueError("Could not get figure from axes")
-        # Type narrowing for matplotlib figure
-        fig = fig_raw  # type: ignore[assignment, no-redef]
+        if not isinstance(fig_raw, Figure):
+            raise ValueError("Axes must belong to a Figure, not a SubFigure")
+        fig = fig_raw
 
     # CAP curve for binary and continuous targets
     n = len(y_true)
     n_events = y_true.sum()
 
-    # Plot random line
+    # Plot random line (below everything)
     ax1.plot(
         [0, 1],
         [0, 1],
         linestyle="dotted",
         color="black",
         alpha=0.5,
+        zorder=1,
     )
 
-    # Plot perfect/ideal line
+    # Pre-compute ideal curve data (plotted after models so it renders on top)
     if is_binary:
-        # Binary: perfect line is step function at bad_rate
         bad_rate = n_events / n
-        ax1.plot(
-            [0, bad_rate, 1],
-            [0, 1, 1],
-            color="dodgerblue",
-            label="Crystal Ball",
-        )
+        ideal_x = [0, bad_rate, 1]
+        ideal_y = [0, 1, 1]
     else:
-        # Continuous: perfect line is sorting by TRUE target values
         perfect_idx = np.argsort(y_true)[::-1]
         y_perfect = y_true[perfect_idx]
-        cum_pop_perfect = np.concatenate([[0], np.arange(1, n + 1) / n])
-        cum_events_perfect = np.concatenate([[0], np.cumsum(y_perfect) / n_events])
-        ax1.plot(
-            cum_pop_perfect,
-            cum_events_perfect,
-            color="dodgerblue",
-            label="Crystal Ball",
-        )
+        ideal_x = list(np.concatenate([[0], np.arange(1, n + 1) / n]))
+        ideal_y = list(np.concatenate([[0], np.cumsum(y_perfect) / n_events]))
 
-    # Plot each model (same for both binary and continuous)
+    # Plot each model first (zorder=2), ideal line drawn on top (zorder=3)
     for yp, label, color, g in zip(y_preds, labels, colors, ginis):
         sort_idx = np.argsort(yp)[::-1]
         y_sorted = y_true[sort_idx]
@@ -191,15 +186,30 @@ def plot_performance(
             cum_pop,
             cum_events,
             color=color,
-            label=f"{label} AR: {g:.2%}",
+            label=f"{label} Gini: {g:.2%}",
+            zorder=2,
         )
 
-    # Styling (same for both)
-    ax1.set_xlabel("Fraction of population", fontsize=12)
-    ax1.set_ylabel("Fraction of target", fontsize=12)
+    # Plot ideal line on top of model curves
+    ax1.plot(
+        ideal_x,
+        ideal_y,
+        color="dodgerblue",
+        label="Ideal Model",
+        zorder=3,
+    )
+
+    # Styling
+    ax1.set_xlabel("Fraction of population sorted by score")
+    ax1.set_ylabel("Recall")
     ax1.set_title("Cumulative Accuracy Profile (CAP)", fontsize=14)
-    ax1.set_xticks(np.arange(0, 1.1, 0.1))
     ax1.set_yticks(np.arange(0, 1.1, 0.1))
+    if top_p is not None:
+        x_step = round(top_p / 10, 10)
+        ax1.set_xlim(-x_step * 0.5, top_p + x_step * 0.5)
+        ax1.set_xticks(np.arange(0, top_p + x_step / 2, x_step))
+    else:
+        ax1.set_xticks(np.arange(0, 1.1, 0.1))
     ax1.legend(loc="lower right", fontsize=10)
     ax1.grid(True, which="both", linestyle="dotted", linewidth=0.7, alpha=0.6)
     # Only apply tight_layout and show if we created the figure

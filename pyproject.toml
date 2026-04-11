@@ -21,7 +21,7 @@ name = "fastwoe"
 dynamic = ["version"]
 description = "Fast Weight of Evidence (WOE) encoding and inference"
 readme = "README.md"
-requires-python = ">=3.9,<3.13"
+requires-python = ">=3.9"
 authors = [
     {name = "xRiskLab", email = "contact@xrisklab.ai"}
 ]
@@ -37,6 +37,8 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
@@ -150,7 +152,7 @@ ignore = [
     "N801",   # class name should use CapWords convention
     "N802",   # function name should be lowercase
 ]
-"examples/*" = [
+"examples/**/*" = [
     "D",      # ignore docstring rules in examples
     "N803",   # argument name should be lowercase
     "N806",   # variable in function should be lowercase
@@ -257,6 +259,12 @@ module = [
     "faiss.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# pandas operations return Any; suppressing warn_return_any for files
+# that return DataFrames constructed from pandas internals
+module = ["fastwoe.fastwoe", "fastwoe.fastwoe_multiclass"]
+warn_return_any = false
 
 # Sourcery configuration
 [tool.sourcery]

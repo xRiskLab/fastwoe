@@ -1,5 +1,40 @@
 # Changelog
 
+## Version 0.1.7 (2026-04-11)
+
+**WOE Recalibration & Somers' D Standard Errors**
+
+### New Features
+
+- **`finetune(X_new, y_new)`**: WOE recalibration without redevelopment
+  - Updates WOE values using new data while preserving bin structure (edges, categories)
+  - Pass a full DataFrame to update all features, or a single-column DataFrame for one
+  - Bins absent from new data retain their original WOE (with warning)
+  - Unknown columns are skipped (with warning)
+  - `update_prior=True` shifts the global prior and warns about stale features
+  - Returns `self` for method chaining
+
+- **Asymptotic Standard Errors of Somers' D**: Uncertainty quantification via Goktas & Oznur (2011)
+  - Contingency-table ASE using per-cell concordant/discordant counts and the delta method
+  - Works for binary, ordinal, and continuous targets (for binary targets Somers' D = Gini)
+  - New `somersd_se()` function in `fastwoe.metrics`
+  - New fields in `feature_stats_` and `get_feature_stats()`: `somersd_se`, `somersd_ci_lower`, `somersd_ci_upper`
+  - Returns NaN gracefully for degenerate inputs
+
+### Internal
+
+- Extracted `_apply_binning_to_column()` helper from `transform()` for reuse by `finetune()`
+- Added `_recalibrate_feature()` private method encapsulating per-feature recalibration logic
+
+### Testing
+
+- Added `TestFinetune` class with 13 test cases covering single-feature, full-DataFrame, numerical/categorical, error handling, prior update, missing bins, transform-after-finetune, and method chaining
+- All 132 tests passing
+
+### Examples
+
+- Added `examples/notebooks/fastwoe_finetuning.ipynb` demonstrating recalibration workflow
+
 ## Version 0.1.6 (2026-01-07)
 
 **Stable Release: Type Safety, Robustness & Code Quality** 🎯
