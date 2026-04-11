@@ -487,8 +487,8 @@ def somersd_shapley(
             if subset in cache:
                 return cache[subset]
 
-            numer = np.zeros(n_samples, dtype=float)
-            denom = np.zeros(n_samples, dtype=float)
+            numer: np.ndarray = np.zeros(n_samples, dtype=float)
+            denom: np.ndarray = np.zeros(n_samples, dtype=float)
 
             # Base is always included for base_valid samples
             numer[base_valid] = base_score[base_valid]
@@ -500,7 +500,7 @@ def somersd_shapley(
                 numer[m] += scores[k][m]
                 denom[m] += 1.0
 
-            combined = np.zeros(n_samples, dtype=float)
+            combined: np.ndarray = np.zeros(n_samples, dtype=float)
             combined[base_valid] = numer[base_valid] / denom[base_valid]
 
             val = somersd_of(combined)
@@ -549,7 +549,7 @@ def somersd_shapley(
 
     # Original behavior: no base score, compute Shapley for all scores
     # Fix population to intersection of all availability masks
-    global_mask = np.ones(n_samples, dtype=bool)
+    global_mask: np.ndarray = np.ones(n_samples, dtype=bool)
     for name in score_names:
         global_mask &= availability_mask[name]
 
@@ -629,4 +629,4 @@ def somersd_shapley(
 
     result = result.sort_values("shapley_value", ascending=False).reset_index(drop=True)
 
-    return result
+    return pd.DataFrame(result)
