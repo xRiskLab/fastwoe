@@ -5,6 +5,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import pytest
+from scipy.stats import norm
 from sklearn.datasets import make_classification
 
 from fastwoe import FastWoe, WoePreprocessor
@@ -339,6 +340,46 @@ class TestFastWoe:
         assert (stats["iv_ci_lower"] <= stats["iv"]).all(), "Lower CI should be <= IV"
         assert (stats["iv"] <= stats["iv_ci_upper"]).all(), "IV should be <= Upper CI"
         assert (stats["iv_ci_lower"] >= 0).all(), "Lower CI should be >= 0"
+
+    def test_gini_standard_errors(self, sample_data):
+        """Test Gini/Somers' D standard error via Hájek linearization."""
+        X = sample_data[["cat1", "cat2"]]
+        y = sample_data["target"]
+
+        woe = FastWoe()
+        woe.fit(X, y)
+
+        stats = woe.get_feature_stats()
+        required_gini_cols = ["gini", "somersd_se", "somersd_ci_lower", "somersd_ci_upper"]
+        for col in required_gini_cols:
+            assert col in stats.columns, f"Missing column: {col}"
+
+        # SE should be positive and finite
+        for _, row in stats.iterrows():
+            assert row["somersd_se"] > 0, "Somers' D SE should be positive"
+            assert np.isfinite(row["somersd_se"]), "Somers' D SE should be finite"
+
+        # CI should bracket the point estimate
+        assert (stats["somersd_ci_lower"] <= stats["gini"]).all()
+        assert (stats["gini"] <= stats["somersd_ci_upper"]).all()
+
+        # CI width should be exactly 2 * z * SE (z from scipy for 95% CI)
+        z_crit = norm.ppf(0.975)
+        ci_width = stats["somersd_ci_upper"] - stats["somersd_ci_lower"]
+        expected_width = 2 * z_crit * stats["somersd_se"]
+        np.testing.assert_allclose(ci_width, expected_width, rtol=1e-6)
+
+    def test_somersd_se_matches_vurocs(self):
+        """Validate somersd_se against VUROCS R package (Goktas & Oznur 2011)."""
+        from fastwoe.metrics import somersd_se
+
+        # VUROCS example: SomersD(rep(1:5,each=3), c(3,3,3,rep(2:5,each=3)))
+        y = np.array([1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5], dtype=float)
+        fx = np.array([3, 3, 3, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5], dtype=float)
+
+        se = somersd_se(y, fx)
+        # R output: val=0.7, ASE=0.3146721
+        np.testing.assert_allclose(se, 0.3146721, rtol=1e-5)
 
     def test_get_iv_analysis(self, sample_data):
         """Test get_iv_analysis method."""
@@ -2545,3 +2586,231 @@ class TestMonotonicConstraints:
         # Should work without applying constraints
         assert woe_no_constraint.is_fitted_
         assert woe_no_constraint.binning_info_["feature"]["monotonic_constraint"] == 0
+
+
+class TestFinetune:
+    """Test cases for the FastWoe.finetune() method."""
+
+    @pytest.fixture
+    def fitted_categorical(self):
+        """Fit a FastWoe encoder on categorical data."""
+        np.random.seed(42)
+        X = pd.DataFrame(
+            {
+                "cat1": ["A"] * 50 + ["B"] * 30 + ["C"] * 20,
+                "cat2": ["X"] * 40 + ["Y"] * 35 + ["Z"] * 25,
+            }
+        )
+        y = pd.Series(
+            np.concatenate(
+                [
+                    np.random.binomial(1, 0.5, 50),
+                    np.random.binomial(1, 0.2, 30),
+                    np.random.binomial(1, 0.1, 20),
+                ]
+            )
+        )
+        woe = FastWoe()
+        woe.fit(X, y)
+        return woe, X, y
+
+    @pytest.fixture
+    def fitted_numerical(self):
+        """Fit a FastWoe encoder on numerical data with tree binning."""
+        np.random.seed(42)
+        n = 200
+        X = pd.DataFrame({"income": np.random.normal(50000, 15000, n)})
+        y = pd.Series(np.random.binomial(1, 0.3, n))
+        woe = FastWoe(binning_method="tree", numerical_threshold=10)
+        woe.fit(X, y)
+        return woe, X, y
+
+    def test_single_feature_via_dataframe(self, fitted_categorical):
+        """Single-column DataFrame updates only that feature."""
+        woe, X, y = fitted_categorical
+        old_cat2_mapping = woe.mappings_["cat2"].copy()
+        old_cat1_woe = woe.mappings_["cat1"]["woe"].copy()
+
+        np.random.seed(99)
+        X_new = pd.DataFrame({"cat1": ["A"] * 60 + ["B"] * 25 + ["C"] * 15})
+        y_new = pd.Series(
+            np.concatenate(
+                [
+                    np.random.binomial(1, 0.8, 60),
+                    np.random.binomial(1, 0.1, 25),
+                    np.random.binomial(1, 0.05, 15),
+                ]
+            )
+        )
+
+        woe.finetune(X_new, y_new)
+
+        # cat1 WOE should have changed
+        new_cat1_woe = woe.mappings_["cat1"]["woe"]
+        assert not np.allclose(old_cat1_woe.values, new_cat1_woe.values)
+
+        # cat2 mapping should be unchanged
+        pd.testing.assert_frame_equal(woe.mappings_["cat2"], old_cat2_mapping)
+
+    def test_full_dataframe_updates_all(self, fitted_categorical):
+        """Full DataFrame updates all matching features."""
+        woe, X, y = fitted_categorical
+        old_cat1_woe = woe.mappings_["cat1"]["woe"].copy()
+        old_cat2_woe = woe.mappings_["cat2"]["woe"].copy()
+
+        np.random.seed(99)
+        X_new = pd.DataFrame(
+            {
+                "cat1": ["A"] * 60 + ["B"] * 25 + ["C"] * 15,
+                "cat2": ["X"] * 30 + ["Y"] * 40 + ["Z"] * 30,
+            }
+        )
+        y_new = pd.Series(np.random.binomial(1, 0.6, 100))
+
+        woe.finetune(X_new, y_new)
+
+        # Both should have changed
+        assert not np.allclose(old_cat1_woe.values, woe.mappings_["cat1"]["woe"].values)
+        assert not np.allclose(old_cat2_woe.values, woe.mappings_["cat2"]["woe"].values)
+
+    def test_numerical_feature_tree_binning(self, fitted_numerical):
+        """Bin edges unchanged, WOE updated for numerical feature."""
+        woe, X, y = fitted_numerical
+        old_bin_edges = woe.binning_info_["income"]["bin_edges"].copy()
+        old_woe = woe.mappings_["income"]["woe"].copy()
+
+        np.random.seed(123)
+        n = 150
+        X_new = pd.DataFrame({"income": np.random.normal(55000, 15000, n)})
+        y_new = pd.Series(np.random.binomial(1, 0.5, n))
+
+        woe.finetune(X_new, y_new)
+
+        assert woe.binning_info_["income"]["bin_edges"] == old_bin_edges
+        assert not np.allclose(old_woe.values, woe.mappings_["income"]["woe"].values, atol=1e-3)
+
+    def test_not_fitted_raises(self):
+        """finetune() on unfitted model raises ValueError."""
+        woe = FastWoe()
+        X_new = pd.DataFrame({"cat1": ["A", "B"]})
+        with pytest.raises(ValueError, match="must be fitted"):
+            woe.finetune(X_new, pd.Series([0, 1]))
+
+    def test_length_mismatch_raises(self, fitted_categorical):
+        """finetune() with mismatched X / y lengths raises ValueError."""
+        woe, _, _ = fitted_categorical
+        X_new = pd.DataFrame({"cat1": ["A", "B", "C"]})
+        with pytest.raises(ValueError, match="same length"):
+            woe.finetune(X_new, pd.Series([0, 1]))
+
+    def test_multiclass_raises(self):
+        """finetune() on multiclass model raises NotImplementedError."""
+        np.random.seed(42)
+        X = pd.DataFrame({"cat1": ["A"] * 60 + ["B"] * 40})
+        y = pd.Series([0] * 30 + [1] * 30 + [2] * 40)
+
+        woe = FastWoe()
+        woe.fit(X, y)
+        assert woe.is_multiclass_target
+
+        X_new = pd.DataFrame({"cat1": ["A", "B"]})
+        with pytest.raises(NotImplementedError, match="multiclass"):
+            woe.finetune(X_new, pd.Series([0, 1]))
+
+    def test_unknown_columns_warns_and_skips(self, fitted_categorical):
+        """Columns not in the model are skipped with a warning."""
+        woe, _, _ = fitted_categorical
+        old_cat1_woe = woe.mappings_["cat1"]["woe"].copy()
+
+        X_new = pd.DataFrame({"unknown": ["A", "B"] * 50})
+        y_new = pd.Series(np.random.binomial(1, 0.5, 100))
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            woe.finetune(X_new, y_new)
+
+        skip_warnings = [x for x in w if "not in the fitted model" in str(x.message)]
+        assert len(skip_warnings) == 1
+
+        # Nothing changed
+        pd.testing.assert_series_equal(woe.mappings_["cat1"]["woe"], old_cat1_woe)
+
+    def test_update_prior_false_preserves_prior(self, fitted_categorical):
+        """With update_prior=False the global prior stays unchanged."""
+        woe, _, _ = fitted_categorical
+        old_prior = woe.y_prior_
+        old_odds = woe.odds_prior_
+
+        X_new = pd.DataFrame({"cat1": ["A"] * 50 + ["B"] * 50})
+        y_new = pd.Series([1] * 80 + [0] * 20)
+
+        woe.finetune(X_new, y_new, update_prior=False)
+
+        assert woe.y_prior_ == old_prior
+        assert woe.odds_prior_ == old_odds
+
+    def test_update_prior_true_updates_and_warns(self, fitted_categorical):
+        """With update_prior=True the global prior is updated and a warning emitted."""
+        woe, _, _ = fitted_categorical
+        old_prior = woe.y_prior_
+
+        X_new = pd.DataFrame({"cat1": ["A"] * 50 + ["B"] * 50})
+        y_new = pd.Series([1] * 80 + [0] * 20)
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            woe.finetune(X_new, y_new, update_prior=True)
+
+        prior_warnings = [x for x in w if "global prior updated" in str(x.message)]
+        assert len(prior_warnings) == 1
+
+        assert woe.y_prior_ != old_prior
+        assert woe.y_prior_ == pytest.approx(0.8)
+
+    def test_missing_categories_warns_and_retains(self, fitted_categorical):
+        """Bins absent from new data retain original WOE and produce a warning."""
+        woe, _, _ = fitted_categorical
+        original_c_woe = float(woe.mappings_["cat1"].loc["C", "woe"])
+
+        # New data has only A and B, not C
+        X_new = pd.DataFrame({"cat1": ["A"] * 60 + ["B"] * 40})
+        y_new = pd.Series(np.random.binomial(1, 0.5, 100))
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            woe.finetune(X_new, y_new)
+
+        missing_warnings = [x for x in w if "no observations" in str(x.message)]
+        assert len(missing_warnings) == 1
+
+        assert woe.mappings_["cat1"].loc["C", "woe"] == pytest.approx(original_c_woe)
+
+    def test_transform_after_finetune(self, fitted_categorical):
+        """transform() uses updated WOE values after finetune."""
+        woe, X, y = fitted_categorical
+
+        np.random.seed(99)
+        X_new = pd.DataFrame({"cat1": ["A"] * 60 + ["B"] * 25 + ["C"] * 15})
+        y_new = pd.Series(
+            np.concatenate(
+                [
+                    np.random.binomial(1, 0.8, 60),
+                    np.random.binomial(1, 0.1, 25),
+                    np.random.binomial(1, 0.05, 15),
+                ]
+            )
+        )
+        woe.finetune(X_new, y_new)
+
+        X_woe = woe.transform(X)
+        expected_woe_A = woe.mappings_["cat1"].loc["A", "woe"]
+        assert X_woe.loc[0, "cat1"] == pytest.approx(expected_woe_A)
+
+    def test_method_chaining(self, fitted_categorical):
+        """finetune() returns self for chaining."""
+        woe, _, _ = fitted_categorical
+        X_new = pd.DataFrame({"cat1": ["A"] * 50 + ["B"] * 30 + ["C"] * 20})
+        y_new = pd.Series(np.random.binomial(1, 0.5, 100))
+
+        result = woe.finetune(X_new, y_new)
+        assert result is woe

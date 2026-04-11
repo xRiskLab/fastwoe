@@ -18,8 +18,8 @@ from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import KBinsDiscretizer, TargetEncoder
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
-from .fast_somersd import somersd_yx
 from .fastwoe_multiclass import MulticlassWoeMixin
+from .metrics import somersd_se, somersd_yx
 
 
 class WoePreprocessor(BaseEstimator, TransformerMixin):
@@ -413,6 +413,11 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
         except ValueError:
             return somersd_yx(y_true, y_pred).statistic
 
+    @staticmethod
+    def _calculate_somersd_se(y_true, y_pred):
+        """Asymptotic SE of Somers' D(X|Y). See :func:`metrics.somersd_se`."""
+        return somersd_se(y_true, y_pred)
+
     def _calculate_woe_se(self, good_count: int, bad_count: int) -> float:
         """
         Calculate standard error of WOE using actual counts.
@@ -609,13 +614,20 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
         iv_se = self._calculate_iv_standard_error(mapping_df, total_good, total_bad)
         iv_ci_lower, iv_ci_upper = self._calculate_iv_confidence_interval(iv_value, iv_se)
 
+        gini_value = self._calculate_gini(y, woe_values)
+        somersd_se_val = self._calculate_somersd_se(y, woe_values)
+        somersd_ci_lower, somersd_ci_upper = self._calculate_woe_ci(gini_value, somersd_se_val)
+
         return {
             "feature": col,
             "n_categories": len(mapping_df),
             "total_observations": total_obs,
             "missing_count": X[col].isna().sum(),
             "missing_rate": X[col].isna().mean(),
-            "gini": self._calculate_gini(y, woe_values),
+            "gini": gini_value,
+            "somersd_se": somersd_se_val,
+            "somersd_ci_lower": somersd_ci_lower,
+            "somersd_ci_upper": somersd_ci_upper,
             "iv": iv_value,
             "iv_se": iv_se,
             "iv_ci_lower": iv_ci_lower,
@@ -843,6 +855,106 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
         self.is_fitted_ = True
         return self
 
+    def _apply_binning_to_column(self, X: pd.DataFrame, col: str) -> pd.Series:
+        """
+        Apply stored binning to a single column, returning string bin labels.
+
+        Parameters
+        ----------
+        X : pd.DataFrame
+            Input DataFrame containing the column to bin.
+        col : str
+            Column name to apply binning to.
+
+        Returns:
+        -------
+        pd.Series
+            Series with string bin labels for binned features, or original values
+            for categorical features. Missing values are labeled "Missing".
+        """
+        if col not in self.binners_:
+            return X[col].copy()
+
+        binner = self.binners_[col]
+        binning_info = self.binning_info_[col]
+        X_col = X[[col]].copy()
+        if hasattr(X_col[col], "isna"):
+            mask_missing = X_col[col].isna()
+        else:
+            mask_missing = pd.isna(X_col[col])
+
+        result = X[col].copy().astype("object")
+
+        if not mask_missing.all():
+            if binning_info.get("method") == "kbins":
+                result.loc[~mask_missing] = binner.transform(X_col[~mask_missing]).ravel()
+            elif binning_info.get("method") == "tree":
+                bin_edges = np.array(binning_info["bin_edges"])
+                col_data = X_col[~mask_missing][col]
+                col_values = col_data.values if hasattr(col_data, "values") else np.array(col_data)
+                binned_values = np.digitize(col_values, bin_edges[1:-1], right=False)
+                binned_values = np.clip(binned_values - 1, 0, len(bin_edges) - 2)
+                result.loc[~mask_missing] = binned_values
+            elif binning_info.get("method") == "faiss_kmeans":
+                faiss_model = binner
+                col_data = X_col[~mask_missing][col]
+                col_values = col_data.values if hasattr(col_data, "values") else np.array(col_data)
+                data = col_values.astype(np.float32).reshape(-1, 1)
+                _, labels = faiss_model.index.search(data, 1)
+                cluster_labels = labels.flatten() + 1
+
+                if "cluster_to_bin" in binning_info:
+                    cluster_to_bin = binning_info["cluster_to_bin"]
+                else:
+                    bin_edges = np.array(binning_info["bin_edges"])
+                    bl = []
+                    for i in range(len(bin_edges) - 1):
+                        if i == 0:
+                            label = f"(-∞, {bin_edges[i + 1]:.1f}]"
+                        elif i == len(bin_edges) - 2:
+                            label = f"({bin_edges[i]:.1f}, ∞)"
+                        else:
+                            label = f"({bin_edges[i]:.1f}, {bin_edges[i + 1]:.1f}]"
+                        bl.append(label)
+                    cluster_to_bin = dict(zip(range(1, len(bl) + 1), bl))
+
+                binned_labels = [cluster_to_bin[label] for label in cluster_labels]
+                result.loc[~mask_missing] = binned_labels
+
+            # Convert to string categories with meaningful labels (same as fit)
+            if binning_info.get("method") == "kbins" and hasattr(binner, "bin_edges_"):
+                edges = binner.bin_edges_[0]
+            elif (
+                binning_info.get("method") in ("tree", "faiss_kmeans")
+                and "bin_edges" in binning_info
+            ):
+                edges = np.array(binning_info["bin_edges"])
+            else:
+                edges = None
+
+            if edges is not None:
+                bin_labels = []
+                for i in range(len(edges) - 1):
+                    if i == 0:
+                        label = f"(-∞, {edges[i + 1]:.1f}]"
+                    elif i == len(edges) - 2:
+                        label = f"({edges[i]:.1f}, ∞)"
+                    else:
+                        label = f"({edges[i]:.1f}, {edges[i + 1]:.1f}]"
+                    bin_labels.append(label)
+
+                non_missing_values = result.loc[~mask_missing]
+                if len(non_missing_values) > 0 and binning_info.get("method") != "faiss_kmeans":
+                    result.loc[~mask_missing] = (
+                        non_missing_values.astype(int).map(dict(enumerate(bin_labels))).astype(str)
+                    )
+
+        # Handle missing values
+        if mask_missing.any():
+            result.loc[mask_missing] = "Missing"
+
+        return result
+
     def transform(self, X: Union[pd.DataFrame, np.ndarray, pd.Series]) -> pd.DataFrame:
         """
         Transform features to Weight of Evidence (WOE) values.
@@ -876,107 +988,7 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
         X_processed = X.copy()
         for col in X.columns:
             if col in self.binners_:
-                # Apply the same binning as during fit
-                binner = self.binners_[col]
-                binning_info = self.binning_info_[col]
-                X_col = X_processed[[col]].copy()
-                if hasattr(X_col[col], "isna"):
-                    mask_missing = X_col[col].isna()
-                else:
-                    # For numpy arrays, use pd.isna
-                    mask_missing = pd.isna(X_col[col])
-
-                if not mask_missing.all():  # If there are any non-missing values
-                    # Ensure column is object type to accept strings
-                    X_processed[col] = X_processed[col].astype("object")
-
-                    if binning_info.get("method") == "kbins":
-                        # KBinsDiscretizer method
-                        X_processed.loc[~mask_missing, col] = binner.transform(
-                            X_col[~mask_missing]
-                        ).ravel()
-                    elif binning_info.get("method") == "tree":
-                        # Tree method - use bin edges for binning
-                        bin_edges = np.array(binning_info["bin_edges"])
-                        col_data = X_col[~mask_missing][col]
-                        if hasattr(col_data, "values"):
-                            col_values = col_data.values
-                        else:
-                            col_values = np.array(col_data)
-                        binned_values = np.digitize(
-                            col_values,
-                            bin_edges[1:-1],
-                            right=False,
-                        )
-                        binned_values = np.clip(binned_values - 1, 0, len(bin_edges) - 2)
-                        X_processed.loc[~mask_missing, col] = binned_values
-                    elif binning_info.get("method") == "faiss_kmeans":
-                        # FAISS KMeans method - use FAISS model for prediction
-                        faiss_model = binner
-                        col_data = X_col[~mask_missing][col]
-                        if hasattr(col_data, "values"):
-                            col_values = col_data.values
-                        else:
-                            col_values = np.array(col_data)
-                        data = col_values.astype(np.float32).reshape(-1, 1)
-                        # type: ignore
-                        _, labels = faiss_model.index.search(data, 1)
-                        cluster_labels = labels.flatten() + 1  # Convert to 1-based indexing
-
-                        # Use the stored cluster_to_bin mapping from fit
-                        if "cluster_to_bin" in binning_info:
-                            cluster_to_bin = binning_info["cluster_to_bin"]
-                        else:
-                            # Fallback for older models without the mapping stored
-                            bin_edges = np.array(binning_info["bin_edges"])
-                            bin_labels = []
-                            for i in range(len(bin_edges) - 1):
-                                if i == 0:
-                                    label = f"(-∞, {bin_edges[i + 1]:.1f}]"
-                                elif i == len(bin_edges) - 2:
-                                    label = f"({bin_edges[i]:.1f}, ∞)"
-                                else:
-                                    label = f"({bin_edges[i]:.1f}, {bin_edges[i + 1]:.1f}]"
-                                bin_labels.append(label)
-
-                            cluster_to_bin = dict(zip(range(1, len(bin_labels) + 1), bin_labels))
-
-                        binned_labels = [cluster_to_bin[label] for label in cluster_labels]
-                        X_processed.loc[~mask_missing, col] = binned_labels
-
-                # Convert to string categories with meaningful labels (same as fit)
-                if binning_info.get("method") == "kbins" and hasattr(binner, "bin_edges_"):
-                    edges = binner.bin_edges_[0]
-                elif binning_info.get("method") == "tree" and "bin_edges" in binning_info:
-                    edges = np.array(binning_info["bin_edges"])
-                elif binning_info.get("method") == "faiss_kmeans" and "bin_edges" in binning_info:
-                    edges = np.array(binning_info["bin_edges"])
-                else:
-                    edges = None
-
-                if edges is not None:
-                    bin_labels = []
-                    for i in range(len(edges) - 1):
-                        if i == 0:
-                            label = f"(-∞, {edges[i + 1]:.1f}]"
-                        elif i == len(edges) - 2:
-                            label = f"({edges[i]:.1f}, ∞)"
-                        else:
-                            label = f"({edges[i]:.1f}, {edges[i + 1]:.1f}]"
-                        bin_labels.append(label)
-
-                    # Map ordinal values to labels
-                    non_missing_values = X_processed.loc[~mask_missing, col]
-                    if len(non_missing_values) > 0 and binning_info.get("method") != "faiss_kmeans":
-                        X_processed.loc[~mask_missing, col] = (
-                            non_missing_values.astype(int)
-                            .map(dict(enumerate(bin_labels)))
-                            .astype(str)
-                        )
-
-                # Handle missing values
-                if mask_missing.any():
-                    X_processed.loc[mask_missing, col] = "Missing"
+                X_processed[col] = self._apply_binning_to_column(X_processed, col)
 
         # Collect all WOE columns first to avoid DataFrame fragmentation
         woe_columns = {}
@@ -1009,6 +1021,189 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
     def fit_transform(self, X: pd.DataFrame, y=None, **_fit_params) -> pd.DataFrame:
         """Fit and transform in one step."""
         return self.fit(X, y).transform(X)  # type: ignore[no-any-return]
+
+    def finetune(
+        self,
+        X_new: Union[pd.DataFrame, np.ndarray, pd.Series],
+        y_new: Union[pd.Series, np.ndarray],
+        update_prior: bool = False,
+    ) -> "FastWoe":
+        """
+        Recalibrate WOE values using new data.
+
+        Keeps existing bin structure (edges, categories) intact but recomputes
+        WOE from the new data's per-bin event rates. Pass a full DataFrame to
+        update all features at once, or a single Series / single-column
+        DataFrame to update just one.
+
+        Parameters
+        ----------
+        X_new : Union[pd.DataFrame, np.ndarray, pd.Series]
+            New feature data. Columns that match fitted features are
+            recalibrated; unknown columns are skipped with a warning.
+        y_new : Union[pd.Series, np.ndarray]
+            New binary target variable (0/1).
+        update_prior : bool, default=False
+            If True, updates y_prior_ and odds_prior_ from y_new and warns
+            that other features' WOE values may be stale.
+
+        Returns:
+        -------
+        self : FastWoe
+            The recalibrated encoder instance (for method chaining).
+        """
+        # --- validation ---
+        if not self.is_fitted_:
+            raise ValueError("FastWoe must be fitted before calling finetune()")
+
+        if self.is_multiclass_target:
+            raise NotImplementedError("finetune() is not supported for multiclass targets")
+
+        X_new = self._ensure_dataframe(X_new, use_fitted_names=True)
+        y_new = self._ensure_series(y_new)
+
+        if len(X_new) != len(y_new):
+            raise ValueError(
+                f"X_new and y_new must have the same length. Got {len(X_new)} and {len(y_new)}"
+            )
+
+        unique_vals = sorted(pd.Series(y_new).unique())
+        if not set(unique_vals).issubset({0, 1}):
+            raise ValueError(
+                f"finetune() only supports binary targets (0/1). Got unique values: {unique_vals}"
+            )
+
+        # Warn about unknown columns (skip them)
+        unknown_cols = [c for c in X_new.columns if c not in self.mappings_]
+        if unknown_cols:
+            warnings.warn(
+                f"finetune: columns {sorted(unknown_cols)} are not in the fitted model "
+                f"and will be skipped. Use fit() to add new features.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        cols_to_update = [c for c in X_new.columns if c in self.mappings_]
+        if not cols_to_update:
+            warnings.warn(
+                "finetune: no matching features found — nothing to update.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return self
+
+        # --- optionally update prior ---
+        if update_prior:
+            self.y_prior_ = float(y_new.mean())
+            self.odds_prior_ = self.y_prior_ / (1 - self.y_prior_)
+            warnings.warn(
+                f"finetune: global prior updated to {self.y_prior_:.6f}. "
+                f"WOE values for features not in X_new are now stale.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        odds_prior = self.y_prior_ / (1 - self.y_prior_)  # type: ignore[operator]
+
+        for col in cols_to_update:
+            self._recalibrate_feature(col, X_new, y_new, odds_prior)
+
+        return self
+
+    def _recalibrate_feature(
+        self,
+        col: str,
+        X_new: pd.DataFrame,
+        y_new: pd.Series,
+        odds_prior: float,
+    ) -> None:
+        """Recalibrate WOE for a single existing feature from new data."""
+        binned_col = self._apply_binning_to_column(X_new, col)
+
+        old_mapping = self.mappings_[col]
+        old_categories = set(old_mapping.index)
+
+        bin_data = pd.DataFrame({"bin": binned_col.values, "target": y_new.values})
+        new_stats = bin_data.groupby("bin")[["target"]].agg(
+            count=("target", "count"),
+            bad_count=("target", "sum"),
+            event_rate=("target", "mean"),
+        )
+        new_stats["good_count"] = new_stats["count"] - new_stats["bad_count"]
+        new_categories = set(new_stats.index)
+
+        missing_bins = old_categories - new_categories
+        if missing_bins:
+            warnings.warn(
+                f"finetune: bins {sorted(missing_bins)} for feature '{col}' "
+                f"have no observations in new data. Original WOE retained.",
+                UserWarning,
+                stacklevel=3,
+            )
+
+        extra_bins = new_categories - old_categories
+        if extra_bins:
+            warnings.warn(
+                f"finetune: new categories {sorted(extra_bins)} for feature '{col}' "
+                f"are not in the original mapping and will be ignored.",
+                UserWarning,
+                stacklevel=3,
+            )
+
+        rows = []
+        total_new = new_stats["count"].sum() if len(new_stats) > 0 else len(y_new)
+        for cat in old_mapping.index:
+            if cat in new_stats.index:
+                row = new_stats.loc[cat]
+                count = int(row["count"])
+                bad_count = int(row["bad_count"])
+                good_count = int(row["good_count"])
+                event_rate = np.clip(float(row["event_rate"]), 1e-15, 1 - 1e-15)
+                odds_cat = event_rate / (1 - event_rate)
+                woe = float(np.log(odds_cat / odds_prior))
+                se = self._calculate_woe_se(good_count, bad_count)
+                ci_lower, ci_upper = self._calculate_woe_ci(woe, se)
+                count_pct = count / total_new * 100 if total_new > 0 else 0.0
+            else:
+                orig = old_mapping.loc[cat]
+                count = int(orig["count"])
+                count_pct = float(orig["count_pct"])
+                good_count = int(orig["good_count"])
+                bad_count = int(orig["bad_count"])
+                event_rate = float(orig["event_rate"])
+                woe = float(orig["woe"])
+                se = float(orig["woe_se"])
+                ci_lower = float(orig["woe_ci_lower"])
+                ci_upper = float(orig["woe_ci_upper"])
+
+            rows.append(
+                {
+                    "category": cat,
+                    "count": count,
+                    "count_pct": round(count_pct, 4),
+                    "good_count": good_count,
+                    "bad_count": bad_count,
+                    "event_rate": round(event_rate, 6),
+                    "woe": woe,
+                    "woe_se": se,
+                    "woe_ci_lower": ci_lower,
+                    "woe_ci_upper": ci_upper,
+                }
+            )
+
+        new_mapping_df = pd.DataFrame(rows).set_index("category")
+        self.mappings_[col] = new_mapping_df
+
+        enc = TargetEncoder(**self.encoder_kwargs, random_state=self.random_state)
+        enc.fit(binned_col.to_frame(name=col), y_new)
+        self.encoders_[col] = enc
+
+        self.feature_stats_[col] = self._calculate_feature_stats(
+            col,
+            binned_col.to_frame(name=col),
+            y_new,
+            new_mapping_df,
+        )
 
     def get_mapping(
         self, feature: str, class_label: Optional[Union[int, str]] = None
