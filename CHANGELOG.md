@@ -1,5 +1,28 @@
 # Changelog
 
+## Version 0.1.7.1 (2026-05-03)
+
+**Unified Transform API & Cleanup**
+
+### New Features
+
+- **`transform(X, output=...)` unified API**: All WOE-derived outputs via a single method
+  - `"woe"`: WOE values (default, unchanged behavior)
+  - `"woe_norm"`: Normalized WOE scores (WOE / SE)
+  - `"wald"`: Wald statistic per feature ((WOE + prior log-odds) / SE)
+  - `"woe_upper_ci"`: Upper 95% confidence bound of WOE
+  - `"woe_lower_ci"`: Lower 95% confidence bound of WOE
+
+### Deprecated
+
+- **`transform_standardized()`**: Use `transform(X, output='woe_norm')` or `transform(X, output='wald')` instead. Emits `DeprecationWarning`.
+
+### Cleanup
+
+- Removed `ty` type checker — project now uses `mypy` only
+- Removed dead try/except plotting guard in `__init__.py`
+- Removed `.cursor/` from git tracking
+
 ## Version 0.1.7 (2026-04-11)
 
 **WOE Recalibration & Somers' D Standard Errors**

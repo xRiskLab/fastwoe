@@ -291,10 +291,13 @@ feature_stats = woe_encoder.get_feature_stats()
 # Contains: iv, iv_se, iv_ci_lower, iv_ci_upper columns
 ```
 
-### Standardized WOE
+### Transform Output Modes
 ```python
-# Get Wald scores (standardized log-odds) or use "woe" for raw WOE values
-X_standardized = woe_encoder.transform_standardized(X_preprocessed, output='wald')
+X_woe = woe_encoder.transform(X_preprocessed)                          # WOE values (default)
+X_norm = woe_encoder.transform(X_preprocessed, output='woe_norm')       # Normalized WOE (WOE / SE)
+X_wald = woe_encoder.transform(X_preprocessed, output='wald')           # Wald statistic
+X_upper = woe_encoder.transform(X_preprocessed, output='woe_upper_ci')  # Upper 95% CI
+X_lower = woe_encoder.transform(X_preprocessed, output='woe_lower_ci')  # Lower 95% CI
 ```
 
 ### Numerical Feature Binning
