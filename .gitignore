@@ -23,6 +23,7 @@ dist/
 # Development notes with sensitive info
 .dev_notes.md
 .env
+.cursor/
 
 # UV lock file (auto-generated, large)
 uv.lock

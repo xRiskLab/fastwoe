@@ -33,14 +33,7 @@ jobs:
     - name: Verify installation
       run: |
         uv run python -c "import fastwoe; print('FastWoe installed')"
-        uv run python -c "import ty; print('ty installed')"
 
     - name: Run CI checks (format, lint, typecheck)
       run: |
         make ci-check
-
-    - name: Run strict type checking (informational)
-      if: always()  # Run even if previous step fails
-      run: |
-        make typecheck-strict || echo "ℹ️  Strict mode found expected pandas/numpy type issues"
-      continue-on-error: true
