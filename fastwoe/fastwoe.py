@@ -1478,7 +1478,11 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
 
     def predict_ci(self, X: Union[pd.DataFrame, np.ndarray], alpha=0.05) -> np.ndarray:
         """
-        Predict confidence intervals for WOE values and probabilities.
+        Predict confidence intervals for predicted probabilities.
+
+        Propagates per-bin WOE standard errors across features using
+        variance addition (Var(sum) = sum of Var) and converts the
+        resulting logit-scale interval to probabilities via sigmoid.
 
         For binary targets: returns 2 columns [lower, upper] for class 1 probability
         For multiclass targets: returns 2 columns per class [lower_0, upper_0, lower_1, upper_1, ...]
@@ -1516,47 +1520,42 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
 
         if self.is_multiclass_target:
             return self._predict_multiclass_ci(X, alpha)
-        # Binary case (original implementation)
-        z_crit = norm.ppf(1 - alpha / 2)
-        woe_ci_lower = np.zeros_like(X_woe.values)
-        woe_ci_upper = np.zeros_like(X_woe.values)
 
-        for i, col in enumerate(X.columns):
-            if col in self.encoders_:
-                mapping = self.mappings_[col]
-
-                # For each row, find the WOE standard error
-                for j in range(len(X)):
-                    cat_value = X.iloc[j, i]
-
-                    # Look up in mapping (handle unseen categories)
-                    woe_se = (
-                        mapping.loc[cat_value, "woe_se"]
-                        if cat_value in mapping.index
-                        else mapping["woe_se"].mean()
-                    )
-                    woe_val = X_woe.iloc[j, i]
-                    margin = z_crit * woe_se
-
-                    woe_ci_lower[j, i] = woe_val - margin
-                    woe_ci_upper[j, i] = woe_val + margin
-
-        # Sum WOE values across features for final score
-        woe_score_lower = woe_ci_lower.sum(axis=1)
-        woe_score_upper = woe_ci_upper.sum(axis=1)
-
-        # Convert to probability scale
+        # Binary case — vectorized variance-addition approach
         if self.y_prior_ is None or isinstance(self.y_prior_, dict):
             raise ValueError("Model must be fitted before predicting confidence intervals")
         if self.odds_prior_ is None:
             raise ValueError("Model must be fitted before predicting confidence intervals")
-        logit_lower = woe_score_lower + np.log(self.odds_prior_)
-        logit_upper = woe_score_upper + np.log(self.odds_prior_)
+
+        z_crit = norm.ppf(1 - alpha / 2)
+
+        # Apply binning so category lookups match the fitted mappings
+        X_processed = X.copy()
+        for col in X.columns:
+            if col in self.binners_:
+                X_processed[col] = self._apply_binning_to_column(X_processed, col)
+
+        # Build SE matrix with vectorized .map() per feature
+        se_matrix = np.zeros_like(X_woe.values)
+        for i, col in enumerate(X_processed.columns):
+            if col in self.encoders_:
+                mapping = self.mappings_[col]
+                se_map = mapping["woe_se"].to_dict()
+                fallback = float(mapping["woe_se"].mean())
+                se_matrix[:, i] = X_processed[col].map(se_map).fillna(fallback).to_numpy()
+
+        # Var(sum of WOEs) = sum of Var(WOE_i)  (features are independent)
+        total_se = np.sqrt((se_matrix**2).sum(axis=1))
+
+        # Total WOE score on logit scale
+        woe_score = X_woe.values.sum(axis=1) + np.log(self.odds_prior_)
+
+        logit_lower = woe_score - z_crit * total_se
+        logit_upper = woe_score + z_crit * total_se
 
         prob_lower = sigmoid(logit_lower)
         prob_upper = sigmoid(logit_upper)
 
-        # Return numpy array with shape (n_samples, 2)
         result = np.column_stack([prob_lower, prob_upper])
         return np.asarray(result, dtype=float)  # type: ignore[no-any-return]
 

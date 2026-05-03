@@ -1,5 +1,20 @@
 # Changelog
 
+## Version 0.1.7.2 (2026-05-03)
+
+**Fix predict_ci: correct variance propagation and vectorize**
+
+### Bug Fixes
+
+- **`predict_ci()`**: Fixed confidence interval calculation for predicted probabilities
+  - Previous: summed per-feature CI bounds (SE additive), producing overly conservative intervals
+  - Corrected: variances add across independent features, `SE(total) = √(Σ SE_i²)`
+  - See Section 3 of the WOE standard errors paper for the derivation
+
+### Performance
+
+- **`predict_ci()`**: Replaced double nested loop (O(n_rows × n_features) `.iloc` calls) with vectorized `.map()` per feature — significant speedup on large datasets
+
 ## Version 0.1.7.1 (2026-05-03)
 
 **Unified Transform API & Cleanup**

@@ -19,7 +19,7 @@ from .interpret_fastwoe import WeightOfEvidence
 from .metrics import gini_contributions
 from .plots import plot_performance, visualize_woe
 
-__version__ = "0.1.7.1"
+__version__ = "0.1.7.2"
 __author__ = "xRiskLab"
 __email__ = "contact@xrisklab.ai"
 
