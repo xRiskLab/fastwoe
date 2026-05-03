@@ -955,23 +955,38 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
 
         return result
 
-    def transform(self, X: Union[pd.DataFrame, np.ndarray, pd.Series]) -> pd.DataFrame:
+    _VALID_OUTPUTS = {"woe", "woe_norm", "wald", "woe_upper_ci", "woe_lower_ci"}
+
+    def transform(
+        self,
+        X: Union[pd.DataFrame, np.ndarray, pd.Series],
+        output: str = "woe",
+    ) -> pd.DataFrame:
         """
-        Transform features to Weight of Evidence (WOE) values.
+        Transform features to Weight of Evidence (WOE) values or derived statistics.
 
         Parameters
         ----------
         X : Union[pd.DataFrame, np.ndarray, pd.Series]
-            Input DataFrame with features to transform. If numpy array, will be converted to DataFrame with generic column names.
+            Input DataFrame with features to transform. If numpy array, will be
+            converted to DataFrame with generic column names.
             If Series, will be converted to single-column DataFrame.
+        output : str, default="woe"
+            Type of output to return:
+            - "woe": WOE values (default)
+            - "woe_norm": Normalized WOE scores (WOE / SE)
+            - "wald": Wald statistic per feature ((WOE + prior log-odds) / SE)
+            - "woe_upper_ci": Upper 95 % confidence bound of WOE
+            - "woe_lower_ci": Lower 95 % confidence bound of WOE
 
         Returns:
         -------
         pd.DataFrame
-            DataFrame with same shape as input, but with WOE values
-            instead of categorical values. Column names are preserved.
+            DataFrame with same shape as input, values determined by *output*.
 
         """
+        if output not in self._VALID_OUTPUTS:
+            raise ValueError(f"output must be one of {sorted(self._VALID_OUTPUTS)}, got '{output}'")
         # Convert input to DataFrame consistently
         X = self._ensure_dataframe(X, use_fitted_names=True)
 
@@ -998,19 +1013,32 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
             # Binary or continuous case
             mapping = self.mappings_[col]
 
-            # Create a mapping dictionary from category to WOE
-            category_to_woe = mapping["woe"].to_dict()
-
-            # Apply WOE mapping to each value
-            woe_values = []
-            for val in X_processed[col]:
-                if val in category_to_woe:
-                    woe_values.append(category_to_woe[val])
+            # Build the lookup dict based on requested output
+            if output == "woe":
+                cat_to_value = mapping["woe"].to_dict()
+            elif output == "woe_upper_ci":
+                cat_to_value = mapping["woe_ci_upper"].to_dict()
+            elif output == "woe_lower_ci":
+                cat_to_value = mapping["woe_ci_lower"].to_dict()
+            elif output == "woe_norm":
+                woe_vals = mapping["woe"]
+                se_vals = mapping["woe_se"]
+                cat_to_value = (woe_vals / se_vals.replace(0, np.nan)).fillna(0).to_dict()
+            else:  # wald
+                if self.y_prior_ is None:
+                    raise ValueError("y_prior_ is required for Wald output")
+                if isinstance(self.y_prior_, dict):
+                    prior = self.y_prior_[list(self.y_prior_.keys())[0]]
                 else:
-                    # Handle unseen categories - use default WOE or prior
-                    woe_values.append(0.0)  # or np.log(self.odds_prior_) for prior
+                    prior = self.y_prior_
+                prior_log_odds = np.log(prior / (1 - prior))
+                woe_vals = mapping["woe"]
+                se_vals = mapping["woe_se"]
+                cat_to_value = (
+                    ((woe_vals + prior_log_odds) / se_vals.replace(0, np.nan)).fillna(0).to_dict()
+                )
 
-            woe_columns[col] = woe_values
+            woe_columns[col] = [cat_to_value.get(val, 0.0) for val in X_processed[col]]
 
         # Create DataFrame from dict to avoid fragmentation warning
         if woe_columns:
@@ -1609,82 +1637,25 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
     def transform_standardized(
         self,
         X: pd.DataFrame,
-        output="woe",
+        output: str = "woe",
         col_name: Optional[str] = None,
     ) -> pd.DataFrame:
+        """Transform features to standardized WOE scores or Wald statistics.
+
+        .. deprecated:: 0.1.7.1
+            Use ``transform(X, output="woe_norm")`` or ``transform(X, output="wald")`` instead.
         """
-        Transform features to standardized WOE scores or Wald statistics.
-
-        Parameters
-        ----------
-        X : pd.DataFrame
-            Input features to transform
-        output : str, default="woe"
-            Type of output to return:
-            - "woe": Return standardized WOE scores (WOE / SE) for each feature
-            - "wald": Return overall Wald statistic (sum of squared z-scores)
-        col_name : str, optional
-            If specified, only return results for this column
-
-        Returns:
-        -------
-        pd.DataFrame
-            Standardized scores based on output parameter
-
-        """
-        if not self.is_fitted_:
-            raise ValueError("Model must be fitted before calling transform_standardized")
-
-        # Get WOE-transformed features
-        X_woe = self.transform(X)
-
-        # Filter to specific column if requested
-        if col_name and col_name in X.columns:
-            cols_to_process: list[str] = [col_name]
-        else:
-            cols_to_process = list(X.columns)
-        cols_to_process = [col for col in cols_to_process if col in self.encoders_]
-
-        # Calculate standardized WOE scores (z-scores)
-        z_scores = pd.DataFrame(index=X.index)
-
-        for col in cols_to_process:
-            mapping = self.mappings_[col]
-            z_col = np.zeros(len(X))
-
-            # For each row, calculate z-score
-            for i in range(len(X)):
-                cat_value = X.iloc[i][col]
-
-                # Look up WOE and SE in mapping
-                if cat_value in mapping.index:
-                    woe_se = mapping.loc[cat_value, "woe_se"]
-                else:
-                    # For unseen categories, use average SE
-                    woe_se = mapping["woe_se"].mean()
-
-                woe_val = X_woe.iloc[i][col]
-                if output == "woe":
-                    z_col[i] = woe_val / woe_se if woe_se > 0 else 0
-                elif output == "wald":
-                    if self.y_prior_ is None:
-                        raise ValueError("Model must be fitted before calculating Wald statistics")
-                    # Handle both binary (float) and multiclass (dict) priors
-                    if isinstance(self.y_prior_, dict):
-                        # For multiclass, use the first class prior (main class)
-                        first_class = list(self.y_prior_.keys())[0]
-                        prior = self.y_prior_[first_class]
-                    else:
-                        prior = self.y_prior_
-                    prior_log_odds = np.log(prior / (1 - prior))
-                    final_log_odds = woe_val + prior_log_odds
-                    z_col[i] = final_log_odds / woe_se if woe_se > 0 else 0
-                else:
-                    raise ValueError("output must be 'woe' or 'wald'")
-
-            z_scores[col] = z_col
-
-        return z_scores
+        warnings.warn(
+            "transform_standardized() is deprecated. "
+            "Use transform(X, output='woe_norm') or transform(X, output='wald') instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        mapped = {"woe": "woe_norm", "wald": "wald"}
+        result = self.transform(X, output=mapped.get(output, output))
+        if col_name and col_name in result.columns:
+            return pd.DataFrame(result[col_name])
+        return result
 
     def predict(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
         """

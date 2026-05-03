@@ -1,6 +1,6 @@
 # FastWoe Development Makefile
 
-.PHONY: help install test test-all lint format typecheck typecheck-strict clean check-all
+.PHONY: help install test test-all lint format typecheck clean check-all
 
 help:  ## Show this help message
 	@echo "FastWoe Development Commands:"
@@ -18,8 +18,7 @@ test-all:  ## Run tests across all supported Python versions (3.9 → 3.14)
 		echo "\n▶ Python $$ver"; \
 		uv run --python $$ver pytest tests/ -q -m "not compatibility" || exit 1; \
 	done
-	@echo "\n✅ All versions passed"
-
+	@echo "\n[SUCCESS] All versions passed"
 
 lint:  ## Run linting
 	uv run ruff check fastwoe
@@ -30,28 +29,10 @@ format:  ## Format code
 format-check:  ## Check code formatting
 	uv run ruff format --check fastwoe
 
-typecheck:  ## Run type checking (lenient mode)
-	@echo "Running ty type checking..."
-	@uv run ty check fastwoe/fastwoe.py fastwoe/interpret_fastwoe.py || { \
-		echo "⚠️  Type checking completed with some remaining errors."; \
-		echo "   Remaining errors are expected for pandas/numpy/faiss usage."; \
-		echo "✅ Development mode: Treating expected type errors as success"; \
-		exit 0; \
-	}
-	@echo "✅ Type checking passed"
-
-mypy:  ## Run mypy type checking
+typecheck:  ## Run mypy type checking
 	@echo "Running mypy type checking..."
 	@uv run mypy fastwoe/ --check-untyped-defs
-	@echo "✅ Mypy type checking passed"
-
-typecheck-strict:  ## Run type checking (strict mode)
-	@echo "Running ty type checking (strict mode)..."
-	@echo "🔒 Strict mode enabled"
-	@uv run ty check fastwoe/fastwoe.py fastwoe/interpret_fastwoe.py || { \
-		echo "⚠️  Strict type checking found issues (expected for pandas/numpy code)"; \
-		exit 1; \
-	}
+	@echo "[SUCCESS] Mypy type checking passed"
 
 clean:  ## Clean build artifacts and virtual environments
 	rm -rf build/
@@ -64,19 +45,10 @@ clean:  ## Clean build artifacts and virtual environments
 	find . -type d -name ".pytest_cache" -exec rm -rf {} +
 	find . -type d -name ".ruff_cache" -exec rm -rf {} +
 
-check-all: format-check lint typecheck mypy  ## Run all checks (format, lint, typecheck, mypy)
+check-all: format-check lint typecheck  ## Run all checks (format, lint, typecheck)
 
 # CI-friendly target
-ci-check: format-check lint  ## Run CI checks (without strict type checking)
-	@echo "🔍 Running type checking in CI mode..."
-	@echo "This mode ignores expected pandas/numpy/faiss type complexity"
-	@uv run ty check fastwoe/fastwoe.py fastwoe/interpret_fastwoe.py || { \
-		echo "⚠️  Type checking completed with some remaining errors."; \
-		echo "   Remaining errors are expected for pandas/numpy/faiss usage."; \
-		echo "🔧 CI mode: Treating expected type errors as success"; \
-		exit 0; \
-	}
-	@echo "✅ CI type checking passed"
+ci-check: format-check lint  ## Run CI checks (format, lint, typecheck)
 	@echo "🔍 Running mypy type checking..."
 	@uv run mypy fastwoe/ --check-untyped-defs
-	@echo "✅ Mypy type checking passed"
+	@echo "[SUCCESS] Mypy type checking passed"

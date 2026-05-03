@@ -173,7 +173,6 @@ dev = [
     "matplotlib>=3.5.0",
     "seaborn>=0.11.0",
     "rich>=13.7.0", # Required for pretty printing
-    "ty>=0.0.1a21",
     "mypy>=1.11.0", # Type checker
     "faiss-cpu>=1.12.0", # Required for FAISS tests
     "pandas-stubs>=2.0.0", # Type stubs for pandas (for mypy/type checking)
@@ -213,29 +212,6 @@ max-line-length = 88
 good-names = ["i", "j", "k", "ex", "Run", "_", "X", "y"]
 # Add typings directory to Python path for type checking
 init-hook = "import sys; sys.path.insert(0, 'typings')"
-
-# ty type checker configuration
-[tool.ty.rules]
-unresolved-reference = "ignore"
-possibly-missing-attribute = "ignore"
-unresolved-import = "ignore"
-
-# Include our type stubs directory in the src path
-[tool.ty.src]
-include = ["typings"]
-
-[[tool.ty.overrides]]
-include = ["examples/**"]
-[tool.ty.overrides.rules]
-unresolved-import = "ignore"
-unsupported-operator = "ignore"
-
-# Ignore errors in deployment code but provide type stubs
-[[tool.ty.overrides]]
-include = ["deployment/**"]
-[tool.ty.overrides.rules]
-no-matching-overload = "ignore"
-unresolved-attribute = "ignore"
 
 # mypy type checker configuration
 [tool.mypy]
