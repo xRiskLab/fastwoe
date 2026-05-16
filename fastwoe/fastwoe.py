@@ -19,6 +19,7 @@ from sklearn.preprocessing import KBinsDiscretizer, TargetEncoder
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
 from .fastwoe_multiclass import MulticlassWoeMixin
+from .fastwoe_piecewise import PiecewiseWoeMixin
 from .metrics import somersd_se, somersd_yx
 
 
@@ -142,7 +143,7 @@ class WoePreprocessor(BaseEstimator, TransformerMixin):
         return pd.DataFrame(summary)
 
 
-class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
+class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin):  # pylint: disable=invalid-name
     """
     Fast Weight of Evidence (WOE) Encoder using scikit-learn's TargetEncoder.
     Stores mapping tables for each categorical feature, including:
@@ -955,7 +956,7 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
 
         return result
 
-    _VALID_OUTPUTS = {"woe", "woe_norm", "wald", "woe_upper_ci", "woe_lower_ci"}
+    _VALID_OUTPUTS = {"woe", "woe_norm", "wald", "woe_upper_ci", "woe_lower_ci", "piecewise"}
 
     def transform(
         self,
@@ -992,6 +993,10 @@ class FastWoe(MulticlassWoeMixin):  # pylint: disable=invalid-name
 
         if not self.is_fitted_:
             raise ValueError("Model must be fitted before transforming data")
+
+        # Piecewise output: delegate to PiecewiseWoeMixin
+        if output == "piecewise":
+            return self._transform_piecewise(X)
 
         if not self.is_multiclass_target and (
             self.y_prior_ is None or isinstance(self.y_prior_, dict)
