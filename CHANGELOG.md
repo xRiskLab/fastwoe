@@ -1,5 +1,20 @@
 # Changelog
 
+## Version 0.1.8 (2026-06-12)
+
+**Piecewise WOE Output Mode (Anderson, 2015)**
+
+### New Features
+
+- **`transform(X, output="piecewise")`**: Piecewise weight-of-evidence per Anderson (2015)
+  - New `PiecewiseWoeMixin` groups WOE bins into pieces, so each piece gets its own logistic-regression coefficient
+  - `assign_pieces()` supports sign-based auto-assignment and custom piece maps
+  - Raises for multiclass targets (binary/continuous only)
+  - Added `"piecewise"` to the valid `transform()` output modes
+- Includes `docs/piecewise_woe_guide.md` and `examples/notebooks/fastwoe_piecewise.ipynb`
+
+> Bundles the previously unpublished 0.1.7.1 (unified transform API) and 0.1.7.2 (predict_ci variance fix) changes — see entries below.
+
 ## Version 0.1.7.2 (2026-05-03)
 
 **Fix predict_ci: correct variance propagation and vectorize**
