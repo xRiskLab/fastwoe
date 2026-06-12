@@ -69,6 +69,8 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # mandatory for PyPI trusted publishing
     steps:
     - name: Download build artifacts
       uses: actions/download-artifact@v4
@@ -78,8 +80,6 @@ jobs:
 
     - name: Publish to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
-      with:
-        password: ${{ secrets.PYPI_API_TOKEN }}
 
   create-release:
     needs: build
