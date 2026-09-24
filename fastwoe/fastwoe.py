@@ -2,6 +2,7 @@
 
 import contextlib
 import warnings
+from collections import Counter
 from typing import TYPE_CHECKING, Any, Optional, Union, cast
 
 if TYPE_CHECKING:
@@ -203,6 +204,7 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin):  # pylint: disable=invalid
         tree_kwargs=None,
         faiss_kwargs=None,
         monotonic_cst=None,
+        unseen="warn",
     ):
         super().__init__()
         # Set up encoder kwargs - will be updated in fit() based on target type
@@ -268,6 +270,12 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin):  # pylint: disable=invalid
                     stacklevel=2,
                 )
 
+        # How transform() treats a category absent from the fitted mapping:
+        # an unseen level, or a missing value when the training data had none.
+        if unseen not in ("warn", "prior", "raise"):
+            raise ValueError(f"unseen must be 'warn', 'prior' or 'raise', got {unseen!r}")
+        self.unseen = unseen
+
         self.encoders_: dict[str, Any] = {}
         self.mappings_: dict[str, pd.DataFrame] = {}
         self.feature_stats_: dict[str, dict[str, Any]] = {}
@@ -278,6 +286,8 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin):  # pylint: disable=invalid
         self.is_fitted_: bool = False
         self.is_continuous_target: Optional[bool] = None
         self.is_binary_target: Optional[bool] = None
+        # {column: {category: count}} for the most recent transform()
+        self.unseen_counts_: dict[str, dict[Any, int]] = {}
 
     def _setup_binner_kwargs(
         self, binning_method, binner_kwargs, tree_kwargs, faiss_kwargs, random_state
@@ -958,6 +968,30 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin):  # pylint: disable=invalid
 
     _VALID_OUTPUTS = {"woe", "woe_norm", "wald", "woe_upper_ci", "woe_lower_ci", "piecewise"}
 
+    def _handle_unseen(self, col: str, unseen: Counter, n_rows: int) -> None:
+        """React to categories absent from the fitted mapping for `col`.
+
+        These fall back to WOE 0, which is not "no information": it asserts
+        that the bin's odds equal the prior odds. That is a real claim and
+        usually a wrong one - a missing value the training data never showed
+        often carries substantial weight - so by default we say so.
+        """
+        n = sum(unseen.values())
+        shown = ", ".join(f"{c!r} ({k})" for c, k in unseen.most_common(5))
+        if len(unseen) > 5:
+            shown += f", +{len(unseen) - 5} more"
+        msg = (
+            f"{n} of {n_rows} rows in '{col}' have categories not seen during fit: "
+            f"{shown}. They are encoded as WOE 0.0, i.e. the prior odds. "
+            f"If these are missing values, fit on data that contains them so a "
+            f"'Missing' bin is learned. Set unseen='prior' to silence this, or "
+            f"unseen='raise' to fail instead."
+        )
+        if self.unseen == "raise":
+            raise ValueError(msg)
+        if self.unseen == "warn":
+            warnings.warn(msg, UserWarning, stacklevel=3)
+
     def transform(
         self,
         X: Union[pd.DataFrame, np.ndarray, pd.Series],
@@ -1012,6 +1046,7 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin):  # pylint: disable=invalid
 
         # Collect all WOE columns first to avoid DataFrame fragmentation
         woe_columns = {}
+        self.unseen_counts_ = {}
         for col in X_processed.columns:
             if self.is_multiclass_target:
                 return self._transform_multiclass(X_processed)
@@ -1043,7 +1078,12 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin):  # pylint: disable=invalid
                     ((woe_vals + prior_log_odds) / se_vals.replace(0, np.nan)).fillna(0).to_dict()
                 )
 
-            woe_columns[col] = [cat_to_value.get(val, 0.0) for val in X_processed[col]]
+            values = X_processed[col]
+            unseen = Counter(v for v in values if v not in cat_to_value)
+            if unseen:
+                self.unseen_counts_[col] = dict(unseen)
+                self._handle_unseen(col, unseen, len(values))
+            woe_columns[col] = [cat_to_value.get(val, 0.0) for val in values]
 
         # Create DataFrame from dict to avoid fragmentation warning
         if woe_columns:
