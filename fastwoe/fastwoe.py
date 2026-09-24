@@ -19,6 +19,7 @@ from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import KBinsDiscretizer, TargetEncoder
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
+from .fastwoe_conditional import ConditionalWoeMixin
 from .fastwoe_multiclass import MulticlassWoeMixin
 from .fastwoe_piecewise import PiecewiseWoeMixin
 from .metrics import somersd_se, somersd_yx
@@ -144,7 +145,7 @@ class WoePreprocessor(BaseEstimator, TransformerMixin):
         return pd.DataFrame(summary)
 
 
-class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin):  # pylint: disable=invalid-name
+class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # pylint: disable=invalid-name
     """
     Fast Weight of Evidence (WOE) Encoder using scikit-learn's TargetEncoder.
     Stores mapping tables for each categorical feature, including:
