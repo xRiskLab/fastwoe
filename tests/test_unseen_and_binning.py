@@ -104,9 +104,7 @@ class TestMissingBucket:
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             out = woe.transform(pd.DataFrame({"num": [np.nan]}))
-        assert out["num"].iloc[0] == pytest.approx(
-            woe.mappings_["num"].loc["Missing", "woe"]
-        )
+        assert out["num"].iloc[0] == pytest.approx(woe.mappings_["num"].loc["Missing", "woe"])
 
     def test_nan_unseen_at_fit_is_flagged(self, num_data):
         """The gap: fitted without NaN, scored with NaN, silently the prior."""

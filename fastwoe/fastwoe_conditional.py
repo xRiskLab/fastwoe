@@ -23,7 +23,8 @@ features, not the score.
 from __future__ import annotations
 
 import warnings
-from typing import Any, Optional
+from collections import Counter
+from typing import Any, Optional, cast
 
 import numpy as np
 import pandas as pd
@@ -38,6 +39,15 @@ class ConditionalWoeMixin:
     :meth:`_calculate_woe_se`.
     """
 
+    # set in FastWoe
+    mappings_: dict[str, pd.DataFrame]
+    binners_: dict[str, Any]
+    is_binary_target: Optional[bool]
+    odds_prior_: Optional[float]
+    _apply_binning_to_column: Any
+    _calculate_woe_se: Any
+    _handle_unseen: Any
+
     # populated by fit_conditional()
     conditional_order_: list[str]
     conditional_weights_: dict[tuple[str, tuple], pd.DataFrame]
@@ -50,11 +60,18 @@ class ConditionalWoeMixin:
 
     def _binned_frame(self, X: pd.DataFrame) -> pd.DataFrame:
         """Apply the fitted binners, so conditioning happens on bins."""
-        out = X.copy()
+        out = cast(pd.DataFrame, X.copy())
         for col in X.columns:
             if col in self.binners_:
                 out[col] = self._apply_binning_to_column(out, col)
         return out
+
+    @staticmethod
+    def _is(column: pd.Series, value: Any) -> np.ndarray:
+        """Rows of ``column`` equal to ``value``, where NaN matches NaN."""
+        if pd.isna(value):
+            return np.asarray(column.isna(), dtype=bool)
+        return np.asarray(column == value, dtype=bool)
 
     @staticmethod
     def _counts(mask: np.ndarray, y: np.ndarray) -> tuple[int, int]:
@@ -104,6 +121,8 @@ class ConditionalWoeMixin:
         """
         if not getattr(self, "is_fitted_", False):
             raise ValueError("call fit() before fit_conditional()")
+        if not self.is_binary_target:
+            raise ValueError("Conditional WOE is only supported for binary (0/1) targets")
         missing = [c for c in order if c not in X.columns]
         if missing:
             raise ValueError(f"features not in X: {missing}")
@@ -125,11 +144,11 @@ class ConditionalWoeMixin:
             for path in paths:
                 mask = np.ones(len(Xb), dtype=bool)
                 for c, v in zip(prev, path):
-                    mask &= (Xb[c] == v).to_numpy()
+                    mask &= self._is(Xb[c], v)
                 bad_tot, good_tot = self._counts(mask, yv)
                 rows = []
                 for value in sorted(Xb.loc[mask, col].unique(), key=str):
-                    cell = mask & (Xb[col] == value).to_numpy()
+                    cell = mask & self._is(Xb[col], value)
                     bad_sel, good_sel = self._counts(cell, yv)
                     thin = min(bad_tot, good_tot) < self.min_cell_count_
                     woe, se = self._weight(bad_sel, good_sel, bad_tot, good_tot)
@@ -169,9 +188,7 @@ class ConditionalWoeMixin:
                 paths = [
                     (*p, v)
                     for p in paths
-                    for v in self.conditional_weights_.get(
-                        (col, p), pd.DataFrame()
-                    ).index
+                    for v in self.conditional_weights_.get((col, p), pd.DataFrame()).index
                 ]
 
         if self.conditional_fallbacks_:
@@ -207,6 +224,7 @@ class ConditionalWoeMixin:
         order = self.conditional_order_
         Xb = self._binned_frame(X[order])
         out = pd.DataFrame(index=X.index, columns=order, dtype=float)
+        unseen: dict[str, Counter] = {col: Counter() for col in order}
         for pos, row in enumerate(Xb.itertuples(index=False)):
             values = dict(zip(order, row))
             for depth, col in enumerate(order):
@@ -214,15 +232,22 @@ class ConditionalWoeMixin:
                 table = self.conditional_weights_.get((col, path))
                 value = values[col]
                 if table is None or value not in table.index:
+                    if value not in self.mappings_[col].index:
+                        unseen[col][value] += 1
                     woe, _ = self._marginal_weight(col, value)
                 else:
                     woe = float(table.loc[value, "woe"])
                 out.iloc[pos, depth] = woe
+        # unseen categories follow the same policy as transform()
+        self.unseen_counts_ = {col: dict(c) for col, c in unseen.items() if c}
+        for col, counts in unseen.items():
+            if counts:
+                self._handle_unseen(col, counts, len(X))
         return out
 
     def predict_conditional_log_odds(self, X: pd.DataFrame) -> np.ndarray:
         """Prior log-odds plus the conditional weights: the scorecard score."""
-        prior = float(np.log(self.odds_prior_))
+        prior = float(np.log(cast(float, self.odds_prior_)))
         return prior + self.transform_conditional(X).sum(axis=1).to_numpy()
 
     # ------------------------------------------------------------------
@@ -237,16 +262,14 @@ class ConditionalWoeMixin:
         for (col, path), table in self.conditional_weights_.items():
             if feature is not None and col != feature:
                 continue
-            given = ", ".join(
-                f"{c}={v}" for c, v in zip(self.conditional_order_, path)
-            )
+            given = ", ".join(f"{c}={v}" for c, v in zip(self.conditional_order_, path))
             frame = table.reset_index()
             frame.insert(0, "given", given or "-")
             frame.insert(0, "feature", col)
             frames.append(frame)
         if not frames:
             return pd.DataFrame()
-        return pd.concat(frames, ignore_index=True)
+        return cast(pd.DataFrame, pd.concat(frames, ignore_index=True))
 
     def check_chain_rule(self, X: pd.DataFrame, y: pd.Series, tol: float = 1e-9) -> dict:
         """Verify the weights add to the joint weight of evidence.
@@ -261,8 +284,8 @@ class ConditionalWoeMixin:
         bad_tot, good_tot = self._counts(np.ones(len(Xb), dtype=bool), yv)
         checked = failed = skipped = 0
         worst = 0.0
-        for combo, group in Xb.groupby(order, observed=True):
-            combo = combo if isinstance(combo, tuple) else (combo,)
+        for key, group in Xb.groupby(order, observed=True, dropna=False):
+            combo: tuple[Any, ...] = key if isinstance(key, tuple) else (key,)
             mask = np.zeros(len(Xb), dtype=bool)
             mask[Xb.index.get_indexer(group.index)] = True
             bad_sel, good_sel = self._counts(mask, yv)
