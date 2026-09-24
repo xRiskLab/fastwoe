@@ -13,11 +13,15 @@ Features:
 - StyledDataFrame: Rich HTML rendering for Jupyter notebooks
 """
 
-from .display import StyledDataFrame, iv_styled, style_iv_analysis, style_woe_mapping, styled
-from .fastwoe import FastWoe, WoePreprocessor
-from .interpret_fastwoe import WeightOfEvidence
-from .metrics import gini_contributions
-from .plots import plot_performance, visualize_woe
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .display import StyledDataFrame, iv_styled, style_iv_analysis, style_woe_mapping, styled
+    from .fastwoe import FastWoe, WoePreprocessor
+    from .interpret_fastwoe import WeightOfEvidence
+    from .metrics import gini_contributions
+    from .plots import plot_performance, visualize_woe
 
 __version__ = "0.1.8"
 __author__ = "xRiskLab"
@@ -36,3 +40,31 @@ __all__ = [
     "iv_styled",
     "gini_contributions",
 ]
+
+# Submodules load on first use, so `from fastwoe.metrics import ...` or
+# `from fastwoe.plots import ...` does not pull in scikit-learn.
+_LAZY = {
+    "FastWoe": "fastwoe",
+    "WoePreprocessor": "fastwoe",
+    "WeightOfEvidence": "interpret_fastwoe",
+    "plot_performance": "plots",
+    "visualize_woe": "plots",
+    "StyledDataFrame": "display",
+    "style_iv_analysis": "display",
+    "style_woe_mapping": "display",
+    "styled": "display",
+    "iv_styled": "display",
+    "gini_contributions": "metrics",
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name in _LAZY:
+        value = getattr(import_module(f".{_LAZY[name]}", __name__), name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
