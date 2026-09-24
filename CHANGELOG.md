@@ -1,5 +1,24 @@
 # Changelog
 
+## Version 0.1.9 (2026-09-24)
+
+**Numeric Binning Fix, Unseen Categories & Conditional WOE**
+
+### Bug Fixes
+
+- **Numeric bins at transform time**: `transform()` assigned each tree-binned value to the bin below the one it was fitted in, so values were scored with a neighbouring bin's WOE. Transform now uses the same right-inclusive `(a, b]` intervals as `fit()`.
+- **Missing values in numeric features**: a NaN in a feature that had no missing values during fit, or any category unseen at fit, was silently scored as WOE 0 (the prior odds). This is now surfaced (see `unseen` below).
+
+### New Features
+
+- **`FastWoe(unseen="warn" | "prior" | "raise")`**: controls how categories absent from the fitted mapping are handled. The default warns with column and counts; `unseen_counts_` records them after each transform.
+- **Conditional WOE (Good's chain rule)**: `fit_conditional()`, `transform_conditional()`, `predict_conditional_log_odds()`, `conditional_summary()` and `check_chain_rule()` measure each feature's weight within the population selected by the earlier features, so the weights add without assuming independence. Thin cells fall back to the marginal weight and are recorded in `conditional_fallbacks_`. Binary targets only. NaN levels form their own conditioning cells, and `transform_conditional()` follows the `unseen` policy.
+- **Lightweight imports**: `fastwoe` loads its submodules on first use, so `fastwoe.metrics` and `fastwoe.plots` import without scikit-learn, loguru or rich.
+
+### Docs
+
+- Fixed the README link to `docs/woe_standard_errors.md`.
+
 ## Version 0.1.8 (2026-06-12)
 
 **Piecewise WOE Output Mode (Anderson, 2015)**

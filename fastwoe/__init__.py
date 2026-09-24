@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from .metrics import gini_contributions
     from .plots import plot_performance, visualize_woe
 
-__version__ = "0.1.8"
+__version__ = "0.1.9"
 __author__ = "xRiskLab"
 __email__ = "contact@xrisklab.ai"
 

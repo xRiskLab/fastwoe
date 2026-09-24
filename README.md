@@ -23,7 +23,7 @@ FastWoe is a Python library for efficient **Weight of Evidence (WOE)** encoding 
 - **Monotonic Constraints**: Enforce business logic constraints for credit scoring and regulatory compliance
 - **Binning Summaries**: Feature-level binning statistics including Gini score and Information Value (IV)
 - **Compatible with scikit-learn**: Follows scikit-learn's preprocessing transformer interface
-- **Uncertainty Quantification**: Combines Alan Turing's factor principle with Maximum Likelihood theory (see [paper](docs/woe_st_errors.md))
+- **Uncertainty Quantification**: Combines Alan Turing's factor principle with Maximum Likelihood theory (see [paper](docs/woe_standard_errors.md))
 
 ## 🎲 What is Weight of Evidence?
 
@@ -92,6 +92,14 @@ pip install fastwoe[plotting]
 
 > [!NOTE]
 > **Plotting Support**: Matplotlib is optional and only required for `plot_performance()` and `visualize_woe()` functions. If you only need WOE encoding, you can skip this dependency.
+
+#### Metrics and Plots Only
+`fastwoe.metrics` and `fastwoe.plots` load without scikit-learn, so importing them is fast and does not initialise the WOE encoder:
+
+```python
+from fastwoe.metrics import somersd_yx, gini_contributions
+from fastwoe.plots import plot_performance
+```
 
 ### From Source
 ```bash
@@ -299,6 +307,32 @@ X_wald = woe_encoder.transform(X_preprocessed, output='wald')           # Wald s
 X_upper = woe_encoder.transform(X_preprocessed, output='woe_upper_ci')  # Upper 95% CI
 X_lower = woe_encoder.transform(X_preprocessed, output='woe_lower_ci')  # Lower 95% CI
 ```
+
+### Unseen Categories and Missing Values
+A category absent at fit time, including a missing value in a numeric feature that had no missing values in training, has no learned weight and is encoded as WOE 0 (the prior odds). `FastWoe(unseen=...)` controls what happens then:
+
+```python
+FastWoe(unseen="warn")   # default: encode as WOE 0 and warn with column and counts
+FastWoe(unseen="prior")  # encode as WOE 0 silently
+FastWoe(unseen="raise")  # fail, e.g. for validation runs
+woe_encoder.unseen_counts_  # {column: {category: count}} from the last transform
+```
+
+Fit on data that contains missing values so a `Missing` bin is learned.
+
+### Conditional WOE
+Summing marginal WOE is exact only when features are independent. Conditional WOE uses Good's chain rule, `W(H : E1 E2) = W(H : E1) + W(H : E2 | E1)`, so each weight is measured within the population picked out by the features before it (binary targets only):
+
+```python
+woe_encoder.fit(X, y)
+woe_encoder.fit_conditional(X, y, order=["delinquent", "utilisation"], min_cell_count=30)
+contributions = woe_encoder.transform_conditional(X)      # per-feature weights, sum to the score
+log_odds = woe_encoder.predict_conditional_log_odds(X)
+woe_encoder.conditional_summary()                         # weights with counts and SEs
+woe_encoder.check_chain_rule(X, y)                        # verifies the weights add up
+```
+
+Conditioning cells with fewer than `min_cell_count` observations of either class fall back to the marginal weight and are listed in `conditional_fallbacks_`. The order changes how weight is attributed across features but not the total score.
 
 ### Numerical Feature Binning
 
