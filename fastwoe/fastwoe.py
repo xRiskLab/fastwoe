@@ -893,8 +893,8 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin):  # pylint: disable=invalid
                 bin_edges = np.array(binning_info["bin_edges"])
                 col_data = X_col[~mask_missing][col]
                 col_values = col_data.values if hasattr(col_data, "values") else np.array(col_data)
-                binned_values = np.digitize(col_values, bin_edges[1:-1], right=False)
-                binned_values = np.clip(binned_values - 1, 0, len(bin_edges) - 2)
+                binned_values = np.digitize(col_values, bin_edges[1:-1], right=True)
+                binned_values = np.clip(binned_values, 0, len(bin_edges) - 2)
                 result.loc[~mask_missing] = binned_values
             elif binning_info.get("method") == "faiss_kmeans":
                 faiss_model = binner
