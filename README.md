@@ -283,10 +283,14 @@ print(iv_analysis)
 
 **Output:**
 ```
-          feature     iv  iv_se  iv_ci_lower  iv_ci_upper iv_significance
-    strong_feature 0.1901 0.0256       0.1398       0.2403     Significant
-      weak_feature 0.0040 0.0035       0.0000       0.0108 Not Significant
+       feature     iv  iv_se  iv_ci_lower  iv_ci_upper  iv_pvalue iv_significance
+strong_feature 0.1571 0.0283       0.1016       0.2126     0.0000     Significant
+  weak_feature 0.0035 0.0042       0.0000       0.0117     0.4454 Not Significant
 ```
+
+- **`iv_se`** is the delta-method standard error with both the WOE values and the weights `(b - g)` treated as estimated: `Var(IV) = Var_B(WOE - g/b)/n_bad + Var_G(WOE + b/g)/n_good`. Holding the weights fixed understates it by about half.
+- **`iv_pvalue`** tests IV = 0 with a chi-square test: under no predictive power, `n_eff * IV ~ chi2(k - 1)` with `n_eff = n_bad * n_good / (n_bad + n_good)` (computed as Pearson's X², which stays finite for bins holding one class). `iv_significance` is `p < alpha`. A normal test `IV / SE` does not work here: IV is never negative and is not normal near 0.
+- **Noise has positive IV.** Under no predictive power, `E[IV] ≈ (k - 1) / n_eff`: `weak_feature` above (IV 0.0035, p = 0.45) is at that level. Many bins and few bads raise it.
 
 Additionally, we can calculate the standard error of IV for a specific feature using the `get_iv_analysis` method.
 

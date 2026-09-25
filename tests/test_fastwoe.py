@@ -474,19 +474,12 @@ class TestFastWoe:
 
         # Get IV analysis
         iv_stats = woe.get_iv_analysis("feature")
-        iv_se = iv_stats["iv_se"].iloc[0]
 
-        # IV standard error should be positive for non-trivial cases
-        assert iv_se >= 0
-
-        # Test confidence interval width is reasonable (2 * 1.96 * SE for 95% CI)
-        ci_width = iv_stats["iv_ci_upper"].iloc[0] - iv_stats["iv_ci_lower"].iloc[0]
-        expected_width = 2 * 1.96 * iv_se
-        # Allow for small numerical differences and lower bound truncation at 0
-        # The difference can be larger due to lower bound truncation at 0
-        assert (
-            abs(ci_width - expected_width) < 2.0
-        )  # Should be reasonably close to theoretical width
+        # Perfect separation: every bin holds one class only, so IV is infinite
+        # and has no standard error; the chi-square test still rejects H0.
+        assert np.isnan(iv_stats["iv_se"].iloc[0])
+        assert iv_stats["iv_pvalue"].iloc[0] < 1e-10
+        assert iv_stats["iv_significance"].iloc[0] == "Significant"
 
     def test_predict_proba(self, sample_data):
         """Test predict_proba method."""

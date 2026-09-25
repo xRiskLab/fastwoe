@@ -22,7 +22,7 @@ from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from .fastwoe_conditional import ConditionalWoeMixin
 from .fastwoe_multiclass import MulticlassWoeMixin
 from .fastwoe_piecewise import PiecewiseWoeMixin
-from .metrics import somersd_se, somersd_yx
+from .metrics import _iv_chi2_test, _iv_standard_error, somersd_se, somersd_yx
 
 
 class WoePreprocessor(BaseEstimator, TransformerMixin):
@@ -525,66 +525,56 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
                 iv += (bad_rate - good_rate) * row["woe"]
         return iv
 
+    @staticmethod
+    def _iv_class_counts(mapping_df):
+        """Per-bin (bad, good) counts.
+
+        Uses the mapping's rounded ``bad_count`` / ``good_count``: the smoothed
+        ``event_rate`` would turn a bin with no goods into one with 0.00003 of a
+        good, which the SE's g/b terms then blow up.
+        """
+        if {"bad_count", "good_count"} <= set(mapping_df.columns):
+            return (
+                mapping_df["bad_count"].to_numpy(dtype=float),
+                mapping_df["good_count"].to_numpy(dtype=float),
+            )
+        count = mapping_df["count"].to_numpy(dtype=float)
+        event_rate = mapping_df["event_rate"].to_numpy(dtype=float)
+        return count * event_rate, count * (1 - event_rate)
+
     def _calculate_iv_standard_error(self, mapping_df, total_good, total_bad):
         """
-        Calculate standard error of Information Value using delta method.
+        Standard error of Information Value by the delta method.
 
-        Mathematical Framework:
-        ----------------------
-        IV = Σ_j (bad_rate_j - good_rate_j) * WOE_j
+        IV = sum_j (b_j - g_j) * WOE_j, with b_j and g_j the bin's share of bads
+        and of goods. Both the WOE and the weights (b_j - g_j) are estimated from
+        the same counts, so both vary:
 
-        Using delta method:
-        Var(IV) ≈ Σ_j (bad_rate_j - good_rate_j)² * Var(WOE_j)
-                + Σ_j WOE_j² * Var(bad_rate_j - good_rate_j)
+            Var(IV) = Var_B(WOE - g/b) / n_bad + Var_G(WOE + b/g) / n_good
 
-        Parameters
-        ----------
-        mapping_df : DataFrame
-            Mapping table with WOE statistics
-        total_good : int
-            Total number of good observations
-        total_bad : int
-            Total number of bad observations
-
-        Returns:
-        -------
-        float
-            Standard error of IV
+        where Var_B weights bins by their share of bads. Treating the weights as
+        fixed understates the SE by about half. See ``metrics._iv_standard_error``.
         """
         if total_good <= 0 or total_bad <= 0:
             return np.nan
+        bad, good = self._iv_class_counts(mapping_df)
+        return _iv_standard_error(bad, good)
 
-        iv_variance = 0.0
+    def _calculate_iv_pvalue(self, mapping_df):
+        """p-value of the chi-square test of IV = 0 (n_eff * IV ~ chi2(k - 1))."""
+        bad, good = self._iv_class_counts(mapping_df)
+        return _iv_chi2_test(bad, good)[2]
 
-        for _, row in mapping_df.iterrows():
-            # Calculate bad and good rates for this bin
-            bin_bad = row["count"] * row["event_rate"]
-            bin_good = row["count"] * (1 - row["event_rate"])
-
-            bad_rate = bin_bad / total_bad
-            good_rate = bin_good / total_good
-
-            # Weight in IV formula: (bad_rate - good_rate)
-            iv_weight = bad_rate - good_rate
-
-            # WOE standard error from mapping
-            woe_se = row.get("woe_se", 0)
-            # Delta method: Var(IV) ≈ Σ weight² * Var(WOE)
-            iv_variance += (iv_weight**2) * (woe_se**2)
-
-            # Add sampling variance for the rates
-            if bin_bad > 0 and bin_good > 0:
-                # Sampling variance of bad_rate - good_rate
-                bad_rate_var = bad_rate * (1 - bad_rate) / total_bad
-                good_rate_var = good_rate * (1 - good_rate) / total_good
-                rate_diff_var = bad_rate_var + good_rate_var
-
-                woe_value = row["woe"]
-
-                # Add contribution: WOE² * Var(rate_diff)
-                iv_variance += (woe_value**2) * rate_diff_var
-
-        return np.sqrt(iv_variance)
+    @staticmethod
+    def _iv_test_fields(stats: dict, alpha: float, prefix: str = "iv") -> dict:
+        """p-value and significance label for get_iv_analysis rows."""
+        pvalue = stats.get(f"{prefix}_pvalue", np.nan)
+        return {
+            f"{prefix}_pvalue": pvalue,
+            f"{prefix}_significance": (
+                "Significant" if pvalue is not None and pvalue < alpha else "Not Significant"
+            ),
+        }
 
     def _calculate_iv_confidence_interval(self, iv_value, iv_se, alpha=0.05):
         """
@@ -651,6 +641,7 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
         iv_value = self._calculate_iv(mapping_df, total_good, total_bad)
         iv_se = self._calculate_iv_standard_error(mapping_df, total_good, total_bad)
         iv_ci_lower, iv_ci_upper = self._calculate_iv_confidence_interval(iv_value, iv_se)
+        iv_pvalue = self._calculate_iv_pvalue(mapping_df)
 
         gini_value = self._calculate_gini(y, woe_values)
         somersd_se_val = self._calculate_somersd_se(y, woe_values)
@@ -670,6 +661,7 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
             "iv_se": iv_se,
             "iv_ci_lower": iv_ci_lower,
             "iv_ci_upper": iv_ci_upper,
+            "iv_pvalue": iv_pvalue,
             "min_woe": mapping_df["woe"].min(),
             "max_woe": mapping_df["woe"].max(),
         }
@@ -1474,14 +1466,12 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
         "conditioned_on",
     )
 
-    def _conditional_iv_columns(self, stats: dict) -> dict:
+    def _conditional_iv_columns(self, stats: dict, alpha: float = 0.05) -> dict:
         """Conditional IV fields of a feature's stats, when conditional=True."""
         if not self.conditional:
             return {}
         columns = {key: stats[key] for key in self._CONDITIONAL_IV_KEYS}
-        columns["iv_conditional_significance"] = (
-            "Significant" if stats["iv_conditional_ci_lower"] > 0 else "Not Significant"
-        )
+        columns.update(self._iv_test_fields(stats, alpha, prefix="iv_conditional"))
         return columns
 
     def get_iv_analysis(
@@ -1530,12 +1520,10 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
                         "iv_se": stats["iv_se"],
                         "iv_ci_lower": stats["iv_ci_lower"],
                         "iv_ci_upper": stats["iv_ci_upper"],
-                        "iv_significance": "Significant"
-                        if stats["iv_ci_lower"] > 0
-                        else "Not Significant",
+                        **self._iv_test_fields(stats, alpha),
                         "n_categories": stats["n_categories"],
                         "gini": stats["gini"],
-                        **self._conditional_iv_columns(stats),
+                        **self._conditional_iv_columns(stats, alpha),
                     }
                 ]
             )
@@ -1547,12 +1535,10 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
                     "iv_se": stats["iv_se"],
                     "iv_ci_lower": stats["iv_ci_lower"],
                     "iv_ci_upper": stats["iv_ci_upper"],
-                    "iv_significance": (
-                        "Significant" if stats["iv_ci_lower"] > 0 else "Not Significant"
-                    ),
+                    **self._iv_test_fields(stats, alpha),
                     "n_categories": stats["n_categories"],
                     "gini": stats["gini"],
-                    **self._conditional_iv_columns(stats),
+                    **self._conditional_iv_columns(stats, alpha),
                 }
                 for _feature_name, stats in self.feature_stats_.items()
             ]

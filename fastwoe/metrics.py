@@ -633,3 +633,110 @@ def somersd_clustered_matrix(
     global_somersd = somersd_pairwise(global_high_scores, global_low_scores, ties=ties)
 
     return somersd_matrix, global_somersd
+
+
+# ----------------------------------------------------------------------
+# Information Value inference
+# ----------------------------------------------------------------------
+
+
+def _iv_cells(
+    bad: np.ndarray, good: np.ndarray, parent: Optional[np.ndarray]
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
+    """Cells with both classes present, their parent ids, and the class totals."""
+    bad = np.asarray(bad, dtype=float)
+    good = np.asarray(good, dtype=float)
+    parent = np.zeros(len(bad), dtype=int) if parent is None else np.asarray(parent)
+    total_bad, total_good = float(bad.sum()), float(good.sum())
+    keep = (bad > 0) & (good > 0)
+    return bad[keep], good[keep], parent[keep], total_bad, total_good
+
+
+def _iv_standard_error(
+    bad: np.ndarray, good: np.ndarray, parent: Optional[np.ndarray] = None
+) -> float:
+    """Delta-method standard error of IV, or of a conditional IV.
+
+    IV = sum_i (b_i - g_i) ln(b_i / g_i), with b_i and g_i the cell's share of
+    all bads and of all goods. Bads and goods are two independent multinomial
+    samples, and both the WOE and the weights (b_i - g_i) are estimated from
+    them, so the gradient with respect to b_i is WOE_i + 1 - g_i / b_i:
+
+        Var(IV) = Var_B(WOE - g/b) / B + Var_G(WOE + b/g) / G
+
+    where Var_B is the variance across bads (cells weighted by b_i). Holding the
+    weights fixed, as sqrt(sum (b_i - g_i)^2 (1/bad_i + 1/good_i)) does, keeps
+    only part of the gradient and understates the SE by about half.
+
+    With ``parent`` (a group id per cell), the quantity is the conditional IV
+    IV(cells) - IV(parents): the IV the cells add within their parent groups.
+    Its gradient is the cell term minus the parent term, so
+
+        h_b = (WOE_i - g_i/b_i) - (WOE_p - g_p/b_p)
+        h_g = (WOE_i + b_i/g_i) - (WOE_p + b_p/g_p)
+
+    Cells missing a class are skipped, as in the IV itself. Not reliable near
+    IV = 0, where the estimator is not normal; use ``_iv_chi2_test`` there.
+    """
+    bad_k, good_k, parent_k, total_bad, total_good = _iv_cells(bad, good, parent)
+    if total_bad <= 0 or total_good <= 0 or len(bad_k) == 0:
+        return float("nan")
+    b, g = bad_k / total_bad, good_k / total_good
+    h_b = np.log(b / g) - g / b
+    h_g = np.log(b / g) + b / g
+    groups = pd.Series(parent_k)
+    bp = pd.Series(b).groupby(groups).transform("sum").to_numpy()
+    gp = pd.Series(g).groupby(groups).transform("sum").to_numpy()
+    h_b = h_b - (np.log(bp / gp) - gp / bp)
+    h_g = h_g - (np.log(bp / gp) + bp / gp)
+
+    def spread(p: np.ndarray, h: np.ndarray) -> float:
+        return float((p * h**2).sum() - (p * h).sum() ** 2)
+
+    variance = spread(b, h_b) / total_bad + spread(g, h_g) / total_good
+    return float(np.sqrt(max(variance, 0.0)))
+
+
+def _iv_chi2_test(
+    bad: np.ndarray, good: np.ndarray, parent: Optional[np.ndarray] = None
+) -> tuple[float, int, float]:
+    """Chi-square test of IV = 0: (statistic, degrees of freedom, p-value).
+
+    Under H0 (bads and goods spread the same way across cells), IV behaves like
+    a Pearson statistic: n_eff * IV ~ chi2(k - 1), with n_eff = B G / (B + G).
+    The normal approximation IV / SE does not hold there; IV is never negative.
+    The same result gives the plug-in bias under H0, E[IV] ~ (k - 1) / n_eff.
+
+    The statistic computed is Pearson's X^2 for the bads-by-goods table, which
+    n_eff * IV approximates under H0 and which, unlike IV, stays finite when a
+    cell has no bads or no goods (a perfectly separating bin is then strong
+    evidence against H0 rather than an undefined IV).
+
+    With ``parent``, it tests the conditional IV (H0: the cells add nothing
+    within their parent groups), stratified: X^2 summed over parent groups,
+    with sum (k_p - 1) degrees of freedom.
+    """
+    from scipy.stats import chi2
+
+    bad = np.asarray(bad, dtype=float)
+    good = np.asarray(good, dtype=float)
+    parent = np.zeros(len(bad), dtype=int) if parent is None else np.asarray(parent)
+    statistic, dof = 0.0, 0
+    for p in np.unique(parent):
+        in_p = parent == p
+        bad_p, good_p = bad[in_p], good[in_p]
+        size = bad_p + good_p
+        bad_p, good_p, size = bad_p[size > 0], good_p[size > 0], size[size > 0]
+        n_bad, n_good = bad_p.sum(), good_p.sum()
+        if len(size) < 2 or n_bad <= 0 or n_good <= 0:
+            continue
+        n = n_bad + n_good
+        expected_bad, expected_good = size * n_bad / n, size * n_good / n
+        statistic += float(
+            ((bad_p - expected_bad) ** 2 / expected_bad).sum()
+            + ((good_p - expected_good) ** 2 / expected_good).sum()
+        )
+        dof += len(size) - 1
+    if dof == 0:
+        return float("nan"), 0, float("nan")
+    return statistic, dof, float(chi2.sf(statistic, dof))

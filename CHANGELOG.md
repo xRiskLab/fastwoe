@@ -2,7 +2,7 @@
 
 ## Version 0.1.9 (2026-09-24)
 
-**Numeric Binning Fix, Unseen Categories & Conditional WOE**
+**Numeric Binning Fix, Unseen Categories, Conditional WOE & IV Inference**
 
 ### Bug Fixes
 
@@ -16,6 +16,13 @@
 - **Conditional Information Value**: with `conditional=True`, `get_iv_analysis()`, `get_feature_summary()` and `feature_stats_` add `iv_conditional` (with SE, confidence interval, significance and `conditioned_on`): the IV each feature adds given the features before it. Conditional IVs sum to the joint IV; `iv` stays the marginal IV.
 - **`export_text()`**: prints the conditional weights as a tree, like `sklearn.tree.export_text`, with a header naming the target and conditioning order, and each node's weight, 95% interval, size, event rate and fallback marker; the intervals are drawn as bars on a shared scale with a zero line. `max_depth=` truncates; `bar_width=0` hides the bars. The target's name is kept as `target_name_`.
 - **Lightweight imports**: `fastwoe` loads its submodules on first use, so `fastwoe.metrics` and `fastwoe.plots` import without scikit-learn, loguru or rich.
+
+### Information Value inference
+
+- **`iv_se` now uses the full delta method.** Both the WOE values and the weights `(b - g)` are estimated from the same counts; the previous formula treated them as independent and understated the SE by about 30% (holding the weights fixed, as `sqrt(sum (b - g)^2 (1/n_bad + 1/n_good))` does, understates it by about half). Validated against simulation. Reported SEs and intervals are wider than in 0.1.8.
+- **`iv_pvalue` and a chi-square significance test.** `iv_significance` was "CI lower bound > 0", which relies on IV being normal near 0; it is not (it is never negative and behaves like a chi-square statistic). It is now `iv_pvalue < alpha` from the test `n_eff * IV ~ chi2(k - 1)`, computed as Pearson's X² so that bins holding one class count as evidence rather than being dropped. Calibrated in simulation (about 5% rejections at alpha = 0.05 on useless features). Also for multiclass.
+- **SE counts come from `bad_count` / `good_count`**, not `count * event_rate`: the smoothed event rate turned a bin with no goods into a tiny positive count that inflated the SE (0.43 instead of 0.012 on one tree-binned feature).
+- **Conditional IV**: `iv_conditional_se` is the delta-method SE of `IV(E1, E2) - IV(E1)`, the nested form of the conditional IV, and `iv_conditional_pvalue` a stratified chi-square test that a feature adds nothing within the earlier features' groups.
 
 ### Maintenance
 

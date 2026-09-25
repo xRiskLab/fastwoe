@@ -43,6 +43,7 @@ class MulticlassWoeMixin:
     odds_prior_per_class_: dict[Any, float]
     # Methods defined in FastWoe that are used by the mixin
     _calculate_feature_stats: Any  # Method defined in FastWoe
+    _iv_test_fields: Any  # Method defined in FastWoe
     _calculate_woe_se: Any  # Method defined in FastWoe
     _calculate_woe_ci: Any  # Method defined in FastWoe
     transform: Any  # Method defined in FastWoe
@@ -355,9 +356,7 @@ class MulticlassWoeMixin:
                             "iv_se": stats["iv_se"],
                             "iv_ci_lower": stats["iv_ci_lower"],
                             "iv_ci_upper": stats["iv_ci_upper"],
-                            "iv_significance": "Significant"
-                            if stats["iv_ci_lower"] > 0
-                            else "Not Significant",
+                            **self._iv_test_fields(stats, alpha),
                             "n_categories": stats["n_categories"],
                             "gini": stats["gini"],
                         }
@@ -378,9 +377,7 @@ class MulticlassWoeMixin:
                                 "iv_se": stats["iv_se"],
                                 "iv_ci_lower": stats["iv_ci_lower"],
                                 "iv_ci_upper": stats["iv_ci_upper"],
-                                "iv_significance": "Significant"
-                                if stats["iv_ci_lower"] > 0
-                                else "Not Significant",
+                                **self._iv_test_fields(stats, alpha),
                                 "n_categories": stats["n_categories"],
                                 "gini": stats["gini"],
                             }
@@ -395,9 +392,7 @@ class MulticlassWoeMixin:
                     "iv_se": stats["iv_se"],
                     "iv_ci_lower": stats["iv_ci_lower"],
                     "iv_ci_upper": stats["iv_ci_upper"],
-                    "iv_significance": (
-                        "Significant" if stats["iv_ci_lower"] > 0 else "Not Significant"
-                    ),
+                    **self._iv_test_fields(stats, alpha),
                     "n_categories": stats["n_categories"],
                     "gini": stats["gini"],
                 }
@@ -415,9 +410,7 @@ class MulticlassWoeMixin:
                         "iv_se": stats["iv_se"],
                         "iv_ci_lower": stats["iv_ci_lower"],
                         "iv_ci_upper": stats["iv_ci_upper"],
-                        "iv_significance": "Significant"
-                        if stats["iv_ci_lower"] > 0
-                        else "Not Significant",
+                        **self._iv_test_fields(stats, alpha),
                         "n_categories": stats["n_categories"],
                         "gini": stats["gini"],
                     }

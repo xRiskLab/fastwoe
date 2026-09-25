@@ -36,6 +36,8 @@ from typing import Any, Optional, cast
 import numpy as np
 import pandas as pd
 
+from .metrics import _iv_chi2_test, _iv_standard_error
+
 __all__ = ["ConditionalWoeMixin"]
 
 
@@ -60,7 +62,6 @@ class ConditionalWoeMixin:
     _apply_binning_to_column: Any
     _calculate_woe_se: Any
     _calculate_iv: Any
-    _calculate_iv_standard_error: Any
     _calculate_iv_confidence_interval: Any
     _handle_unseen: Any
     _ordered_mapping: Any
@@ -243,31 +244,30 @@ class ConditionalWoeMixin:
         """Add each feature's IV given the features before it to ``feature_stats_``.
 
         ``IV(E2 | E1) = sum over cells of (p_bad - p_good) * W(E2 | E1)``, with
-        ``p_bad`` and ``p_good`` each cell's share of all bads and goods. Like
-        the weights, these add up to the joint IV of the features where no cell
-        fell back; the order changes the split, not the total.
+        ``p_bad`` and ``p_good`` each cell's share of all bads and goods. Where no
+        cell fell back this equals ``IV(E1, E2) - IV(E1)``, so the conditional IVs
+        add up to the joint IV; the order changes the split, not the total.
 
-        Each cell is laid out like a marginal bin, so the IV, its delta-method
-        standard error and its confidence interval come from the same helpers
-        as the marginal IV.
+        The standard error is the delta-method SE of that difference of nested
+        IVs, and the p-value a stratified chi-square test that the feature adds
+        nothing within the groups the earlier features define (see
+        ``metrics._iv_standard_error`` and ``metrics._iv_chi2_test``). Both are
+        computed from the cell counts, so where cells fell back to marginal
+        weights they describe the data rather than the reported weights.
         """
         total_bad, total_good = int((y == 1).sum()), int((y == 0).sum())
         for depth, col in enumerate(self.conditional_order_):
-            cells = [
+            tables = [
                 table for (feature, _), table in self.conditional_weights_.items() if feature == col
             ]
-            frame = pd.concat(cells, ignore_index=True)
-            count = frame["bad_count"] + frame["good_count"]
-            bins = pd.DataFrame(
-                {
-                    "count": count,
-                    "event_rate": frame["bad_count"] / count,
-                    "woe": frame["woe"],
-                    "woe_se": frame["woe_se"].fillna(0.0),
-                }
-            )
+            frame = pd.concat(tables, ignore_index=True)
+            parent = np.repeat(np.arange(len(tables)), [len(t) for t in tables])
+            bad = frame["bad_count"].to_numpy(dtype=float)
+            good = frame["good_count"].to_numpy(dtype=float)
+            count = bad + good
+            bins = pd.DataFrame({"count": count, "event_rate": bad / count, "woe": frame["woe"]})
             iv = float(self._calculate_iv(bins, total_good, total_bad))
-            iv_se = float(self._calculate_iv_standard_error(bins, total_good, total_bad))
+            iv_se = _iv_standard_error(bad, good, parent)
             lower, upper = self._calculate_iv_confidence_interval(iv, iv_se)
             self.feature_stats_[col].update(
                 {
@@ -275,6 +275,7 @@ class ConditionalWoeMixin:
                     "iv_conditional_se": iv_se,
                     "iv_conditional_ci_lower": lower,
                     "iv_conditional_ci_upper": upper,
+                    "iv_conditional_pvalue": _iv_chi2_test(bad, good, parent)[2],
                     "conditioned_on": ", ".join(self.conditional_order_[:depth]) or "-",
                 }
             )
