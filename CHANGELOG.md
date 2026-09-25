@@ -7,6 +7,7 @@
 ### Bug Fixes
 
 - **Bins with the same label were merged.** Bin labels showed edges with one decimal, so on features measured in small decimals (rates, ratios, utilisation) or with close splits, two different bins could get the same label, for example `(0.1, 0.1]` twice. The label is the category WOE is computed on, so those bins were silently merged into one. Labels now use one decimal as before, and more only when one would make two labels equal; ordinary data keeps its labels. All eight copies of the label code are now one helper, so fit, transform and `get_mapping` cannot disagree.
+- **Positional `piece_map` keys picked the wrong bins.** `assign_pieces(piece_map=...)` documents integer keys as rows of `get_mapping(feature)`, but translated them through the internal order, which sorts bin labels as strings; for a binned feature the pieces landed on other bins. Keys now follow `get_mapping` rows.
 - **Numeric bins at transform time**: `transform()` assigned each tree-binned value to the bin below the one it was fitted in, so values were scored with a neighbouring bin's WOE. Transform now uses the same right-inclusive `(a, b]` intervals as `fit()`.
 - **Missing values in numeric features**: a NaN in a feature that had no missing values during fit, or any category unseen at fit, was silently scored as WOE 0 (the prior odds). This is now surfaced (see `unseen` below).
 

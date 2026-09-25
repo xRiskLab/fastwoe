@@ -43,3 +43,22 @@ def test_piecewise_columns_split_the_weight(fitted):
     assert list(pieces.columns) == ["grade__piece_0", "grade__piece_1"]
     np.testing.assert_allclose(pieces.sum(axis=1), woe.transform(X)["grade"])
     assert ((pieces != 0).sum(axis=1) <= 1).all()
+
+
+def test_positional_piece_map_follows_get_mapping_rows():
+    """Integer keys index the rows of get_mapping(), which are in bin order.
+
+    For a binned feature the internal order sorts bin labels as strings, so
+    translating through it assigned pieces to the wrong bins.
+    """
+    rng = np.random.default_rng(0)
+    n = 5000
+    x = rng.normal(size=n)
+    y = pd.Series((rng.random(n) < 1 / (1 + np.exp(2 - x))).astype(int))
+    woe = FastWoe().fit(pd.DataFrame({"score": x}), y)
+    shown = woe.get_mapping("score")["category"].tolist()
+    assert shown != woe.mappings_["score"].index.tolist()  # the orders do differ
+
+    woe.assign_pieces(piece_map={"score": {i: int(i == 0) for i in range(len(shown))}})
+    pieces = woe.mappings_["score"]["piece"]
+    assert pieces[pieces == 1].index.tolist() == [shown[0]]

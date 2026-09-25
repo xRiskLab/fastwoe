@@ -36,6 +36,7 @@ class PiecewiseWoeMixin:
     is_fitted_: bool
     binners_: dict[str, Any]
     _apply_binning_to_column: Any
+    _ordered_mapping: Any
     _ensure_dataframe: Any
     is_multiclass_target: Optional[bool]
 
@@ -125,9 +126,10 @@ class PiecewiseWoeMixin:
         internal_keys = set(mapping.index)
 
         if not provided_keys.issubset(internal_keys):
-            # Try interpreting keys as positional indices
+            # Positional keys follow the rows of get_mapping(feature), which lists
+            # binned features in bin order, not the internal (string) order
             try:
-                idx_list = mapping.index.tolist()
+                idx_list = self._ordered_mapping(feature, mapping.copy()).index.tolist()
                 translated = {idx_list[int(k)]: v for k, v in cat_to_piece.items()}
                 cat_to_piece = translated
                 provided_keys = set(cat_to_piece.keys())
