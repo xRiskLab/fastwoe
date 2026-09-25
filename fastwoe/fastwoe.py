@@ -20,6 +20,38 @@ from .fastwoe_piecewise import PiecewiseWoeMixin
 from .metrics import _iv_chi2_test, _iv_standard_error, somersd_se, somersd_yx
 
 
+def _bin_labels(edges) -> list[str]:
+    """Interval labels for the bins between ``edges``: (-∞, e1], (e1, e2], ..., (ek, ∞).
+
+    The labels are the categories the encoder groups on, so two bins must never
+    share one. Edges are shown with one decimal, as before, unless that makes
+    two labels equal (close edges, or a feature measured in small decimals such
+    as a rate); then with as many decimals as it takes to tell every bin apart.
+    """
+    edges = np.asarray(edges, dtype=float)
+    n_bins = len(edges) - 1
+
+    def labels(fmt: str) -> list[str]:
+        out = []
+        for i in range(n_bins):
+            if i == 0:
+                out.append(f"(-∞, {edges[1]:{fmt}}]")
+            elif i == n_bins - 1:
+                out.append(f"({edges[i]:{fmt}}, ∞)")
+            else:
+                out.append(f"({edges[i]:{fmt}}, {edges[i + 1]:{fmt}}]")
+        return out
+
+    for decimals in range(1, 16):
+        candidate = labels(f".{decimals}f")
+        if len(set(candidate)) == n_bins:
+            return candidate
+    candidate = labels(".17g")  # shortest exact form; equal only if the edges are
+    if len(set(candidate)) == n_bins:
+        return candidate
+    return [f"{label} #{i}" for i, label in enumerate(candidate)]
+
+
 class WoePreprocessor(BaseEstimator, TransformerMixin):
     """Preprocess high-cardinality categorical features for stable WOE encoding.
 
@@ -933,15 +965,7 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
                     cluster_to_bin = binning_info["cluster_to_bin"]
                 else:
                     bin_edges = np.array(binning_info["bin_edges"])
-                    bl = []
-                    for i in range(len(bin_edges) - 1):
-                        if i == 0:
-                            label = f"(-∞, {bin_edges[i + 1]:.1f}]"
-                        elif i == len(bin_edges) - 2:
-                            label = f"({bin_edges[i]:.1f}, ∞)"
-                        else:
-                            label = f"({bin_edges[i]:.1f}, {bin_edges[i + 1]:.1f}]"
-                        bl.append(label)
+                    bl = _bin_labels(bin_edges)
                     cluster_to_bin = dict(zip(range(1, len(bl) + 1), bl))
 
                 binned_labels = [cluster_to_bin[label] for label in cluster_labels]
@@ -959,15 +983,7 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
                 edges = None
 
             if edges is not None:
-                bin_labels = []
-                for i in range(len(edges) - 1):
-                    if i == 0:
-                        label = f"(-∞, {edges[i + 1]:.1f}]"
-                    elif i == len(edges) - 2:
-                        label = f"({edges[i]:.1f}, ∞)"
-                    else:
-                        label = f"({edges[i]:.1f}, {edges[i + 1]:.1f}]"
-                    bin_labels.append(label)
+                bin_labels = _bin_labels(edges)
 
                 non_missing_values = result.loc[~mask_missing]
                 if len(non_missing_values) > 0 and binning_info.get("method") != "faiss_kmeans":
@@ -1333,39 +1349,15 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
             ):
                 binner = self.binners_[feature]
                 edges = binner.bin_edges_[0]
-                bin_labels = []
-                for i in range(len(edges) - 1):
-                    if i == 0:
-                        label = f"(-∞, {edges[i + 1]:.1f}]"
-                    elif i == len(edges) - 2:
-                        label = f"({edges[i]:.1f}, ∞)"
-                    else:
-                        label = f"({edges[i]:.1f}, {edges[i + 1]:.1f}]"
-                    bin_labels.append(label)
+                bin_labels = _bin_labels(edges)
                 mapping = mapping.reindex(bin_labels)
             elif binning_info.get("method") == "tree" and "bin_edges" in binning_info:
                 edges = np.array(binning_info["bin_edges"])
-                bin_labels = []
-                for i in range(len(edges) - 1):
-                    if i == 0:
-                        label = f"(-∞, {edges[i + 1]:.1f}]"
-                    elif i == len(edges) - 2:
-                        label = f"({edges[i]:.1f}, ∞)"
-                    else:
-                        label = f"({edges[i]:.1f}, {edges[i + 1]:.1f}]"
-                    bin_labels.append(label)
+                bin_labels = _bin_labels(edges)
                 mapping = mapping.reindex(bin_labels)
             elif binning_info.get("method") == "faiss_kmeans" and "bin_edges" in binning_info:
                 edges = np.array(binning_info["bin_edges"])
-                bin_labels = []
-                for i in range(len(edges) - 1):
-                    if i == 0:
-                        label = f"(-∞, {edges[i + 1]:.1f}]"
-                    elif i == len(edges) - 2:
-                        label = f"({edges[i]:.1f}, ∞)"
-                    else:
-                        label = f"({edges[i]:.1f}, {edges[i + 1]:.1f}]"
-                    bin_labels.append(label)
+                bin_labels = _bin_labels(edges)
                 mapping = mapping.reindex(bin_labels)
         return mapping
 
@@ -1890,15 +1882,7 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
         # Convert to string categories with meaningful labels
         if hasattr(binner, "bin_edges_"):
             edges = binner.bin_edges_[0]
-            bin_labels = []
-            for i in range(len(edges) - 1):
-                if i == 0:
-                    label = f"(-∞, {edges[i + 1]:.1f}]"
-                elif i == len(edges) - 2:
-                    label = f"({edges[i]:.1f}, ∞)"
-                else:
-                    label = f"({edges[i]:.1f}, {edges[i + 1]:.1f}]"
-                bin_labels.append(label)
+            bin_labels = _bin_labels(edges)
 
             # Map ordinal values to labels for non-missing values only
             non_missing_values = X_binned.loc[~mask_missing, col]
@@ -1971,15 +1955,7 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
         bin_edges = self._create_bin_edges_from_splits(split_points, col_values)
 
         # Create bin labels
-        bin_labels = []
-        for i in range(len(bin_edges) - 1):
-            if i == 0:
-                label = f"(-∞, {bin_edges[i + 1]:.1f}]"
-            elif i == len(bin_edges) - 2:
-                label = f"({bin_edges[i]:.1f}, ∞)"
-            else:
-                label = f"({bin_edges[i]:.1f}, {bin_edges[i + 1]:.1f}]"
-            bin_labels.append(label)
+        bin_labels = _bin_labels(bin_edges)
 
         # Apply binning
         X_binned = X_col.copy()
@@ -2091,15 +2067,7 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
             bin_edges[i + 1] = (sorted_centroids[i] + sorted_centroids[i + 1]) / 2
 
         # Create bin labels
-        bin_labels = []
-        for i in range(len(bin_edges) - 1):
-            if i == 0:
-                label = f"(-∞, {bin_edges[i + 1]:.1f}]"
-            elif i == len(bin_edges) - 2:
-                label = f"({bin_edges[i]:.1f}, ∞)"
-            else:
-                label = f"({bin_edges[i]:.1f}, {bin_edges[i + 1]:.1f}]"
-            bin_labels.append(label)
+        bin_labels = _bin_labels(bin_edges)
 
         # Apply binning
         X_binned = X_col.copy()
