@@ -474,19 +474,12 @@ class TestFastWoe:
 
         # Get IV analysis
         iv_stats = woe.get_iv_analysis("feature")
-        iv_se = iv_stats["iv_se"].iloc[0]
 
-        # IV standard error should be positive for non-trivial cases
-        assert iv_se >= 0
-
-        # Test confidence interval width is reasonable (2 * 1.96 * SE for 95% CI)
-        ci_width = iv_stats["iv_ci_upper"].iloc[0] - iv_stats["iv_ci_lower"].iloc[0]
-        expected_width = 2 * 1.96 * iv_se
-        # Allow for small numerical differences and lower bound truncation at 0
-        # The difference can be larger due to lower bound truncation at 0
-        assert (
-            abs(ci_width - expected_width) < 2.0
-        )  # Should be reasonably close to theoretical width
+        # Perfect separation: every bin holds one class only, so IV is infinite
+        # and has no standard error; the chi-square test still rejects H0.
+        assert np.isnan(iv_stats["iv_se"].iloc[0])
+        assert iv_stats["iv_pvalue"].iloc[0] < 1e-10
+        assert iv_stats["iv_significance"].iloc[0] == "Significant"
 
     def test_predict_proba(self, sample_data):
         """Test predict_proba method."""
@@ -872,7 +865,7 @@ class TestFastWoe:
         # Test array output
         edges_array = woe.get_split_value_histogram("score", as_array=True)
         assert isinstance(edges_array, np.ndarray)
-        assert edges_array.shape[0] > 2  # At least 2 edges  # type: ignore
+        assert edges_array.shape[0] > 2  # At least 2 edges
         assert np.isneginf(edges_array[0])  # First edge should be -inf
         assert np.isinf(edges_array[-1])  # Last edge should be inf
         assert np.all(np.diff(edges_array[1:-1]) > 0)  # Edges should be strictly increasing
@@ -880,7 +873,7 @@ class TestFastWoe:
         # Test list output
         edges_list = woe.get_split_value_histogram("score", as_array=False)
         assert isinstance(edges_list, list)
-        assert len(edges_list) == edges_array.shape[0]  # type: ignore
+        assert len(edges_list) == edges_array.shape[0]
         assert edges_list[0] == float("-inf")
         assert edges_list[-1] == float("inf")
 
@@ -1252,7 +1245,7 @@ class TestIntegration:
         # Test array output
         edges_array = woe.get_split_value_histogram("score", as_array=True)
         assert isinstance(edges_array, np.ndarray)
-        assert edges_array.shape[0] == 6  # k+1 edges  # type: ignore
+        assert edges_array.shape[0] == 6  # k+1 edges
         assert np.isneginf(edges_array[0])  # First edge should be -inf
         assert np.isinf(edges_array[-1])  # Last edge should be inf
         assert np.all(np.diff(edges_array[1:-1]) > 0)  # Edges should be strictly increasing
@@ -2806,11 +2799,12 @@ class TestFinetune:
         expected_woe_A = woe.mappings_["cat1"].loc["A", "woe"]
         assert X_woe.loc[0, "cat1"] == pytest.approx(expected_woe_A)
 
-    def test_method_chaining(self, fitted_categorical):
-        """finetune() returns self for chaining."""
+    def test_updates_in_place_and_returns_none(self, fitted_categorical):
+        """finetune() mutates the encoder, so it returns None rather than self."""
         woe, _, _ = fitted_categorical
+        before = woe.mappings_["cat1"]["woe"].copy()
         X_new = pd.DataFrame({"cat1": ["A"] * 50 + ["B"] * 30 + ["C"] * 20})
         y_new = pd.Series(np.random.binomial(1, 0.5, 100))
 
-        result = woe.finetune(X_new, y_new)
-        assert result is woe
+        assert woe.finetune(X_new, y_new) is None
+        assert not woe.mappings_["cat1"]["woe"].equals(before)

@@ -1,5 +1,52 @@
 # Changelog
 
+## Version 0.1.9 (2026-09-25)
+
+**Numeric Binning Fix, Unseen Categories, Conditional WOE, IV Inference & WebAssembly**
+
+### Bug Fixes
+
+- **Bins with the same label were merged.** Bin labels showed edges with one decimal, so on features measured in small decimals (rates, ratios, utilisation) or with close splits, two different bins could get the same label, for example `(0.1, 0.1]` twice. The label is the category WOE is computed on, so those bins were silently merged into one. Labels now use one decimal as before, and more only when one would make two labels equal; ordinary data keeps its labels. All eight copies of the label code are now one helper, so fit, transform and `get_mapping` cannot disagree.
+- **Positional `piece_map` keys picked the wrong bins.** `assign_pieces(piece_map=...)` documents integer keys as rows of `get_mapping(feature)`, but translated them through the internal order, which sorts bin labels as strings; for a binned feature the pieces landed on other bins. Keys now follow `get_mapping` rows.
+- **Numeric bins at transform time**: `transform()` assigned each tree-binned value to the bin below the one it was fitted in, so values were scored with a neighbouring bin's WOE. Transform now uses the same right-inclusive `(a, b]` intervals as `fit()`.
+- **Missing values in numeric features**: a NaN in a feature that had no missing values during fit, or any category unseen at fit, was silently scored as WOE 0 (the prior odds). This is now surfaced (see `unseen` below).
+
+### New Features
+
+- **`FastWoe(unseen="warn" | "prior" | "raise")`**: controls how categories absent from the fitted mapping are handled. The default warns with column and counts; `unseen_counts_` records them after each transform.
+- **Conditional WOE (Good's chain rule)**: `FastWoe(conditional=True)` measures each feature's weight within the population selected by the earlier features, so correlated features are not double-counted and the weights add without assuming independence. `transform()`, `predict_proba()`, `predict()`, `predict_ci()` and `get_mapping()` use the conditional weights; `predict_ci()` uses the SE of the joint cell the chain telescopes to. The order defaults to X's column order (`conditional_order=` overrides) and changes attribution, not the score. Cells with fewer than `conditional_min_count` of a class fall back to the marginal weight and are recorded in `conditional_fallbacks_`. Binary targets only; NaN levels form their own cells; unseen categories follow the `unseen` policy. `WeightOfEvidence` explains conditional models as they are: its contributions are the conditional weights and its intervals the joint-cell ones. `output="piecewise"` is not supported with `conditional=True` (a bin has one conditional weight per branch, so there is no single sign to group by).
+- **Conditional Information Value**: with `conditional=True`, `get_iv_analysis()`, `get_feature_summary()` and `feature_stats_` add `iv_conditional` (with SE, confidence interval, significance and `conditioned_on`): the IV each feature adds given the features before it. Conditional IVs sum to the joint IV; `iv` stays the marginal IV.
+- **`export_text()`**: prints the conditional weights as a tree, like `sklearn.tree.export_text`, with a header naming the target and conditioning order, and each node's weight, 95% interval, size, event rate and fallback marker; the intervals are drawn as bars on a shared scale with a zero line. `max_depth=` truncates; `bar_width=0` hides the bars. The target's name is kept as `target_name_`.
+- **Lightweight imports**: `fastwoe` loads its submodules on first use, so `fastwoe.metrics` and `fastwoe.plots` import without scikit-learn, loguru or rich.
+
+### Changed (breaking)
+
+- **`finetune()` and `assign_pieces()` return `None`** instead of the encoder. Both modify the fitted encoder in place, and a method that mutates should not also return `self` (as with `list.sort`): `woe.finetune(X, y).predict_proba(X)` read as if it produced a new model. Call them as statements: `woe.finetune(X, y)` then `woe.predict_proba(X)`. `fit()` still returns `self`, as the scikit-learn estimator API requires.
+
+### Information Value inference
+
+- **`iv_se` now uses the full delta method.** Both the WOE values and the weights `(b - g)` are estimated from the same counts; the previous formula treated them as independent and understated the SE by about 30% (holding the weights fixed, as `sqrt(sum (b - g)^2 (1/n_bad + 1/n_good))` does, understates it by about half). Validated against simulation. Reported SEs and intervals are wider than in 0.1.8.
+- **`iv_pvalue` and a chi-square significance test.** `iv_significance` was "CI lower bound > 0", which relies on IV being normal near 0; it is not (it is never negative and behaves like a chi-square statistic). It is now `iv_pvalue < alpha` from the test `n_eff * IV ~ chi2(k - 1)`, computed as Pearson's X² so that bins holding one class count as evidence rather than being dropped. Calibrated in simulation (about 5% rejections at alpha = 0.05 on useless features). Also for multiclass.
+- **SE counts come from `bad_count` / `good_count`**, not `count * event_rate`: the smoothed event rate turned a bin with no goods into a tiny positive count that inflated the SE (0.43 instead of 0.012 on one tree-binned feature).
+- **Conditional IV**: `iv_conditional_se` is the delta-method SE of `IV(E1, E2) - IV(E1)`, the nested form of the conditional IV, and `iv_conditional_pvalue` a stratified chi-square test that a feature adds nothing within the earlier features' groups.
+
+### WebAssembly (Pyodide)
+
+- **numba is no longer installed under WebAssembly** (`numba; sys_platform != "emscripten"`); it has no wasm build, which made `fastwoe` uninstallable in Pyodide. Where numba is missing, the same Somers' D functions run as plain Python: the calculation is unchanged and gives identical integer pair counts, just without compilation. In Pyodide 0.27.7: Somers' D on 200,000 rows in 1.1s (binary target) to 3.3s (continuous), and `FastWoe.fit` on 10 numeric features x 50,000 rows in 1.6s (0.7s natively with numba). No warning is shown under WebAssembly.
+- Fixed a 64-bit integer assumption in the conditional transform that failed on 32-bit WebAssembly.
+
+### Maintenance
+
+- **No `# type: ignore` or `# noqa` left** (64 removed). Most were stale (leftovers from the removed `ty` checker, or redundant under the mypy config); the rest were fixed at the source: `y_prior_` is typed `Optional`, `finetune()` checks the prior explicitly, `logger` and `njit` are declared once, and the unused `TYPE_CHECKING` imports are gone. FAISS binning uses the public `faiss.Kmeans`.
+- **Docstrings pass pydocstyle (Google convention) with no ignored rules**, and ruff now enforces it: the D100-D107, D200, D205, D212, D400 and D415 exemptions are removed. `marginal_somersd_selection` documents all its arguments and its return value (the parameter list was `...` placeholders).
+- **Type checking passes again**: fixed the mypy errors that failed the Type Checking workflow since 0.1.8, across current and older `pandas-stubs`. mypy's `python_version` is now 3.10, the oldest mypy 2.x supports; runtime support for Python 3.9 is unchanged.
+
+### Docs
+
+- `examples/notebooks/fastwoe_piecewise.ipynb` runs on simulated data instead of a CSV that was not in the repository, labels the pieces correctly (positive WOE is higher risk), and reports log loss alongside Gini.
+- New notebook `examples/notebooks/fastwoe_conditional.ipynb`: double counting under marginal WOE, the tree of conditional weights, what the conditioning order changes, conditional IV, calibration of four models, fallbacks, and explaining a prediction with `WeightOfEvidence`.
+- Fixed the README link to `docs/woe_standard_errors.md`.
+
 ## Version 0.1.8 (2026-06-12)
 
 **Piecewise WOE Output Mode (Anderson, 2015)**

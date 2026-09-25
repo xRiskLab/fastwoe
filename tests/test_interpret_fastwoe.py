@@ -610,7 +610,7 @@ class TestCoverageImprovements:
 
         # Test invalid type
         with pytest.raises(ValueError, match="Class identifier must be int or str"):
-            woe._resolve_class_identifier([1, 2])  # type: ignore
+            woe._resolve_class_identifier([1, 2])
 
     def test_validation_insufficient_samples_per_class(self):
         """Test validation error when insufficient samples per class."""
@@ -1139,3 +1139,61 @@ class TestConfidenceIntervals:
             assert woe.class_names is not None
             for label in scenario["predicted_labels"]:
                 assert label in woe.class_names
+
+
+class TestConditionalModel:
+    """Explaining FastWoe(conditional=True): contributions are the chain-rule weights."""
+
+    @pytest.fixture
+    def correlated(self):
+        rng = np.random.default_rng(0)
+        n = 20_000
+        delinquent = rng.random(n) < 0.15
+        high_util = np.where(delinquent, rng.random(n) < 0.6, rng.random(n) < 0.2)
+        logit = -2.5 + 1.5 * delinquent + 0.4 * high_util
+        y = pd.Series((rng.random(n) < 1 / (1 + np.exp(-logit))).astype(int))
+        X = pd.DataFrame(
+            {
+                "delinquent": delinquent.astype(int).astype(str),
+                "high_util": high_util.astype(int).astype(str),
+            }
+        )
+        return X, y
+
+    def test_explanation_follows_the_model(self, correlated):
+        X, y = correlated
+        applicant = pd.DataFrame({"delinquent": ["1"], "high_util": ["1"]})
+        explanations = {}
+        for conditional in (False, True):
+            model = FastWoe(conditional=conditional).fit(X, y)
+            explanation = WeightOfEvidence(model, X, y).explain(applicant, return_dict=True)
+            weights = model.transform(applicant).iloc[0]
+            for feature, value in explanation["feature_contributions"].items():
+                assert value == pytest.approx(weights[feature])
+            assert explanation["predicted_proba"]["Positive"] == pytest.approx(
+                model.predict_proba(applicant)[0, 1], abs=1e-5
+            )
+            explanations[conditional] = explanation
+
+        # delinquency comes first, so it keeps its marginal weight; utilisation's
+        # shared signal is not counted twice
+        marginal, conditional = explanations[False], explanations[True]
+        assert conditional["feature_contributions"]["delinquent"] == pytest.approx(
+            marginal["feature_contributions"]["delinquent"], rel=1e-5
+        )
+        assert (
+            conditional["feature_contributions"]["high_util"]
+            < marginal["feature_contributions"]["high_util"] / 2
+        )
+        assert conditional["total_woe"] < marginal["total_woe"]
+
+    def test_interval_follows_the_model(self, correlated):
+        X, y = correlated
+        applicant = pd.DataFrame({"delinquent": ["1"], "high_util": ["1"]})
+        model = FastWoe(conditional=True).fit(X, y)
+        explanation = WeightOfEvidence(model, X, y).explain_ci(applicant, return_dict=True)
+        lower, upper = model.predict_ci(applicant)[0]
+        assert explanation["ci_conservative"]["predicted_proba_ci"] == pytest.approx(
+            lower, abs=1e-4
+        )
+        assert explanation["ci_optimistic"]["predicted_proba_ci"] == pytest.approx(upper, abs=1e-4)

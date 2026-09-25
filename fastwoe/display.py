@@ -1,5 +1,4 @@
-"""
-Display utilities for rich HTML rendering of DataFrames in Jupyter notebooks.
+"""Display utilities for rich HTML rendering of DataFrames in Jupyter notebooks.
 
 Provides styled HTML output similar to scikit-learn's estimator HTML representation.
 """
@@ -258,8 +257,7 @@ def _get_dark_mode_css(container_id: str) -> str:
 
 
 class StyledDataFrame:
-    """
-    Wrapper for pandas DataFrame with rich HTML representation.
+    """Wrapper for pandas DataFrame with rich HTML representation.
 
     Provides styled HTML output in Jupyter notebooks with:
     - Color-coded cells based on values
@@ -282,8 +280,7 @@ class StyledDataFrame:
         precision: int = 4,
         theme: str = "light",
     ):
-        """
-        Initialize styled DataFrame wrapper.
+        """Initialize styled DataFrame wrapper.
 
         Args:
             df: DataFrame to style
@@ -328,8 +325,7 @@ def render_dataframe_html(
     precision: int = 4,
     theme: str = "light",
 ) -> str:
-    """
-    Render DataFrame as styled HTML for Jupyter notebooks.
+    """Render DataFrame as styled HTML for Jupyter notebooks.
 
     Args:
         df: DataFrame to render
@@ -433,8 +429,7 @@ def render_dataframe_html(
 
 
 def style_iv_analysis(df: pd.DataFrame, theme: str = "light") -> StyledDataFrame:
-    """
-    Create styled HTML representation for IV analysis DataFrame.
+    """Create styled HTML representation for IV analysis DataFrame.
 
     Args:
         df: IV analysis DataFrame from FastWoe.get_iv_analysis()
@@ -460,8 +455,7 @@ def style_iv_analysis(df: pd.DataFrame, theme: str = "light") -> StyledDataFrame
 
 
 def style_woe_mapping(df: pd.DataFrame, feature_name: str, theme: str = "light") -> StyledDataFrame:
-    """
-    Create styled HTML representation for WOE mapping DataFrame.
+    """Create styled HTML representation for WOE mapping DataFrame.
 
     Args:
         df: WOE mapping DataFrame
@@ -488,8 +482,7 @@ def styled(
     precision: int = 4,
     theme: str = "light",
 ) -> Callable:
-    """
-    Decorator to automatically style DataFrame outputs from functions.
+    """Decorator to automatically style DataFrame outputs from functions.
 
     This decorator wraps functions that return DataFrames and automatically
     applies StyledDataFrame formatting for rich HTML display in Jupyter notebooks.
@@ -533,8 +526,7 @@ def styled(
 
 
 def iv_styled(func: Callable) -> Callable:
-    """
-    Decorator for IV analysis functions that return DataFrames.
+    """Decorator for IV analysis functions that return DataFrames.
 
     Automatically applies IV analysis styling to the returned DataFrame.
 

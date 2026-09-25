@@ -39,10 +39,11 @@ class MulticlassWoeMixin:
     monotonic_cst: dict[str, int]
     classes_: list[Any]
     n_classes_: int
-    y_prior_: Union[float, dict[Any, float]]
+    y_prior_: Optional[Union[float, dict[Any, float]]]
     odds_prior_per_class_: dict[Any, float]
     # Methods defined in FastWoe that are used by the mixin
     _calculate_feature_stats: Any  # Method defined in FastWoe
+    _iv_test_fields: Any  # Method defined in FastWoe
     _calculate_woe_se: Any  # Method defined in FastWoe
     _calculate_woe_ci: Any  # Method defined in FastWoe
     transform: Any  # Method defined in FastWoe
@@ -182,7 +183,7 @@ class MulticlassWoeMixin:
             {
                 "category": categories,
                 "count": count,
-                "count_pct": (count.astype(float) / len(y_binary) * 100).tolist(),
+                "count_pct": (np.asarray(count, dtype=float) / len(y_binary) * 100).tolist(),
                 "good_count": good_counts,
                 "bad_count": bad_counts,
                 "event_rate": np.round(event_rates, 6),
@@ -265,7 +266,7 @@ class MulticlassWoeMixin:
                     # Type narrowing: in multiclass context, y_prior_ is always a dict
                     y_prior_dict: dict[Any, float] = (
                         self.y_prior_ if isinstance(self.y_prior_, dict) else {}
-                    )  # type: ignore[assignment]
+                    )
                     woe_values = np.log(odds_cat) - np.log(
                         y_prior_dict[class_label] / (1 - y_prior_dict[class_label])
                     )
@@ -355,9 +356,7 @@ class MulticlassWoeMixin:
                             "iv_se": stats["iv_se"],
                             "iv_ci_lower": stats["iv_ci_lower"],
                             "iv_ci_upper": stats["iv_ci_upper"],
-                            "iv_significance": "Significant"
-                            if stats["iv_ci_lower"] > 0
-                            else "Not Significant",
+                            **self._iv_test_fields(stats, alpha),
                             "n_categories": stats["n_categories"],
                             "gini": stats["gini"],
                         }
@@ -378,9 +377,7 @@ class MulticlassWoeMixin:
                                 "iv_se": stats["iv_se"],
                                 "iv_ci_lower": stats["iv_ci_lower"],
                                 "iv_ci_upper": stats["iv_ci_upper"],
-                                "iv_significance": "Significant"
-                                if stats["iv_ci_lower"] > 0
-                                else "Not Significant",
+                                **self._iv_test_fields(stats, alpha),
                                 "n_categories": stats["n_categories"],
                                 "gini": stats["gini"],
                             }
@@ -395,9 +392,7 @@ class MulticlassWoeMixin:
                     "iv_se": stats["iv_se"],
                     "iv_ci_lower": stats["iv_ci_lower"],
                     "iv_ci_upper": stats["iv_ci_upper"],
-                    "iv_significance": (
-                        "Significant" if stats["iv_ci_lower"] > 0 else "Not Significant"
-                    ),
+                    **self._iv_test_fields(stats, alpha),
                     "n_categories": stats["n_categories"],
                     "gini": stats["gini"],
                 }
@@ -415,9 +410,7 @@ class MulticlassWoeMixin:
                         "iv_se": stats["iv_se"],
                         "iv_ci_lower": stats["iv_ci_lower"],
                         "iv_ci_upper": stats["iv_ci_upper"],
-                        "iv_significance": "Significant"
-                        if stats["iv_ci_lower"] > 0
-                        else "Not Significant",
+                        **self._iv_test_fields(stats, alpha),
                         "n_categories": stats["n_categories"],
                         "gini": stats["gini"],
                     }
@@ -445,27 +438,27 @@ class MulticlassWoeMixin:
                     # Type narrowing: in multiclass context, y_prior_ is always a dict
                     y_prior_dict: dict[Any, float] = (
                         self.y_prior_ if isinstance(self.y_prior_, dict) else {}
-                    )  # type: ignore[assignment]
+                    )
                     log_prior = np.log(y_prior_dict[class_label] / (1 - y_prior_dict[class_label]))
                     log_posterior_odds = class_woe + log_prior
                     woe_scores[:, i] = log_posterior_odds
 
             # Convert to probabilities and return
-            result = sigmoid(woe_scores)  # type: ignore[no-any-return]
+            result = sigmoid(woe_scores)
         else:
             # Binary case
             if self.y_prior_ is None:
                 raise ValueError("Model must be fitted before predicting probabilities")
             # Type narrowing: in binary case, y_prior_ is always a float
-            y_prior_float: float = self.y_prior_ if isinstance(self.y_prior_, float) else 0.0  # type: ignore[assignment]
+            y_prior_float: float = self.y_prior_ if isinstance(self.y_prior_, float) else 0.0
             odds_prior = y_prior_float / (1 - y_prior_float)
             woe_score = X_woe.sum(axis=1) + np.log(odds_prior)
 
             # Convert to probability (simple sigmoid transformation)
-            prob = sigmoid(woe_score)  # type: ignore[no-any-return]
+            prob = sigmoid(woe_score)
             result = np.column_stack([1 - prob, prob])
 
-        return np.asarray(result, dtype=float)  # type: ignore[no-any-return]
+        return np.asarray(result, dtype=float)
 
     def _predict_multiclass_ci(
         self, X: Union[pd.DataFrame, np.ndarray], alpha: float = 0.05
@@ -516,14 +509,15 @@ class MulticlassWoeMixin:
                                 # Ensure X is a DataFrame
                                 if not isinstance(X, pd.DataFrame):
                                     X = pd.DataFrame(X)
-                                cat_value = X.iloc[i, X.columns.get_loc(orig_feature)]
+                                cat_value = X[orig_feature].iloc[i]
 
                                 # Look up WOE standard error in mapping
-                                if cat_value in mapping.index:
-                                    woe_se_feature = mapping.loc[cat_value, "woe_se"]
+                                se_by_category = mapping["woe_se"]
+                                if cat_value in se_by_category.index:
+                                    woe_se_feature = float(se_by_category[cat_value])
                                 else:
                                     # For unseen categories, use the average SE
-                                    woe_se_feature = mapping["woe_se"].mean()
+                                    woe_se_feature = float(se_by_category.mean())
 
                                 sample_se_squared += woe_se_feature**2
 
@@ -536,7 +530,7 @@ class MulticlassWoeMixin:
                     # Type narrowing: in multiclass context, y_prior_ is always a dict
                     y_prior_dict: dict[Any, float] = (
                         self.y_prior_ if isinstance(self.y_prior_, dict) else {}
-                    )  # type: ignore[assignment]
+                    )
                     log_prior = np.log(y_prior_dict[class_label] / (1 - y_prior_dict[class_label]))
                     logit_lower = woe_score_lower + log_prior
                     logit_upper = woe_score_upper + log_prior
@@ -554,12 +548,12 @@ class MulticlassWoeMixin:
                 ci_result[:, 2 * i] = ci_lower[:, i]
                 ci_result[:, 2 * i + 1] = ci_upper[:, i]
 
-            return np.asarray(ci_result, dtype=float)  # type: ignore[no-any-return]
+            return np.asarray(ci_result, dtype=float)
         else:
             # Binary case: delegate to base class implementation
             # The base class predict_ci handles binary targets
-            result = self.predict_ci(X, alpha=alpha)  # type: ignore[no-untyped-call]
-            return np.asarray(result, dtype=float)  # type: ignore[no-any-return]
+            result = self.predict_ci(X, alpha=alpha)
+            return np.asarray(result, dtype=float)
 
     def _predict_multiclass(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
         """Predict class labels for multiclass targets."""
@@ -567,7 +561,7 @@ class MulticlassWoeMixin:
             # For multiclass: return class with highest probability
             probs = self.predict_proba(X)
             class_indices = np.argmax(probs, axis=1)
-            return np.array([self.classes_[i] for i in class_indices])  # type: ignore[no-any-return]
+            return np.array([self.classes_[i] for i in class_indices])
         else:
             # Binary case
             woe_score = self.transform(X).sum(axis=1)
@@ -585,13 +579,12 @@ class MulticlassWoeMixin:
             odds_prior = prior / (1 - prior)
             logit_score = woe_score + np.log(odds_prior)
             prob = sigmoid(logit_score)
-            return np.asarray((prob > 0.5).astype(int), dtype=int)  # type: ignore[no-any-return]
+            return np.asarray((prob > 0.5).astype(int), dtype=int)
 
     def predict_proba_class(
         self, X: Union[pd.DataFrame, np.ndarray], class_label: Union[int, str]
     ) -> np.ndarray:
-        """
-        Predict probabilities for a specific class in multiclass scenarios.
+        """Predict probabilities for a specific class in multiclass scenarios.
 
         Parameters
         ----------
@@ -618,7 +611,7 @@ class MulticlassWoeMixin:
         class_idx = self.classes_.index(class_label)
 
         # Return probabilities for the specified class
-        return np.asarray(all_probs[:, class_idx], dtype=float)  # type: ignore[no-any-return]
+        return np.asarray(all_probs[:, class_idx], dtype=float)
 
     def predict_ci_class(
         self,
@@ -626,8 +619,7 @@ class MulticlassWoeMixin:
         class_label: Union[int, str],
         alpha: float = 0.05,
     ) -> np.ndarray:
-        """
-        Predict confidence intervals for a specific class in multiclass scenarios.
+        """Predict confidence intervals for a specific class in multiclass scenarios.
 
         Parameters
         ----------
@@ -659,4 +651,4 @@ class MulticlassWoeMixin:
         lower_col = class_idx * 2
         upper_col = class_idx * 2 + 1
 
-        return np.asarray(all_ci[:, [lower_col, upper_col]], dtype=float)  # type: ignore[no-any-return]
+        return np.asarray(all_ci[:, [lower_col, upper_col]], dtype=float)

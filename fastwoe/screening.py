@@ -1,5 +1,4 @@
-"""
-Feature selection using Marginal Somers' D (MSD) with rank correlation.
+"""Feature selection using Marginal Somers' D (MSD) with rank correlation.
 
 This module implements MSD-based feature selection using Somers' D (rank correlation)
 instead of traditional WOE-based Information Value. It leverages fastwoe's predict_proba
@@ -87,8 +86,7 @@ def _build_feature_correlation_matrix(
 
 
 def _create_woe_model(template: Optional[FastWoe] = None) -> FastWoe:
-    """
-    Create a new FastWoe instance, optionally using a template for configuration.
+    """Create a new FastWoe instance, optionally using a template for configuration.
 
     Parameters
     ----------
@@ -132,8 +130,7 @@ def marginal_somersd_selection(
     woe_model: Optional[FastWoe] = None,
     verbose: bool = False,
 ) -> dict:
-    """
-    Feature selection using Marginal Somers' D (MSD).
+    """Feature selection using Marginal Somers' D (MSD).
 
     Selects features based on their Somers' D correlation with model residuals,
     measuring true incremental contribution beyond already-selected features.
@@ -153,12 +150,45 @@ def marginal_somersd_selection(
 
     Parameters
     ----------
-    ...
+    X : pd.DataFrame
+        Candidate features (training data).
+    y : np.ndarray or pd.Series
+        Target: binary (0/1) or continuous.
+    X_test : pd.DataFrame, optional
+        Evaluation features for tracking performance as features are added.
+        Defaults to ``X``.
+    y_test : np.ndarray or pd.Series, optional
+        Evaluation target matching ``X_test``. Defaults to ``y``.
+    min_msd : float, default=0.02
+        Stop when the best remaining feature's marginal Somers' D falls below
+        this value.
+    max_features : int, optional
+        Stop after this many features are selected. No limit by default.
     correlation_threshold : float, default=0.5
         Skip features with pairwise Somers' D correlation above this threshold
         with already-selected features. Acts as a safety net against multicollinearity,
         though residual-based selection already penalizes redundancy naturally.
-    ...
+    ties : {"y", "x"}, default="y"
+        Which ties Somers' D excludes from its denominator: ``"y"`` for D(Y|X),
+        ``"x"`` for D(X|Y).
+    random_state : int, optional
+        Seed for NumPy's global random state, for reproducibility.
+    woe_model : FastWoe, optional
+        Template whose configuration (binning, encoder settings) is used for
+        every model fitted during selection. Defaults to ``FastWoe()``.
+    verbose : bool, default=False
+        Log progress at each step.
+
+    Returns:
+    -------
+    dict
+        ``selected_features`` (list of names in selection order),
+        ``msd_history`` (marginal Somers' D of each selected feature),
+        ``univariate_somersd`` (Somers' D of every candidate against ``y``),
+        ``model`` (FastWoe fitted on the selected features),
+        ``test_performance`` (Somers' D on the evaluation data after each step)
+        and ``correlation_matrix`` (WOE correlations of the selected features,
+        or None when fewer than two were selected).
 
     Notes:
     -----
@@ -400,8 +430,7 @@ def somersd_shapley(
     base_score_name: Optional[str] = None,
     ties: str = "y",
 ) -> pd.DataFrame:
-    """
-    Exact Shapley value attribution of Somers' D under score averaging.
+    """Exact Shapley value attribution of Somers' D under score averaging.
 
     Computes fair attribution of combined score performance across individual score
     sources by enumerating all 2^n subsets. Handles variable score availability and

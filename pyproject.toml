@@ -50,7 +50,7 @@ dependencies = [
     "scikit-learn>=1.3.0,<1.8.0",
     "rich>=13.7.0",
     "loguru>=0.7.0",
-    "numba>=0.60.0",
+    "numba>=0.60.0; sys_platform != \"emscripten\"",  # no WebAssembly build; metrics falls back to NumPy/SciPy
     "packaging>=21.0",
 ]
 
@@ -129,19 +129,6 @@ ignore = [
     "ARG003", # unused class method argument (equivalent to pylint unused-argument)
     "ARG004", # unused static method argument (equivalent to pylint unused-argument)
     "ARG005", # unused lambda argument (equivalent to pylint unused-argument)
-    "D100",   # missing docstring in public module
-    "D101",   # missing docstring in public class
-    "D102",   # missing docstring in public method
-    "D103",   # missing docstring in public function
-    "D104",   # missing docstring in public package
-    "D105",   # missing docstring in magic method
-    "D106",   # missing docstring in public nested class
-    "D107",   # missing docstring in __init__
-    "D200",   # short docstring should fit on one line
-    "D205",   # blank line required between summary and description
-    "D212",   # multi-line docstring summary should start at the first line
-    "D400",   # first line should end with a period
-    "D415",   # first line should end with punctuation
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -215,7 +202,7 @@ init-hook = "import sys; sys.path.insert(0, 'typings')"
 
 # mypy type checker configuration
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
@@ -239,7 +226,15 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 # pandas operations return Any; suppressing warn_return_any for files
 # that return DataFrames constructed from pandas internals
-module = ["fastwoe.fastwoe", "fastwoe.fastwoe_multiclass"]
+module = [
+    "fastwoe.fastwoe",
+    "fastwoe.fastwoe_multiclass",
+    "fastwoe.fastwoe_piecewise",
+    "fastwoe.fastwoe_conditional",
+    "fastwoe.interpret_fastwoe",
+    "fastwoe.plots",
+    "fastwoe.screening",
+]
 warn_return_any = false
 
 # Sourcery configuration
