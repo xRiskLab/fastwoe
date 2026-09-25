@@ -17,6 +17,10 @@
 
 ### Docs
 
+### Maintenance
+
+- **Type checking passes again**: fixed the mypy errors that failed the Type Checking workflow since 0.1.8, across current and older `pandas-stubs`. mypy's `python_version` is now 3.10, the oldest mypy 2.x supports; runtime support for Python 3.9 is unchanged.
+
 - Fixed the README link to `docs/woe_standard_errors.md`.
 
 ## Version 0.1.8 (2026-06-12)

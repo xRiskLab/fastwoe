@@ -182,7 +182,7 @@ class MulticlassWoeMixin:
             {
                 "category": categories,
                 "count": count,
-                "count_pct": (count.astype(float) / len(y_binary) * 100).tolist(),
+                "count_pct": (np.asarray(count, dtype=float) / len(y_binary) * 100).tolist(),
                 "good_count": good_counts,
                 "bad_count": bad_counts,
                 "event_rate": np.round(event_rates, 6),
@@ -516,14 +516,15 @@ class MulticlassWoeMixin:
                                 # Ensure X is a DataFrame
                                 if not isinstance(X, pd.DataFrame):
                                     X = pd.DataFrame(X)
-                                cat_value = X.iloc[i, X.columns.get_loc(orig_feature)]
+                                cat_value = X[orig_feature].iloc[i]
 
                                 # Look up WOE standard error in mapping
-                                if cat_value in mapping.index:
-                                    woe_se_feature = mapping.loc[cat_value, "woe_se"]
+                                se_by_category = mapping["woe_se"]
+                                if cat_value in se_by_category.index:
+                                    woe_se_feature = float(se_by_category[cat_value])
                                 else:
                                     # For unseen categories, use the average SE
-                                    woe_se_feature = mapping["woe_se"].mean()
+                                    woe_se_feature = float(se_by_category.mean())
 
                                 sample_se_squared += woe_se_feature**2
 

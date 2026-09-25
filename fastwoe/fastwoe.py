@@ -830,7 +830,9 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
                     {
                         "category": categories,
                         "count": count,
-                        "count_pct": (count.astype(float) / len(X_processed) * 100).tolist(),
+                        "count_pct": (
+                            np.asarray(count, dtype=float) / len(X_processed) * 100
+                        ).tolist(),
                         "good_count": good_counts,
                         "bad_count": bad_counts,
                         "event_rate": np.round(event_rates, 6),
@@ -903,14 +905,14 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
             elif binning_info.get("method") == "tree":
                 bin_edges = np.array(binning_info["bin_edges"])
                 col_data = X_col[~mask_missing][col]
-                col_values = col_data.values if hasattr(col_data, "values") else np.array(col_data)
+                col_values = np.asarray(col_data)
                 binned_values = np.digitize(col_values, bin_edges[1:-1], right=True)
                 binned_values = np.clip(binned_values, 0, len(bin_edges) - 2)
                 result.loc[~mask_missing] = binned_values
             elif binning_info.get("method") == "faiss_kmeans":
                 faiss_model = binner
                 col_data = X_col[~mask_missing][col]
-                col_values = col_data.values if hasattr(col_data, "values") else np.array(col_data)
+                col_values = np.asarray(col_data)
                 data = col_values.astype(np.float32).reshape(-1, 1)
                 _, labels = faiss_model.index.search(data, 1)
                 cluster_labels = labels.flatten() + 1
@@ -1576,8 +1578,8 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
         z_crit = norm.ppf(1 - alpha / 2)
 
         # Apply binning so category lookups match the fitted mappings
-        X_processed = X.copy()
-        for col in X.columns:
+        X_processed = cast(pd.DataFrame, X).copy()
+        for col in X_processed.columns:
             if col in self.binners_:
                 X_processed[col] = self._apply_binning_to_column(X_processed, col)
 
@@ -2004,11 +2006,7 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
             ) from e
 
         # Prepare data for FAISS
-        col_data = X_fit[col]
-        if hasattr(col_data, "values"):
-            col_values = col_data.values
-        else:
-            col_values = np.array(col_data)
+        col_values = np.asarray(X_fit[col])
         data = col_values.astype(np.float32).reshape(-1, 1)
         d = data.shape[1]  # dimension
         k = self.faiss_kwargs["k"]

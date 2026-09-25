@@ -30,7 +30,7 @@ except (ImportError, OSError, MemoryError) as e:
     )
     _HAS_NUMBA = False
 
-    def njit(func: Callable) -> Callable:
+    def njit(func: Callable) -> Callable:  # type: ignore[no-redef]
         """No-op decorator when numba is not available."""
         return func
 
@@ -40,11 +40,12 @@ class SomersDResult:
     """Container for Somers' D computation results."""
 
     statistic: float
-    concordant_pairs: int
-    discordant_pairs: int
-    ties: int
-    total_pairs: int
-    denominator: int
+    # float, not int: the weighted variant returns weighted pair counts
+    concordant_pairs: float
+    discordant_pairs: float
+    ties: float
+    total_pairs: float
+    denominator: float
 
     def __repr__(self):
         return (
@@ -622,13 +623,13 @@ def somersd_clustered_matrix(
     # Compute intra/inter-cluster Somers' D
     for ci in clusters:
         for cj in clusters:
-            high_scores = df[(df[cluster_col] == ci) & high_mask][score_col].values
-            low_scores = df[(df[cluster_col] == cj) & low_mask][score_col].values
+            high_scores = df[(df[cluster_col] == ci) & high_mask][score_col].to_numpy()
+            low_scores = df[(df[cluster_col] == cj) & low_mask][score_col].to_numpy()
             somersd_matrix.loc[ci, cj] = somersd_pairwise(high_scores, low_scores, ties=ties)
 
     # Compute global Somers' D
-    global_high_scores = df[high_mask][score_col].values
-    global_low_scores = df[low_mask][score_col].values
+    global_high_scores = df[high_mask][score_col].to_numpy()
+    global_low_scores = df[low_mask][score_col].to_numpy()
     global_somersd = somersd_pairwise(global_high_scores, global_low_scores, ties=ties)
 
     return somersd_matrix, global_somersd

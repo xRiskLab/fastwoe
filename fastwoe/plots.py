@@ -412,7 +412,7 @@ def visualize_woe(
         # Draw positive bars (extend right from baseline)
         if pos_mask.any():
             pos_y = [i for i, mask in enumerate(pos_mask) if mask]
-            pos_values = frame.loc[pos_mask, value_col].values
+            pos_values = frame.loc[pos_mask, value_col].to_numpy(dtype=float)
             pos_colors_list = [colors[i] for i, mask in enumerate(pos_mask) if mask]
 
             ax.barh(
@@ -428,7 +428,7 @@ def visualize_woe(
         # Draw negative bars (extend left from baseline)
         if neg_mask.any():
             neg_y = [i for i, mask in enumerate[Any](neg_mask) if mask]
-            neg_values = frame.loc[neg_mask, value_col].values
+            neg_values = frame.loc[neg_mask, value_col].to_numpy(dtype=float)
             neg_colors_list = [colors[i] for i, mask in enumerate[Any](neg_mask) if mask]
 
             ax.barh(
@@ -455,7 +455,7 @@ def visualize_woe(
         # Draw positive bars (extend right from 0)
         if pos_mask.any():
             pos_y = [i for i, mask in enumerate[Any](pos_mask) if mask]
-            pos_values = frame.loc[pos_mask, value_col].values
+            pos_values = frame.loc[pos_mask, value_col].to_numpy(dtype=float)
             pos_colors_list = [colors[i] for i, mask in enumerate[Any](pos_mask) if mask]
 
             ax.barh(
@@ -471,7 +471,7 @@ def visualize_woe(
         # Draw negative bars (extend left from 0)
         if neg_mask.any():
             neg_y = [i for i, mask in enumerate[Any](neg_mask) if mask]
-            neg_values = frame.loc[neg_mask, value_col].values
+            neg_values = frame.loc[neg_mask, value_col].to_numpy(dtype=float)
             neg_colors_list = [colors[i] for i, mask in enumerate[Any](neg_mask) if mask]
 
             ax.barh(

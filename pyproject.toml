@@ -215,7 +215,7 @@ init-hook = "import sys; sys.path.insert(0, 'typings')"
 
 # mypy type checker configuration
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
@@ -239,7 +239,15 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 # pandas operations return Any; suppressing warn_return_any for files
 # that return DataFrames constructed from pandas internals
-module = ["fastwoe.fastwoe", "fastwoe.fastwoe_multiclass"]
+module = [
+    "fastwoe.fastwoe",
+    "fastwoe.fastwoe_multiclass",
+    "fastwoe.fastwoe_piecewise",
+    "fastwoe.fastwoe_conditional",
+    "fastwoe.interpret_fastwoe",
+    "fastwoe.plots",
+    "fastwoe.screening",
+]
 warn_return_any = false
 
 # Sourcery configuration
