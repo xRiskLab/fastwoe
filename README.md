@@ -373,6 +373,8 @@ Information Value follows the same chain rule. `get_iv_analysis()` keeps `iv` as
 
 The order is an attribution choice: when the per-feature weights or IVs are used for explanations, set `conditional_order` deliberately (e.g. cause before symptom) and document it.
 
+A worked example, including calibration against marginal WOE and logistic regression, fallbacks and explanations, is in [`examples/notebooks/fastwoe_conditional.ipynb`](examples/notebooks/fastwoe_conditional.ipynb).
+
 ### Numerical Feature Binning
 
 FastWoe supports three methods for binning numerical features:

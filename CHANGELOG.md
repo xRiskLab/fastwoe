@@ -43,6 +43,8 @@
 
 ### Docs
 
+- `examples/notebooks/fastwoe_piecewise.ipynb` runs on simulated data instead of a CSV that was not in the repository, labels the pieces correctly (positive WOE is higher risk), and reports log loss alongside Gini.
+- New notebook `examples/notebooks/fastwoe_conditional.ipynb`: double counting under marginal WOE, the tree of conditional weights, what the conditioning order changes, conditional IV, calibration of four models, fallbacks, and explaining a prediction with `WeightOfEvidence`.
 - Fixed the README link to `docs/woe_standard_errors.md`.
 
 ## Version 0.1.8 (2026-06-12)
