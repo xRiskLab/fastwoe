@@ -290,6 +290,20 @@ class TestUnseenConditional:
 
 
 @pytest.fixture
+def three_features():
+    """Three binary features, so the tree has three levels."""
+    rng = np.random.default_rng(11)
+    n = 30_000
+    a = rng.random(n) < 0.3
+    b = np.where(a, rng.random(n) < 0.6, rng.random(n) < 0.3)
+    c = rng.random(n) < 0.4
+    logit = -2 + 1.0 * a + 0.6 * b + 0.4 * c
+    y = pd.Series((rng.random(n) < 1 / (1 + np.exp(-logit))).astype(int), name="bad")
+    X = pd.DataFrame({"a": a, "b": b, "c": c}).astype(int).astype(str)
+    return X, y
+
+
+@pytest.fixture
 def with_missing():
     """A categorical with a well-populated NaN level and a numeric feature."""
     rng = np.random.default_rng(7)
@@ -522,6 +536,88 @@ class TestExportText:
         assert bins == woe._category_order("b")
         assert "a = NaN" in fit_quietly(X, y, conditional_min_count=10).export_text()
 
+    @staticmethod
+    def rows_with_weights(text):
+        """(indent depth, W, event rate) for every node row, in tree order."""
+        rows = []
+        for row in TestExportText.body(text)[1:]:
+            if "[" not in row:
+                continue
+            node = row.split(" = ")[0]
+            depth = (len(node) - len(node.lstrip("│ "))) // 4
+            fields = row.split("]")[1].split()
+            rows.append(
+                (
+                    depth,
+                    float(row.split("]")[0].split("[")[0].split()[-1]),
+                    float(fields[1].rstrip("%")) / 100,
+                )
+            )
+        return rows
+
+    def test_path_weights_reproduce_each_leaf(self, three_features):
+        """A leaf's log-odds are the prior plus the weights on its path."""
+        X, y = three_features
+        woe = fit_quietly(X, y, conditional_min_count=5)
+        text = woe.export_text(bar_width=0)
+        prior = float(text.splitlines()[1].split("prior log-odds ")[1])
+        path = []
+        for depth, weight, rate in self.rows_with_weights(text):
+            path = path[:depth] + [weight]
+            if depth == len(woe.conditional_order_) - 1:  # a leaf
+                assert 1 / (1 + np.exp(-(prior + sum(path)))) == pytest.approx(rate, abs=0.0015)
+
+    def test_three_level_tree_layout(self, three_features):
+        X, y = three_features
+        woe = fit_quietly(X, y, conditional_min_count=5)
+        rows = self.body(woe.export_text())
+        n_leaves = sum(len(t) for (col, _), t in woe.conditional_weights_.items() if col == "c")
+        assert sum(r.split(" = ")[0].endswith("c") for r in rows) == n_leaves
+        assert any(r.startswith("│   │   ├── c = ") for r in rows)
+        assert any(
+            r.startswith("    │   └── c = ") or r.startswith("        └── c = ") for r in rows
+        )
+
+    def test_truncation_hides_several_levels(self, three_features):
+        X, y = three_features
+        woe = fit_quietly(X, y, conditional_min_count=5)
+        notes = [r for r in self.body(woe.export_text(max_depth=1)) if "more level" in r]
+        assert len(notes) == 2  # one per value of the first feature
+        assert all("... 2 more level(s)" in r for r in notes)
+        hidden = sum(int(r.split(", ")[1].split()[0]) for r in notes)
+        assert hidden == sum(
+            len(t) for (col, _), t in woe.conditional_weights_.items() if col == "c"
+        )
+
+    def test_dots_are_ordered_like_the_weights(self, three_features):
+        """One shared scale: a larger weight never sits left of a smaller one."""
+        X, y = three_features
+        woe = fit_quietly(X, y, conditional_min_count=5)
+        text = woe.export_text(bar_width=40)
+        points = []
+        for row in self.body(text)[1:]:
+            if "[" in row:
+                weight = float(row.split("]")[0].split("[")[0].split()[-1])
+                points.append((weight, max(row.find("●"), row.find("○"))))
+        points.sort()
+        assert [col for _, col in points] == sorted(col for _, col in points)
+
+    def test_decimals(self, fitted):
+        woe, _, _ = fitted
+        row = self.body(woe.export_text(decimals=5))[6]
+        assert f"{np.log(1.5):+.5f}" in row
+        assert f"{np.log(1.5):+.3f} " not in row
+
+    def test_narrow_axis_drops_labels_instead_of_overlapping(self, fitted):
+        woe, _, _ = fitted
+        text = woe.export_text(bar_width=8)
+        header = text.splitlines()[3]
+        axis = header[header.index("event rate") + len("event rate") + 2 :]
+        assert len(axis.rstrip()) <= 8
+        # every label that is shown is whole and separated from the next by a space
+        for token in axis.split():
+            assert token == "0" or (token[0] in "+-" and token[1:].replace(".", "").isdigit())
+
     def test_requires_conditional_and_fit(self, correlated):
         X, y = correlated
         with pytest.raises(ValueError, match="conditional=True"):
@@ -557,3 +653,29 @@ class TestThinCells:
             )
             if parent_row["fallback"].iloc[0]:
                 assert table["fallback"].all()
+
+
+class TestWeightOfEvidenceExplainer:
+    """WeightOfEvidence explains a conditional model through its ordinary API."""
+
+    def test_contributions_are_the_conditional_weights(self, fitted):
+        from fastwoe import WeightOfEvidence
+
+        woe, X, y = fitted
+        explanation = WeightOfEvidence(woe, X, y).explain(ONE, return_dict=True)
+        contributions = explanation["feature_contributions"]
+        assert contributions["delinquent"] == pytest.approx(np.log(5.0), abs=1e-9)
+        assert contributions["high_util"] == pytest.approx(np.log(1.5), abs=1e-9)
+        assert explanation["total_woe"] == pytest.approx(sum(contributions.values()))
+        assert explanation["predicted_proba"]["Positive"] == pytest.approx(0.2830, abs=1e-4)
+
+    def test_interval_is_the_conditional_one(self, fitted):
+        from fastwoe import WeightOfEvidence
+
+        woe, X, y = fitted
+        explanation = WeightOfEvidence(woe, X, y).explain_ci(ONE, return_dict=True)
+        lower, upper = woe.predict_ci(ONE)[0]
+        assert explanation["ci_conservative"]["predicted_proba_ci"] == pytest.approx(
+            lower, abs=1e-4
+        )
+        assert explanation["ci_optimistic"]["predicted_proba_ci"] == pytest.approx(upper, abs=1e-4)
