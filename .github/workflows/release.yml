@@ -69,6 +69,7 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    environment: pypi  # must match the trusted publisher configured on PyPI
     permissions:
       id-token: write  # mandatory for PyPI trusted publishing
     steps:
@@ -123,4 +124,5 @@ jobs:
           Check the [CHANGELOG](https://github.com/xRiskLab/fastwoe/blob/main/CHANGELOG.md#version-${{ steps.get_version.outputs.version }}) for full details.
         draft: false
         prerelease: false
+        allowUpdates: true  # a re-run for an existing tag updates its release
         token: ${{ secrets.GITHUB_TOKEN }}
