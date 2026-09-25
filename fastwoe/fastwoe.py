@@ -1117,7 +1117,7 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
         X_new: Union[pd.DataFrame, np.ndarray, pd.Series],
         y_new: Union[pd.Series, np.ndarray],
         update_prior: bool = False,
-    ) -> "FastWoe":
+    ) -> None:
         """Recalibrate WOE values using new data.
 
         Keeps existing bin structure (edges, categories) intact but recomputes
@@ -1138,8 +1138,9 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
 
         Returns:
         -------
-        self : FastWoe
-            The recalibrated encoder instance (for method chaining).
+        None
+            The encoder is updated in place, like ``list.sort``; it is not
+            returned, so a call is never mistaken for a new encoder.
         """
         # --- validation ---
         if not self.is_fitted_:
@@ -1183,7 +1184,7 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
                 UserWarning,
                 stacklevel=2,
             )
-            return self
+            return
 
         # --- optionally update prior ---
         if update_prior:
@@ -1203,8 +1204,6 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
 
         for col in cols_to_update:
             self._recalibrate_feature(col, X_new, y_new, odds_prior)
-
-        return self
 
     def _recalibrate_feature(
         self,

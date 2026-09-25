@@ -223,7 +223,7 @@ class WeightOfEvidence(BaseEstimator):
             # Raise error if class identifier is not int or str
             raise ValueError(f"Class identifier must be int or str, got {type(class_id)}")
 
-    def _fit(self):
+    def _fit(self) -> None:
         """Fit the Weight of Evidence explainer."""
         # Set basic properties
         self.n_samples_, self.n_features_ = self.X_train_.shape
@@ -240,7 +240,6 @@ class WeightOfEvidence(BaseEstimator):
         self._validate_inputs()
 
         self.is_fitted_ = True
-        return self
 
     def _validate_inputs(self):
         """Validate input parameters and data consistency."""

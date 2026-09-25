@@ -47,7 +47,7 @@ class PiecewiseWoeMixin:
         self,
         strategy: str = "sign",
         piece_map: Optional[dict[str, dict[str, int]]] = None,
-    ) -> "PiecewiseWoeMixin":
+    ) -> None:
         """Assign bins to pieces for every fitted feature.
 
         Parameters
@@ -68,8 +68,8 @@ class PiecewiseWoeMixin:
 
         Returns:
         -------
-        self
-            Returns self for chaining.
+        None
+            Pieces are stored in the fitted mappings in place; nothing is returned.
 
         Raises:
         ------
@@ -89,8 +89,6 @@ class PiecewiseWoeMixin:
                 self._assign_pieces_from_map(feature, piece_map[feature])
             else:
                 self._assign_pieces_auto(feature, strategy)
-
-        return self
 
     # ------------------------------------------------------------------
     # Private helpers

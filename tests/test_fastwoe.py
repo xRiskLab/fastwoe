@@ -2799,11 +2799,12 @@ class TestFinetune:
         expected_woe_A = woe.mappings_["cat1"].loc["A", "woe"]
         assert X_woe.loc[0, "cat1"] == pytest.approx(expected_woe_A)
 
-    def test_method_chaining(self, fitted_categorical):
-        """finetune() returns self for chaining."""
+    def test_updates_in_place_and_returns_none(self, fitted_categorical):
+        """finetune() mutates the encoder, so it returns None rather than self."""
         woe, _, _ = fitted_categorical
+        before = woe.mappings_["cat1"]["woe"].copy()
         X_new = pd.DataFrame({"cat1": ["A"] * 50 + ["B"] * 30 + ["C"] * 20})
         y_new = pd.Series(np.random.binomial(1, 0.5, 100))
 
-        result = woe.finetune(X_new, y_new)
-        assert result is woe
+        assert woe.finetune(X_new, y_new) is None
+        assert not woe.mappings_["cat1"]["woe"].equals(before)

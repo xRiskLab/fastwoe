@@ -17,6 +17,10 @@
 - **`export_text()`**: prints the conditional weights as a tree, like `sklearn.tree.export_text`, with a header naming the target and conditioning order, and each node's weight, 95% interval, size, event rate and fallback marker; the intervals are drawn as bars on a shared scale with a zero line. `max_depth=` truncates; `bar_width=0` hides the bars. The target's name is kept as `target_name_`.
 - **Lightweight imports**: `fastwoe` loads its submodules on first use, so `fastwoe.metrics` and `fastwoe.plots` import without scikit-learn, loguru or rich.
 
+### Changed (breaking)
+
+- **`finetune()` and `assign_pieces()` return `None`** instead of the encoder. Both modify the fitted encoder in place, and a method that mutates should not also return `self` (as with `list.sort`): `woe.finetune(X, y).predict_proba(X)` read as if it produced a new model. Call them as statements: `woe.finetune(X, y)` then `woe.predict_proba(X)`. `fit()` still returns `self`, as the scikit-learn estimator API requires.
+
 ### Information Value inference
 
 - **`iv_se` now uses the full delta method.** Both the WOE values and the weights `(b - g)` are estimated from the same counts; the previous formula treated them as independent and understated the SE by about 30% (holding the weights fixed, as `sqrt(sum (b - g)^2 (1/n_bad + 1/n_good))` does, understates it by about half). Validated against simulation. Reported SEs and intervals are wider than in 0.1.8.
