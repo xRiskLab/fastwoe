@@ -179,6 +179,23 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
         Additional keyword arguments for the tree estimator.
     faiss_kwargs : dict, optional
         Additional keyword arguments for FAISS KMeans (when binning_method="faiss_kmeans").
+    unseen : {"warn", "prior", "raise"}, default="warn"
+        How transform() treats categories absent from the fitted mapping,
+        including missing values when the training data had none.
+    conditional : bool, default=False
+        Use conditional WOE (Good's chain rule): each feature's weight is
+        measured within the population selected by the features before it,
+        so correlated features are not double-counted. Binary targets only.
+        transform(), predict_proba(), predict_ci() and get_mapping() then use
+        the conditional weights.
+    conditional_order : list of str, optional
+        Conditioning order when conditional=True. Defaults to the column order
+        of X at fit time. Order changes how weight is attributed across
+        features, not the total score (except where cells fall back).
+    conditional_min_count : int, default=30
+        Minimum observations of each class (bads and goods) in a cell and in
+        the group it is conditioned within. Thinner cells fall back to the
+        marginal weight and are recorded in conditional_fallbacks_.
 
     Attributes:
     ----------
@@ -206,6 +223,9 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
         faiss_kwargs=None,
         monotonic_cst=None,
         unseen="warn",
+        conditional=False,
+        conditional_order=None,
+        conditional_min_count=30,
     ):
         super().__init__()
         # Set up encoder kwargs - will be updated in fit() based on target type
@@ -276,6 +296,12 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
         if unseen not in ("warn", "prior", "raise"):
             raise ValueError(f"unseen must be 'warn', 'prior' or 'raise', got {unseen!r}")
         self.unseen = unseen
+
+        self.conditional = bool(conditional)
+        self.conditional_order = None if conditional_order is None else list(conditional_order)
+        if conditional_min_count < 1:
+            raise ValueError("conditional_min_count must be at least 1")
+        self.conditional_min_count = int(conditional_min_count)
 
         self.encoders_: dict[str, Any] = {}
         self.mappings_: dict[str, pd.DataFrame] = {}
@@ -867,6 +893,9 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
                 )
 
         self.is_fitted_ = True
+        self.target_name_ = str(y.name) if y.name is not None else "target"
+        if self.conditional:
+            self._fit_conditional(X, y)
         return self
 
     def _apply_binning_to_column(self, X: pd.DataFrame, col: str) -> pd.Series:
@@ -1031,6 +1060,9 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
         if not self.is_fitted_:
             raise ValueError("Model must be fitted before transforming data")
 
+        if self.conditional:
+            return self._conditional_output(X, output)
+
         # Piecewise output: delegate to PiecewiseWoeMixin
         if output == "piecewise":
             return self._transform_piecewise(X)
@@ -1134,6 +1166,10 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
 
         if self.is_multiclass_target:
             raise NotImplementedError("finetune() is not supported for multiclass targets")
+        if self.conditional:
+            raise NotImplementedError(
+                "finetune() is not supported with conditional=True; refit instead"
+            )
 
         X_new = self._ensure_dataframe(X_new, use_fitted_names=True)
         y_new = self._ensure_series(y_new)
@@ -1299,6 +1335,13 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
             mapping = self._get_multiclass_mapping(feature, class_label)
         else:
             mapping = self.mappings_[feature].copy()
+        if self.conditional:
+            marginal = self._ordered_mapping(feature, mapping).reset_index()
+            return self._conditional_mapping(feature, list(marginal["category"]))
+        return self._ordered_mapping(feature, mapping).reset_index()
+
+    def _ordered_mapping(self, feature: str, mapping: pd.DataFrame) -> pd.DataFrame:
+        """Reindex a binned feature's mapping into bin order."""
         # For binned numerical features, reindex by bin_labels
         if feature in getattr(self, "binners_", {}):
             binning_info = self.binning_info_[feature]
@@ -1342,10 +1385,12 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
                         label = f"({edges[i]:.1f}, {edges[i + 1]:.1f}]"
                     bin_labels.append(label)
                 mapping = mapping.reindex(bin_labels)
-        return mapping.reset_index()
+        return mapping
 
     def get_all_mappings(self) -> dict:
         """Get all mappings (useful for serialization, audit, or compact storage)."""
+        if self.conditional:
+            return {col: self.get_mapping(col) for col in self.mappings_}
         return {col: mapping.reset_index() for col, mapping in self.mappings_.items()}
 
     def get_probability_mapping(self, feature: str) -> pd.DataFrame:
@@ -1415,10 +1460,29 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
     def get_feature_summary(self) -> pd.DataFrame:
         """Get a summary table of all features ranked by predictive power."""
         stats_df = self.get_feature_stats()
-        result = stats_df.sort_values("gini", ascending=False)[
-            ["feature", "gini", "iv", "n_categories"]
-        ].round(4)
+        columns = ["feature", "gini", "iv", "n_categories"]
+        if self.conditional:
+            columns[3:3] = ["iv_conditional", "conditioned_on"]
+        result = stats_df.sort_values("gini", ascending=False)[columns].round(4)
         return pd.DataFrame(result)
+
+    _CONDITIONAL_IV_KEYS = (
+        "iv_conditional",
+        "iv_conditional_se",
+        "iv_conditional_ci_lower",
+        "iv_conditional_ci_upper",
+        "conditioned_on",
+    )
+
+    def _conditional_iv_columns(self, stats: dict) -> dict:
+        """Conditional IV fields of a feature's stats, when conditional=True."""
+        if not self.conditional:
+            return {}
+        columns = {key: stats[key] for key in self._CONDITIONAL_IV_KEYS}
+        columns["iv_conditional_significance"] = (
+            "Significant" if stats["iv_conditional_ci_lower"] > 0 else "Not Significant"
+        )
+        return columns
 
     def get_iv_analysis(
         self,
@@ -1441,7 +1505,12 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
         Returns:
         -------
         pd.DataFrame
-            DataFrame with IV statistics including standard errors and confidence intervals
+            DataFrame with IV statistics including standard errors and confidence intervals.
+            ``iv`` is always the marginal IV (each feature on its own). With
+            ``conditional=True`` it also has ``iv_conditional`` - the IV each feature
+            adds given the features before it in the conditioning order
+            (``conditioned_on``) - with its standard error and confidence interval.
+            Conditional IVs sum to the joint IV of the features.
         """
         if not self.is_fitted_:
             raise ValueError("FastWoe must be fitted before getting IV analysis")
@@ -1466,6 +1535,7 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
                         else "Not Significant",
                         "n_categories": stats["n_categories"],
                         "gini": stats["gini"],
+                        **self._conditional_iv_columns(stats),
                     }
                 ]
             )
@@ -1482,6 +1552,7 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
                     ),
                     "n_categories": stats["n_categories"],
                     "gini": stats["gini"],
+                    **self._conditional_iv_columns(stats),
                 }
                 for _feature_name, stats in self.feature_stats_.items()
             ]
@@ -1576,6 +1647,13 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
             raise ValueError("Model must be fitted before predicting confidence intervals")
 
         z_crit = norm.ppf(1 - alpha / 2)
+
+        if self.conditional:
+            score, se = self._conditional_score_se(cast(pd.DataFrame, X))
+            score = score + np.log(self.odds_prior_)
+            return np.column_stack(
+                [sigmoid(score - z_crit * se), sigmoid(score + z_crit * se)]
+            ).astype(float)
 
         # Apply binning so category lookups match the fitted mappings
         X_processed = cast(pd.DataFrame, X).copy()

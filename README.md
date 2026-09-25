@@ -324,15 +324,47 @@ Fit on data that contains missing values so a `Missing` bin is learned.
 Summing marginal WOE is exact only when features are independent. Conditional WOE uses Good's chain rule, `W(H : E1 E2) = W(H : E1) + W(H : E2 | E1)`, so each weight is measured within the population picked out by the features before it (binary targets only):
 
 ```python
-woe_encoder.fit(X, y)
-woe_encoder.fit_conditional(X, y, order=["delinquent", "utilisation"], min_cell_count=30)
-contributions = woe_encoder.transform_conditional(X)      # per-feature weights, sum to the score
-log_odds = woe_encoder.predict_conditional_log_odds(X)
-woe_encoder.conditional_summary()                         # weights with counts and SEs
-woe_encoder.check_chain_rule(X, y)                        # verifies the weights add up
+woe = FastWoe(conditional=True)             # conditions in X's column order
+woe.fit(X[["delinquent", "high_util"]], y)
+
+woe.transform(X)          # per-feature conditional weights; they sum to the score
+woe.predict_proba(X)      # no double counting of shared signal
+woe.predict_ci(X)         # SE of the joint cell, not a sum of per-feature variances
+woe.get_mapping("high_util")  # weight of each category *given* each earlier value
+woe.get_iv_analysis()         # marginal iv plus iv_conditional: what each feature adds given the earlier ones
+print(woe.export_text())      # the weights as a tree, like sklearn's export_text
 ```
 
-Conditioning cells with fewer than `min_cell_count` observations of either class fall back to the marginal weight and are listed in `conditional_fallbacks_`. The order changes how weight is attributed across features but not the total score.
+```
+Conditional WOE tree  ·  target: default  ·  event rate = share of rows with default = 1
+Conditioning order: delinquent → high_util  ·  prior log-odds -1.997
+
+                            W  95% interval           n  event rate  -0.46  0                 +1.35
+root                                             20,000       11.9%
+├── delinquent = 0     -0.403  [-0.458, -0.349]  17,021        8.3%  ─●─    ┊
+│   ├── high_util = 0  -0.073  [-0.136, -0.010]  13,636        7.8%       ─●─
+│   └── high_util = 1  +0.256  [+0.146, +0.366]   3,385       10.5%         ┊  ─●──
+└── delinquent = 1     +1.277  [+1.200, +1.353]   2,979       32.7%         ┊                   ─●─
+    ├── high_util = 0  -0.255  [-0.381, -0.129]   1,220       27.4%   ──●── ┊
+    └── high_util = 1  +0.164  [+0.067, +0.261]   1,759       36.4%         ┊──●──
+```
+
+Each node shows its conditional weight `W` with a 95% interval, its size and its event rate (share of rows with target = 1). The bars draw the intervals on one shared scale with a zero line (`┼` where an interval covers zero), so weights can be compared at a glance; `○ [fallback]` marks cells that used the marginal weight. `max_depth=` truncates deep trees and `bar_width=0` hides the bars.
+
+On two correlated features, an applicant who is delinquent with high utilisation:
+
+| | delinquent | high_util | P(bad) |
+|---|---|---|---|
+| Marginal WOE | 1.277 | 0.571 | 0.463 |
+| Conditional, delinquent first | 1.277 | 0.164 | 0.364 |
+| Conditional, high_util first | 0.870 | 0.571 | 0.364 |
+| Observed rate in that cell | | | 0.364 |
+
+The order (`conditional_order=[...]`) changes how weight is attributed across features, not the score. Conditioning cells multiply with each feature, so this suits a short list of correlated features rather than a whole scorecard: cells with fewer than `conditional_min_count` (default 30) bads or goods fall back to the marginal weight and are listed in `conditional_fallbacks_`. With two features the score stays order-invariant even then; with three or more, fallbacks are where the order *can* change the score.
+
+Information Value follows the same chain rule. `get_iv_analysis()` keeps `iv` as the marginal IV and adds `iv_conditional` (with SE, confidence interval, significance and `conditioned_on`): the IV a feature adds given the features before it. Conditional IVs sum to the joint IV of the features, so a correlated feature that looks strong on its own can show a small, non-significant conditional IV.
+
+The order is an attribution choice: when the per-feature weights or IVs are used for explanations, set `conditional_order` deliberately (e.g. cause before symptom) and document it.
 
 ### Numerical Feature Binning
 

@@ -12,14 +12,16 @@
 ### New Features
 
 - **`FastWoe(unseen="warn" | "prior" | "raise")`**: controls how categories absent from the fitted mapping are handled. The default warns with column and counts; `unseen_counts_` records them after each transform.
-- **Conditional WOE (Good's chain rule)**: `fit_conditional()`, `transform_conditional()`, `predict_conditional_log_odds()`, `conditional_summary()` and `check_chain_rule()` measure each feature's weight within the population selected by the earlier features, so the weights add without assuming independence. Thin cells fall back to the marginal weight and are recorded in `conditional_fallbacks_`. Binary targets only. NaN levels form their own conditioning cells, and `transform_conditional()` follows the `unseen` policy.
+- **Conditional WOE (Good's chain rule)**: `FastWoe(conditional=True)` measures each feature's weight within the population selected by the earlier features, so correlated features are not double-counted and the weights add without assuming independence. `transform()`, `predict_proba()`, `predict()`, `predict_ci()` and `get_mapping()` use the conditional weights; `predict_ci()` uses the SE of the joint cell the chain telescopes to. The order defaults to X's column order (`conditional_order=` overrides) and changes attribution, not the score. Cells with fewer than `conditional_min_count` of a class fall back to the marginal weight and are recorded in `conditional_fallbacks_`. Binary targets only; NaN levels form their own cells; unseen categories follow the `unseen` policy.
+- **Conditional Information Value**: with `conditional=True`, `get_iv_analysis()`, `get_feature_summary()` and `feature_stats_` add `iv_conditional` (with SE, confidence interval, significance and `conditioned_on`): the IV each feature adds given the features before it. Conditional IVs sum to the joint IV; `iv` stays the marginal IV.
+- **`export_text()`**: prints the conditional weights as a tree, like `sklearn.tree.export_text`, with a header naming the target and conditioning order, and each node's weight, 95% interval, size, event rate and fallback marker; the intervals are drawn as bars on a shared scale with a zero line. `max_depth=` truncates; `bar_width=0` hides the bars. The target's name is kept as `target_name_`.
 - **Lightweight imports**: `fastwoe` loads its submodules on first use, so `fastwoe.metrics` and `fastwoe.plots` import without scikit-learn, loguru or rich.
-
-### Docs
 
 ### Maintenance
 
 - **Type checking passes again**: fixed the mypy errors that failed the Type Checking workflow since 0.1.8, across current and older `pandas-stubs`. mypy's `python_version` is now 3.10, the oldest mypy 2.x supports; runtime support for Python 3.9 is unchanged.
+
+### Docs
 
 - Fixed the README link to `docs/woe_standard_errors.md`.
 
