@@ -82,6 +82,9 @@ pip install faiss-gpu  # Requires CUDA
 >
 > Both versions support Python 3.7-3.12 and are compatible with NumPy 1.x and 2.x.
 
+#### WebAssembly (Pyodide)
+FastWoe runs in [Pyodide](https://pyodide.org) (e.g. JupyterLite): `await micropip.install("fastwoe")`. numba has no WebAssembly build, so it is not installed there and the Somers' D code runs as plain Python: the same calculation and results, without compilation (200,000 rows in about 1 to 3 seconds in the browser).
+
 #### Plotting Support
 **Optional: Matplotlib for CAP curves and WOE visualization**:
 

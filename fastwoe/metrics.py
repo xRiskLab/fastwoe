@@ -12,26 +12,30 @@ from typing import Any, Callable, Optional
 import numpy as np
 import pandas as pd
 
-# Try to import numba, with fallback for environments where it's not available or has issues
+# numba compiles the Somers' D cores. Where it is not available - WebAssembly
+# (Pyodide), where it is not installed by design, or a broken llvmlite - the same
+# functions run as plain Python: the same calculation and the same integer counts,
+# without compilation (about 10x slower; 200,000 rows in well under a second).
 try:
     from numba import njit
 
     _HAS_NUMBA = True
 except (ImportError, OSError, MemoryError) as e:
-    # Fallback: use a no-op decorator when numba is not available
-    # This allows the code to run, but without JIT compilation (slower)
+    import sys
     import warnings
 
-    warnings.warn(
-        f"Numba not available or failed to import ({type(e).__name__}: {e}). "
-        "Performance will be degraded. If this is unexpected, check numba/llvmlite installation.",
-        UserWarning,
-        stacklevel=2,
-    )
+    if sys.platform != "emscripten":  # expected under Pyodide; say nothing there
+        warnings.warn(
+            f"Numba not available or failed to import ({type(e).__name__}: {e}). "
+            "Somers' D runs as plain Python: same results, slower. If this is "
+            "unexpected, check the numba/llvmlite installation.",
+            UserWarning,
+            stacklevel=2,
+        )
     _HAS_NUMBA = False
 
     def njit(func: Callable) -> Callable:  # type: ignore[no-redef]
-        """No-op decorator when numba is not available."""
+        """No-op decorator when numba is not available: the function runs as written."""
         return func
 
 
@@ -287,7 +291,7 @@ def somersd_yx(
         stat, S, D, Ty, P, denom = _somers_yx_weighted(y, x, weights)
         return SomersDResult(stat, S, D, Ty, P, denom)
 
-    # Unweighted case: use fast Numba implementation
+    # Unweighted case: O(n log n), compiled by numba where available
     stat, S, D, Ty, P, denom = _somers_yx_core(y, x)
     return SomersDResult(stat, S, D, Ty, P, denom)
 

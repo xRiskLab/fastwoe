@@ -323,7 +323,7 @@ class ConditionalWoeMixin:
         Xb = self._binned_frame(X[order])
 
         groups = Xb.groupby(order, dropna=False, sort=False, observed=True)
-        codes = groups.ngroup().to_numpy()
+        codes = groups.ngroup().to_numpy(dtype=np.intp)  # native int: wasm32 is 32-bit
         sizes = np.bincount(codes)
         firsts = groups.head(1)
 

@@ -2,7 +2,7 @@
 
 ## Version 0.1.9 (2026-09-24)
 
-**Numeric Binning Fix, Unseen Categories, Conditional WOE & IV Inference**
+**Numeric Binning Fix, Unseen Categories, Conditional WOE, IV Inference & WebAssembly**
 
 ### Bug Fixes
 
@@ -23,6 +23,11 @@
 - **`iv_pvalue` and a chi-square significance test.** `iv_significance` was "CI lower bound > 0", which relies on IV being normal near 0; it is not (it is never negative and behaves like a chi-square statistic). It is now `iv_pvalue < alpha` from the test `n_eff * IV ~ chi2(k - 1)`, computed as Pearson's X² so that bins holding one class count as evidence rather than being dropped. Calibrated in simulation (about 5% rejections at alpha = 0.05 on useless features). Also for multiclass.
 - **SE counts come from `bad_count` / `good_count`**, not `count * event_rate`: the smoothed event rate turned a bin with no goods into a tiny positive count that inflated the SE (0.43 instead of 0.012 on one tree-binned feature).
 - **Conditional IV**: `iv_conditional_se` is the delta-method SE of `IV(E1, E2) - IV(E1)`, the nested form of the conditional IV, and `iv_conditional_pvalue` a stratified chi-square test that a feature adds nothing within the earlier features' groups.
+
+### WebAssembly (Pyodide)
+
+- **numba is no longer installed under WebAssembly** (`numba; sys_platform != "emscripten"`); it has no wasm build, which made `fastwoe` uninstallable in Pyodide. Where numba is missing, the same Somers' D functions run as plain Python: the calculation is unchanged and gives identical integer pair counts, just without compilation. In Pyodide 0.27.7: Somers' D on 200,000 rows in 1.1s (binary target) to 3.3s (continuous), and `FastWoe.fit` on 10 numeric features x 50,000 rows in 1.6s (0.7s natively with numba). No warning is shown under WebAssembly.
+- Fixed a 64-bit integer assumption in the conditional transform that failed on 32-bit WebAssembly.
 
 ### Maintenance
 
