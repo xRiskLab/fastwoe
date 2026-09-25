@@ -1,6 +1,6 @@
 # Changelog
 
-## Version 0.1.9 (2026-09-24)
+## Version 0.1.9 (2026-09-25)
 
 **Numeric Binning Fix, Unseen Categories, Conditional WOE, IV Inference & WebAssembly**
 
