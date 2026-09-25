@@ -610,7 +610,7 @@ class TestCoverageImprovements:
 
         # Test invalid type
         with pytest.raises(ValueError, match="Class identifier must be int or str"):
-            woe._resolve_class_identifier([1, 2])  # type: ignore
+            woe._resolve_class_identifier([1, 2])
 
     def test_validation_insufficient_samples_per_class(self):
         """Test validation error when insufficient samples per class."""

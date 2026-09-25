@@ -1,5 +1,4 @@
-"""
-Plotting functionality for FastWoe.
+"""Plotting functionality for FastWoe.
 
 This module provides visualization functions for model performance and WOE analysis.
 Requires matplotlib (install with: pip install fastwoe[plotting]).
@@ -43,8 +42,7 @@ def plot_performance(
     colors: Optional[list[str]] = None,
     top_p: Optional[float] = None,
 ) -> tuple:
-    """
-    Plot model performance curve (CAP for binary, Power curve for continuous).
+    """Plot model performance curve (CAP for binary, Power curve for continuous).
 
     Automatically detects target type and creates appropriate visualization.
     Supports multiple predictions for model comparison.

@@ -1,5 +1,4 @@
-"""
-interpret_fastwoe.py.
+"""interpret_fastwoe.py.
 
 FastWoe interpretability module for explaining predictions.
 
@@ -23,8 +22,7 @@ console = Console()
 
 
 class WeightOfEvidence(BaseEstimator):
-    """
-    Weight of Evidence explainer for FastWoe classifiers.
+    """Weight of Evidence explainer for FastWoe classifiers.
 
     Provides interpretability for FastWoe predictions by computing
     Weight of Evidence scores that measure how much evidence features provide
@@ -114,9 +112,7 @@ class WeightOfEvidence(BaseEstimator):
         class_names: Optional[list[str]] = None,
         auto_infer: bool = True,
     ):
-        """
-        Initialize WeightOfEvidence explainer with automatic parameter inference.
-        """
+        """Initialize WeightOfEvidence explainer with automatic parameter inference."""
         self.auto_infer = auto_infer
 
         # Handle case where no classifier is provided - create FastWoe automatically
@@ -163,7 +159,6 @@ class WeightOfEvidence(BaseEstimator):
             feature_names = self._infer_feature_names(X_train, classifier)
 
         if feature_names and not isinstance(X_train, pd.DataFrame):
-            # type: ignore[bad-argument-type]
             self._original_X_train = pd.DataFrame(X_train, columns=list(feature_names))
         elif isinstance(X_train, pd.DataFrame):
             self._original_X_train = X_train
@@ -199,10 +194,8 @@ class WeightOfEvidence(BaseEstimator):
                 # Use original feature names
                 feature_names = list(self._original_X_train.columns)
                 if len(x.shape) == 1:
-                    # type: ignore[bad-argument-type]
                     return pd.DataFrame([x], columns=feature_names)
                 else:
-                    # type: ignore[bad-argument-type]
                     return pd.DataFrame(x, columns=feature_names)
             else:
                 # Fallback to generic names
@@ -289,8 +282,7 @@ class WeightOfEvidence(BaseEstimator):
         true_labels: Optional[Union[np.ndarray, pd.Series]] = None,
         return_dict: bool = True,
     ) -> Optional[dict]:
-        """
-        Explain a prediction using Weight of Evidence.
+        """Explain a prediction using Weight of Evidence.
 
         This method handles two usage patterns:
         1. explain(sample) - explain a single sample
@@ -353,7 +345,7 @@ class WeightOfEvidence(BaseEstimator):
             # Get true label from true_labels if provided
             if true_labels is not None and hasattr(true_labels, "iloc"):
                 # true_labels is a pandas Series
-                true_label = true_labels.iloc[sample_idx]  # type: ignore
+                true_label = true_labels.iloc[sample_idx]
             elif true_labels is not None:
                 # true_labels is a numpy array or list
                 true_label = true_labels[sample_idx]
@@ -362,10 +354,8 @@ class WeightOfEvidence(BaseEstimator):
 
             # Get explanation using the core method
             explanation = self._explain_single_sample(
-                # type: ignore[bad-argument-type]
                 sample,
                 class_to_explain,
-                # type: ignore[bad-argument-type]
                 true_label,
             )
 
@@ -403,7 +393,7 @@ class WeightOfEvidence(BaseEstimator):
                         # Use iloc with position to avoid type checker issues
                         idx_pos = list(true_labels.index).index(x.name)
                         # Pandas iloc typing is complex - ignore type checker here
-                        true_label_raw: Any = true_labels.iloc[idx_pos]  # type: ignore[assignment]
+                        true_label_raw: Any = true_labels.iloc[idx_pos]
                         # Convert to int or str
                         if isinstance(true_label_raw, (int, str, np.integer)):
                             true_label_single = (
@@ -440,13 +430,12 @@ class WeightOfEvidence(BaseEstimator):
             if not return_dict:
                 if isinstance(x, pd.Series):
                     sample_dict = {
-                        str(k): (v.item() if hasattr(v, "item") else v)  # type: ignore[call-arg]
+                        str(k): (v.item() if hasattr(v, "item") else v)
                         for k, v in x.to_dict().items()
                     }
                 elif isinstance(x, np.ndarray):
                     sample_dict = {
                         k: v.item() if hasattr(v, "item") else v
-                        # type: ignore[no-matching-overload]
                         for k, v in zip(self.feature_names, x)
                     }
                 else:
@@ -544,7 +533,7 @@ class WeightOfEvidence(BaseEstimator):
 
         # Handle numpy integers
         if hasattr(class_value, "item") and callable(class_value.item):
-            class_value = class_value.item()  # type: ignore
+            class_value = class_value.item()
 
         # Now handle as integer index
         if isinstance(class_value, (int, float)):
@@ -591,9 +580,7 @@ class WeightOfEvidence(BaseEstimator):
             return "Very strong evidence AGAINST the hypothesis"
 
     def _render_centered_bars(self, contributions: dict, width: int = 20, min_bar: int = 1) -> None:
-        """
-        Render feature contributions as centered horizontal bars.
-        """
+        """Render feature contributions as centered horizontal bars."""
         if not contributions:
             return
 
@@ -660,8 +647,7 @@ class WeightOfEvidence(BaseEstimator):
         alpha: float = 0.05,
         return_dict: bool = True,
     ) -> Optional[dict]:
-        """
-        Explain predictions with confidence intervals using FastWoe's predict_ci.
+        """Explain predictions with confidence intervals using FastWoe's predict_ci.
 
         Parameters
         ----------
@@ -713,17 +699,15 @@ class WeightOfEvidence(BaseEstimator):
                 }
             if true_labels is not None and hasattr(true_labels, "iloc"):
                 # true_labels is a pandas Series
-                true_label = true_labels.iloc[sample_idx]  # type: ignore
+                true_label = true_labels.iloc[sample_idx]
             elif true_labels is not None:
                 # true_labels is a numpy array or list
                 true_label = true_labels[sample_idx]
             else:
                 true_label = None
             explanation = self._explain_single_sample_ci(
-                # type: ignore[bad-argument-type]
                 sample_series,
                 class_to_explain,
-                # type: ignore[bad-argument-type]
                 true_label,
                 alpha,
             )
@@ -784,7 +768,6 @@ class WeightOfEvidence(BaseEstimator):
                 elif isinstance(x, np.ndarray):
                     sample_dict = {
                         k: v.item() if hasattr(v, "item") else v
-                        # type: ignore[no-matching-overload]
                         for k, v in zip(self.feature_names, x)
                     }
                 else:
@@ -825,8 +808,8 @@ class WeightOfEvidence(BaseEstimator):
         eps = 1e-15
         ci_lower_safe = np.clip(ci_lower_probs, eps, 1 - eps)
         ci_upper_safe = np.clip(ci_upper_probs, eps, 1 - eps)
-        logit_lower = np.log(ci_lower_safe / (1 - ci_lower_safe))  # type: ignore
-        logit_upper = np.log(ci_upper_safe / (1 - ci_upper_safe))  # type: ignore
+        logit_lower = np.log(ci_lower_safe / (1 - ci_lower_safe))
+        logit_upper = np.log(ci_upper_safe / (1 - ci_upper_safe))
         woe_lower = logit_lower - np.log(odds_prior)
         woe_upper = logit_upper - np.log(odds_prior)
         ci_conservative = {
@@ -936,8 +919,7 @@ class WeightOfEvidence(BaseEstimator):
         alpha: float = 0.05,
         return_probabilities: bool = False,
     ) -> dict:
-        """
-        Make predictions using confidence interval bounds for decision thresholds.
+        """Make predictions using confidence interval bounds for decision thresholds.
 
         This method provides three prediction scenarios:
         - Base Estimate: Standard WOE > 0 prediction
@@ -1014,8 +996,8 @@ class WeightOfEvidence(BaseEstimator):
         ci_lower_safe = np.clip(ci_lower_probs, eps, 1 - eps)
         ci_upper_safe = np.clip(ci_upper_probs, eps, 1 - eps)
 
-        logit_lower = np.log(ci_lower_safe / (1 - ci_lower_safe))  # type: ignore
-        logit_upper = np.log(ci_upper_safe / (1 - ci_upper_safe))  # type: ignore
+        logit_lower = np.log(ci_lower_safe / (1 - ci_lower_safe))
+        logit_upper = np.log(ci_upper_safe / (1 - ci_upper_safe))
 
         # Remove prior to get WOE bounds
         woe_lower = logit_lower - np.log(odds_prior)
@@ -1087,13 +1069,10 @@ class WeightOfEvidence(BaseEstimator):
 
         # Add probabilities if requested
         if return_probabilities:
-            # type: ignore[unsupported-operation]
             result["base_estimate"]["probabilities"] = base_probabilities
-            # type: ignore[unsupported-operation]
             result["lower_bound"]["probabilities"] = np.column_stack(
                 [1 - ci_lower_probs, ci_lower_probs]
             )
-            # type: ignore[unsupported-operation]
             result["upper_bound"]["probabilities"] = np.column_stack(
                 [1 - ci_upper_probs, ci_upper_probs]
             )

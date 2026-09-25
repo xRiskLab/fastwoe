@@ -1,5 +1,4 @@
-"""
-Universal logging configuration for fastwoe.
+"""Universal logging configuration for fastwoe.
 
 This module provides a standardized logger setup with RichHandler for consistent
 logging across the entire codebase.
@@ -8,11 +7,13 @@ logging across the entire codebase.
 from typing import Any
 
 _HAS_LOGGING = False
+logger: Any
 
 try:
-    from loguru import logger
+    from loguru import logger as _loguru_logger
     from rich.logging import RichHandler
 
+    logger = _loguru_logger
     _HAS_LOGGING = True
 except ImportError:
     # Create a no-op logger when loguru is not available
@@ -24,12 +25,11 @@ except ImportError:
 
         info = debug = warning = error = critical = _noop
 
-    logger: Any = _NullLogger()  # type: ignore[assignment, no-redef]
+    logger = _NullLogger()
 
 
 def setup_logger(level: str = "INFO") -> None:
-    """
-    Configure logger with RichHandler for better formatting.
+    """Configure logger with RichHandler for better formatting.
 
     This function sets up the loguru logger with RichHandler, which provides
     beautiful, formatted output with colors and rich tracebacks. This should

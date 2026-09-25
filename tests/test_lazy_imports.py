@@ -45,7 +45,7 @@ def test_every_public_name_resolves(name):
 
 def test_unknown_attribute_raises():
     with pytest.raises(AttributeError, match="no attribute 'nope'"):
-        fastwoe.nope  # noqa: B018
+        _ = fastwoe.nope
 
 
 def test_dir_lists_public_names():

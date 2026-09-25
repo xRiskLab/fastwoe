@@ -865,7 +865,7 @@ class TestFastWoe:
         # Test array output
         edges_array = woe.get_split_value_histogram("score", as_array=True)
         assert isinstance(edges_array, np.ndarray)
-        assert edges_array.shape[0] > 2  # At least 2 edges  # type: ignore
+        assert edges_array.shape[0] > 2  # At least 2 edges
         assert np.isneginf(edges_array[0])  # First edge should be -inf
         assert np.isinf(edges_array[-1])  # Last edge should be inf
         assert np.all(np.diff(edges_array[1:-1]) > 0)  # Edges should be strictly increasing
@@ -873,7 +873,7 @@ class TestFastWoe:
         # Test list output
         edges_list = woe.get_split_value_histogram("score", as_array=False)
         assert isinstance(edges_list, list)
-        assert len(edges_list) == edges_array.shape[0]  # type: ignore
+        assert len(edges_list) == edges_array.shape[0]
         assert edges_list[0] == float("-inf")
         assert edges_list[-1] == float("inf")
 
@@ -1245,7 +1245,7 @@ class TestIntegration:
         # Test array output
         edges_array = woe.get_split_value_histogram("score", as_array=True)
         assert isinstance(edges_array, np.ndarray)
-        assert edges_array.shape[0] == 6  # k+1 edges  # type: ignore
+        assert edges_array.shape[0] == 6  # k+1 edges
         assert np.isneginf(edges_array[0])  # First edge should be -inf
         assert np.isinf(edges_array[-1])  # Last edge should be inf
         assert np.all(np.diff(edges_array[1:-1]) > 0)  # Edges should be strictly increasing

@@ -540,7 +540,7 @@ class TestThinCells:
         woe = fit_quietly(X, y, conditional_min_count=100)
         table = woe.conditional_weights_[("high_util", ("1",))]
         assert table.loc["0", "fallback"]
-        assert table.loc["1", "fallback"] == False  # noqa: E712 - 120 bads, 304 goods
+        assert not table.loc["1", "fallback"]  # 120 bads, 304 goods
         reasons = {(f["feature"], f["category"]): f["reason"] for f in woe.conditional_fallbacks_}
         assert reasons[("high_util", "0")] == "thin cell"
 

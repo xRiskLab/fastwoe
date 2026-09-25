@@ -1,5 +1,4 @@
-"""
-FastWoe: Fast Weight of Evidence encoding for categorical features.
+"""FastWoe: Fast Weight of Evidence encoding for categorical features.
 
 This package provides efficient Weight of Evidence (WOE) encoding for categorical
 features with statistical confidence intervals and cardinality preprocessing.

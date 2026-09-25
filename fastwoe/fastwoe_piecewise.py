@@ -109,7 +109,7 @@ class PiecewiseWoeMixin:
     def _assign_pieces_from_map(
         self,
         feature: str,
-        cat_to_piece: dict,  # noqa: ANN001
+        cat_to_piece: dict,
     ) -> None:
         """Assign pieces to a single feature from a user-supplied mapping.
 

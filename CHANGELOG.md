@@ -31,6 +31,8 @@
 
 ### Maintenance
 
+- **No `# type: ignore` or `# noqa` left** (64 removed). Most were stale (leftovers from the removed `ty` checker, or redundant under the mypy config); the rest were fixed at the source: `y_prior_` is typed `Optional`, `finetune()` checks the prior explicitly, `logger` and `njit` are declared once, and the unused `TYPE_CHECKING` imports are gone. FAISS binning uses the public `faiss.Kmeans`.
+- **Docstrings pass pydocstyle (Google convention) with no ignored rules**, and ruff now enforces it: the D100-D107, D200, D205, D212, D400 and D415 exemptions are removed. `marginal_somersd_selection` documents all its arguments and its return value (the parameter list was `...` placeholders).
 - **Type checking passes again**: fixed the mypy errors that failed the Type Checking workflow since 0.1.8, across current and older `pandas-stubs`. mypy's `python_version` is now 3.10, the oldest mypy 2.x supports; runtime support for Python 3.9 is unchanged.
 
 ### Docs

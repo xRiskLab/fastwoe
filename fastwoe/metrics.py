@@ -1,5 +1,4 @@
-"""
-Model performance metrics.
+"""Model performance metrics.
 
 Implements Somers' D, Gini coefficient, and clustered Gini analysis.
 """
@@ -16,9 +15,12 @@ import pandas as pd
 # (Pyodide), where it is not installed by design, or a broken llvmlite - the same
 # functions run as plain Python: the same calculation and the same integer counts,
 # without compilation (about 10x slower; 200,000 rows in well under a second).
-try:
-    from numba import njit
+njit: Callable[[Callable], Callable]
 
+try:
+    from numba import njit as _numba_njit
+
+    njit = _numba_njit
     _HAS_NUMBA = True
 except (ImportError, OSError, MemoryError) as e:
     import sys
@@ -34,9 +36,11 @@ except (ImportError, OSError, MemoryError) as e:
         )
     _HAS_NUMBA = False
 
-    def njit(func: Callable) -> Callable:  # type: ignore[no-redef]
+    def _run_as_written(func: Callable) -> Callable:
         """No-op decorator when numba is not available: the function runs as written."""
         return func
+
+    njit = _run_as_written
 
 
 @dataclass(frozen=True)
@@ -52,6 +56,7 @@ class SomersDResult:
     denominator: float
 
     def __repr__(self):
+        """Show the statistic and the pair counts it was computed from."""
         return (
             f"SomersDResult(statistic={self.statistic:.6f}, "
             f"concordant_pairs={self.concordant_pairs}, "
