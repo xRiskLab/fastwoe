@@ -33,21 +33,40 @@ order defines a different smoothed distribution.
 
 from __future__ import annotations
 
+import copy
 import warnings
 from collections import Counter
-from typing import Any, Optional, Union
+from typing import Any, Optional, Protocol, Union, runtime_checkable
 
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
+from sklearn.base import clone
 from sklearn.linear_model import LogisticRegression
 
 from .fastwoe import FastWoe
 
-__all__ = ["SoftmaxWoe"]
+__all__ = ["Binner", "SoftmaxWoe"]
 
 MISSING = "Missing"
+_MANY_LEVELS = 50  # more bins than this after binning suggests an unbinned column
 _FLOOR = 1e-6  # probability of a bin a class never showed at a node, before renormalizing
+
+
+@runtime_checkable
+class Binner(Protocol):
+    """What SoftmaxWoe needs from a binner: fit on X and y, then label every value with a bin.
+
+    ``transform`` returns a DataFrame or array with X's columns and a bin label
+    in every cell (strings, numbers, intervals or categoricals). Any object with
+    these two methods qualifies; it need not inherit from this class.
+    """
+
+    def fit(self, X: pd.DataFrame, y: np.ndarray) -> Any:
+        """Learn the bins from X and the binary target y; the return value is ignored."""
+
+    def transform(self, X: pd.DataFrame) -> Union[pd.DataFrame, np.ndarray]:
+        """Return the bin label of every value of X, with X's columns."""
 
 
 class SoftmaxWoe:
@@ -76,8 +95,20 @@ class SoftmaxWoe:
     unseen : {"warn", "prior", "raise"}, default="warn"
         What transform() does with a category absent at fit: give that
         feature's weight 0 and warn, do so silently, or raise.
+    binner : Binner, optional
+        Turns X into bins. Any object with ``fit(X, y)`` and ``transform(X)``
+        (the ``Binner`` protocol),
+        where ``transform`` returns a DataFrame or array with X's columns and a
+        bin label in every cell: strings, numbers, intervals or categoricals.
+        Ordered categoricals keep their order; other labels are sorted (numbers
+        and intervals numerically). Missing values become the level "Missing",
+        and a column the binner leaves unchanged is treated as categories. The
+        binner is cloned before fitting, and ``fit`` may return None. It always
+        receives every column seen at fit; where ``node_proba`` is given only
+        some, the others are passed as NaN. Defaults to a FastWoe configured by
+        ``binning_kwargs``.
     binning_kwargs : dict, optional
-        Keyword arguments for the FastWoe that bins numerical features, e.g.
+        Keyword arguments for the default FastWoe binner, e.g.
         ``{"binning_method": "kbins", "numerical_threshold": 10}`` or
         ``{"monotonic_cst": {"income": -1}}``. Defaults to FastWoe's own
         defaults (decision-tree bins for numeric columns with at least 20
@@ -89,9 +120,10 @@ class SoftmaxWoe:
 
     Attributes:
     ----------
-    binner_ : FastWoe
-        The fitted FastWoe that supplies the bins. Its ``get_binning_summary()``
-        shows them, and its ``transform()`` gives the marginal WOE for comparison.
+    binner_ : object
+        The fitted binner. With the default it is a FastWoe: its
+        ``get_binning_summary()`` shows the bins, and its ``transform()`` gives
+        the marginal WOE for comparison.
     levels_ : dict
         Bins of each feature, in the order the chain uses them.
     class_counts_ : dict
@@ -99,8 +131,8 @@ class SoftmaxWoe:
 
     Notes:
     -----
-    Numerical features are binned exactly as FastWoe bins them; every other
-    feature is treated as categorical. Missing values form their own level,
+    By default numerical features are binned exactly as FastWoe bins them; every
+    other feature is treated as categorical. Missing values form their own level,
     "Missing".
     """
 
@@ -112,6 +144,7 @@ class SoftmaxWoe:
         max_iter: int = 5000,
         unseen: str = "warn",
         binning_kwargs: Optional[dict[str, Any]] = None,
+        binner: Optional[Binner] = None,
     ):
         """Configure the model; parameters are described in the class docstring."""
         if C <= 0:
@@ -128,6 +161,12 @@ class SoftmaxWoe:
         self.binning_kwargs = dict(binning_kwargs or {})
         if conditional := [k for k in self.binning_kwargs if k.startswith("conditional")]:
             raise ValueError(f"binning_kwargs configures binning only; remove {conditional}")
+        if binner is not None:
+            if self.binning_kwargs:
+                raise ValueError("pass either binner or binning_kwargs, not both")
+            if not isinstance(binner, Binner):
+                raise TypeError("binner must have fit(X, y) and transform(X) methods")
+        self.binner = binner
 
     # ------------------------------------------------------------------
     # helpers
@@ -140,9 +179,50 @@ class SoftmaxWoe:
         frame.columns = [str(c) for c in frame.columns]
         return frame
 
+    def _fit_binner(self, raw: pd.DataFrame, target: np.ndarray) -> None:
+        """Fit the default FastWoe, or a clone of the given binner."""
+        if self.binner is None:
+            self.binner_ = FastWoe(**self.binning_kwargs).fit(raw, target)
+            return
+        try:
+            binner = clone(self.binner)
+        except TypeError:  # not a scikit-learn estimator
+            binner = copy.deepcopy(self.binner)
+        binner.fit(raw, target)
+        self.binner_ = binner
+
+    def _bins(self, raw: pd.DataFrame, features: list[str]) -> pd.DataFrame:
+        """Bin labels of the given features of raw, checked against the binner contract."""
+        if self.binner is None:
+            bins: pd.DataFrame = self.binner_.transform_bins(raw[features])
+            return bins
+        full = raw.copy()
+        for f in self.order_:  # a custom binner always sees every fitted column
+            if f not in full.columns:
+                full[f] = np.nan
+        full = full[self.order_]
+        out = self.binner_.transform(full)
+        if isinstance(out, pd.DataFrame):
+            out = out.copy()
+            out.columns = [str(c) for c in out.columns]
+            if missing := [f for f in self.order_ if f not in out.columns]:
+                raise ValueError(f"binner.transform() dropped columns {missing}")
+            if len(out) != len(full):
+                raise ValueError("binner.transform() must return one row per row of X")
+            out.index = full.index
+        else:
+            values = np.asarray(out)
+            if values.shape != full.shape:
+                raise ValueError(
+                    f"binner.transform() returned shape {values.shape}; expected {full.shape}"
+                )
+            out = pd.DataFrame(values, index=full.index, columns=full.columns)
+        selected: pd.DataFrame = out[features]
+        return selected
+
     def _frame(self, X: Union[pd.DataFrame, np.ndarray], features: list[str]) -> pd.DataFrame:
         """The given features of X, binned by binner_, as objects with missing values filled."""
-        binned = self.binner_.transform_bins(self._as_frame(X)[features])
+        binned = self._bins(self._as_frame(X), features)
         filled: pd.DataFrame = binned.astype(object).where(binned.notna(), MISSING)
         return filled
 
@@ -218,16 +298,24 @@ class SoftmaxWoe:
             )
 
         self.order_ = order
-        self.binner_ = FastWoe(**self.binning_kwargs).fit(raw[order], target)
-        binned = self.binner_.transform_bins(raw[order])
-        frame = self._frame(raw, order)
+        self._fit_binner(raw[order], target)
+        binned = self._bins(raw[order], order)
+        frame = binned.astype(object).where(binned.notna(), MISSING)
         self.levels_ = {}
         for f in order:
             seen = set(frame[f].unique())
             if isinstance(binned[f].dtype, pd.CategoricalDtype):
-                self.levels_[f] = [b for b in binned[f].cat.categories if b in seen]
+                ordered = [b for b in binned[f].cat.categories if b in seen]
+                self.levels_[f] = ordered + sorted(seen - set(ordered), key=self._sort_key)
             else:
                 self.levels_[f] = sorted(seen, key=self._sort_key)
+            if len(self.levels_[f]) > _MANY_LEVELS:
+                warnings.warn(
+                    f"'{f}' has {len(self.levels_[f])} distinct values after binning and is "
+                    "treated as that many categories; was a continuous column left unbinned?",
+                    UserWarning,
+                    stacklevel=2,
+                )
         self._index = {
             f: {v: k for k, v in enumerate(levels)} for f, levels in self.levels_.items()
         }

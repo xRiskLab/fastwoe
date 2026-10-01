@@ -345,3 +345,132 @@ def test_intervals_cover_true_weights():
         covered += np.abs(w - true_w) <= 1.96 * se
     coverage = covered.mean(axis=0) / reps
     assert ((coverage > 0.92) & (coverage < 0.98)).all(), coverage
+
+
+class EdgesBinner:
+    """A user-side binner: fixed cut points per column, as xgboost or a scorecard would give.
+
+    fit() returns None on purpose: the contract only needs fit to be callable.
+    """
+
+    def __init__(self, edges):
+        self.edges = edges
+
+    def fit(self, X, y):
+        self.fitted_ = True
+
+    def transform(self, X):
+        out = X.copy()
+        for col, cuts in self.edges.items():
+            out[col] = pd.cut(X[col], [-np.inf, *cuts, np.inf], right=False)
+        return out
+
+
+def test_custom_binner_contract(numeric_data):
+    """A binner with fit/transform supplies the bins; interval order is kept."""
+    X, y = numeric_data
+    binner = EdgesBinner({"score": [520, 560, 600]})
+    m = SoftmaxWoe(order=["score", "card"], binner=binner).fit(X, y)
+    assert not hasattr(binner, "fitted_")  # the caller's object is copied, not fitted
+    assert m.binner_.fitted_
+    levels = m.levels_["score"]
+    assert [str(b) for b in levels[:-1]] == [
+        "[-inf, 520.0)",
+        "[520.0, 560.0)",
+        "[560.0, 600.0)",
+        "[600.0, inf)",
+    ]
+    assert levels[-1] == "Missing"
+    assert np.isfinite(m.predict_proba(X)).all()
+    # node_proba with only the root column: the binner still sees every fitted column
+    p = m.node_proba(X[["score"]].head(3), "score")
+    assert np.isfinite(p.to_numpy()).all()
+
+
+def test_sklearn_binner_returning_array():
+    """A scikit-learn transformer returning a numpy array of codes works and is cloned."""
+    from sklearn.preprocessing import KBinsDiscretizer
+
+    rng = np.random.default_rng(4)
+    n = 3000
+    y = rng.binomial(1, 0.3, n)
+    X = pd.DataFrame({"a": rng.normal(y, 1, n), "b": rng.normal(-y, 1, n)})
+    kb = KBinsDiscretizer(n_bins=4, encode="ordinal", strategy="uniform")
+    m = SoftmaxWoe(binner=kb).fit(X, y)
+    assert not hasattr(kb, "bin_edges_")
+    assert m.levels_["a"] == [0.0, 1.0, 2.0, 3.0]
+    assert m.predict_proba(X).shape == (n, 2)
+
+
+def test_binner_contract_errors(numeric_data):
+    """Both binning options, a binner without transform, or a wrong shape are refused."""
+    X, y = numeric_data
+    with pytest.raises(ValueError, match="not both"):
+        SoftmaxWoe(binner=EdgesBinner({}), binning_kwargs={"binning_method": "kbins"})
+
+    class NoTransform:
+        def fit(self, X, y):
+            pass
+
+    with pytest.raises(TypeError, match="fit\\(X, y\\) and transform\\(X\\)"):
+        SoftmaxWoe(binner=NoTransform())
+
+    class WrongShape(EdgesBinner):
+        def transform(self, X):
+            return np.zeros((len(X), 1))
+
+    with pytest.raises(ValueError, match="shape"):
+        SoftmaxWoe(binner=WrongShape({})).fit(X, y)
+
+
+def test_unbinned_continuous_column_warns(numeric_data):
+    """A binner that leaves a continuous column as is triggers a warning."""
+    X, y = numeric_data
+    X, y = X.head(300), y.head(300)  # small: every distinct value becomes a level
+    with pytest.warns(UserWarning, match="left unbinned"):
+        SoftmaxWoe(binner=EdgesBinner({})).fit(X, y)
+
+
+def test_binner_protocol():
+    """Binner is a structural type: any object with fit and transform satisfies it."""
+    from fastwoe.softmax_woe import Binner
+
+    assert isinstance(EdgesBinner({}), Binner)
+    assert isinstance(FastWoe(), Binner)
+    assert not isinstance(object(), Binner)
+
+
+def test_custom_binner_unseen_label(numeric_data):
+    """A label the binner never produced at fit follows the unseen policy."""
+    X, y = numeric_data
+
+    class CardLabels(EdgesBinner):
+        def transform(self, X):
+            out = super().transform(X)
+            out["card"] = X["card"].map({"N": "no card", "Y": "card"}).fillna("other")
+            return out
+
+    m = SoftmaxWoe(order=["score", "card"], binner=CardLabels({"score": [560]})).fit(X, y)
+    new = X.head(2).assign(card=["Z", "Y"])  # "Z" becomes "other", never seen at fit
+    with pytest.warns(UserWarning, match="other"):
+        w = m.transform(new)
+    assert w["card"].iloc[0] == 0.0 and w["card"].iloc[1] != 0.0
+    with pytest.raises(ValueError, match="other"):
+        SoftmaxWoe(
+            order=["score", "card"], binner=CardLabels({"score": [560]}), unseen="raise"
+        ).fit(X, y).transform(new)
+
+
+def test_custom_binner_column_order_is_matched_by_name(numeric_data):
+    """A binner may return its columns in any order; they are matched by name."""
+    X, y = numeric_data
+
+    class Reversed(EdgesBinner):
+        def transform(self, X):
+            return super().transform(X)[list(X.columns)[::-1]]
+
+    edges = {"score": [520, 560, 600]}
+    a = SoftmaxWoe(order=["score", "card"], binner=EdgesBinner(edges)).fit(X, y)
+    b = SoftmaxWoe(order=["score", "card"], binner=Reversed(edges)).fit(X, y)
+    assert a.levels_ == b.levels_
+    pd.testing.assert_frame_equal(a.transform(X), b.transform(X))

@@ -163,6 +163,40 @@ Other examples: `{"binning_method": "kbins", "binner_kwargs": {"n_bins": 5}}`, `
 
 Each node has a coefficient per earlier bin, so fewer, coarser bins mean steadier nodes. Capping the tree is a good default: on a bank case study (24,859 applications, six features) four tree bins per feature gave a lower validation log loss than both the default tree bins and hand-picked cut points.
 
+### Your Own Binner
+
+Any object with `fit(X, y)` and `transform(X)` can supply the bins instead of FastWoe: the `Binner` protocol (`from fastwoe.softmax_woe import Binner`), which a binner satisfies by having the two methods, without inheriting from anything. `transform` must return a DataFrame or array with X's columns and a bin label in every cell: strings, numbers, intervals or categoricals.
+
+- Ordered categoricals keep their order; other labels are sorted, numbers and intervals numerically.
+- Missing values become the level `"Missing"`.
+- A column the binner leaves unchanged is treated as categories (a warning flags one with more than 50 distinct values).
+- The binner is cloned before fitting, so the object you pass is never modified, and `fit` may return `None`.
+- It always receives every column seen at fit; where `node_proba` is given only some, the others are passed as NaN.
+
+For example, cut points taken from a gradient-boosting model's splits (`booster.trees_to_dataframe()` in xgboost lists them per feature) or from an existing scorecard:
+
+```python
+class EdgesBinner:
+    """Fixed cut points per column, as [a, b) intervals (xgboost sends x < split left)."""
+
+    def __init__(self, edges):
+        self.edges = edges
+
+    def fit(self, X, y):
+        pass
+
+    def transform(self, X):
+        out = X.copy()
+        for col, cuts in self.edges.items():
+            out[col] = pd.cut(X[col], [-np.inf, *cuts, np.inf], right=False)
+        return out
+
+
+model = SoftmaxWoe(binner=EdgesBinner({"bureau": [480, 570, 625], "utilization": [56, 78, 95]}))
+```
+
+A scikit-learn transformer works as well, for example `KBinsDiscretizer(encode="ordinal")` on numeric columns. Pass either `binner` or `binning_kwargs`, not both. With a custom binner, `binner_` is that fitted binner rather than a FastWoe.
+
 ## Inspecting a Node
 
 `node_proba` returns, for each row, the probability of its bin at that feature's node in each class. The log of their ratio is the feature's weight:
@@ -271,6 +305,7 @@ Unlike counted conditional WOE, where every order lands in the same cell and onl
 | `max_iter` | 5000 | Iteration limit of each node's logistic regression |
 | `unseen` | `"warn"` | `"warn"`, `"prior"` or `"raise"` for categories absent at fit |
 | `binning_kwargs` | `None` | Keyword arguments for the FastWoe that bins numerical features |
+| `binner` | `None` | Any object with `fit(X, y)` and `transform(X)` that returns bins; FastWoe by default |
 
 ## Fitted Attributes
 
@@ -281,7 +316,7 @@ Unlike counted conditional WOE, where every order lands in the same cell and onl
 | `prior_log_odds_` | Log-odds of the event in the training data |
 | `class_counts_` | Training rows per class, `{1: events, 0: non-events}` |
 | `nodes_` | Node models keyed by `(feature, class)`: bin shares for the first node, `LogisticRegression` after |
-| `binner_` | The fitted FastWoe that supplies the bins |
+| `binner_` | The fitted binner: a FastWoe by default, otherwise a clone of the one passed |
 
 ## References
 
