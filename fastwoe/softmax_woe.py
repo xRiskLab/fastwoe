@@ -185,7 +185,7 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
     @staticmethod
     def _as_frame(X: Union[pd.DataFrame, np.ndarray]) -> pd.DataFrame:
         """X as a DataFrame with string column names."""
-        frame = X.copy() if isinstance(X, pd.DataFrame) else pd.DataFrame(X)
+        frame: pd.DataFrame = X.copy() if isinstance(X, pd.DataFrame) else pd.DataFrame(X)
         frame.columns = [str(c) for c in frame.columns]
         return frame
 

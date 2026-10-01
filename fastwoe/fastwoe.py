@@ -1158,15 +1158,17 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
             if col not in self.binners_:
                 continue
             labels = self._apply_binning_to_column(X, col).astype(str)
+            seen = {str(label) for label in labels}
             info = self.binning_info_[col]
             binner = self.binners_[col]
+            order: list[str]
             if info.get("method") == "kbins" and hasattr(binner, "bin_edges_"):
                 order = _bin_labels(binner.bin_edges_[0])
             elif "bin_edges" in info:
                 order = _bin_labels(info["bin_edges"])
             else:
                 order = []
-            order += sorted(set(labels) - set(order) - {"Missing"}) + ["Missing"]
+            order += sorted(seen - set(order) - {"Missing"}) + ["Missing"]
             out[col] = pd.Categorical(labels, categories=order, ordered=True)
         return out
 
