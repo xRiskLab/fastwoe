@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from .plots import plot_performance, visualize_woe
     from .softmax_woe import SoftmaxWoe
 
-__version__ = "0.1.9"
+__version__ = "0.2.0"
 __author__ = "xRiskLab"
 __email__ = "contact@xrisklab.ai"
 

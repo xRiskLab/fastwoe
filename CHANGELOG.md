@@ -1,13 +1,21 @@
 # Changelog
 
-## Unreleased
+## Version 0.2.0 (unreleased)
 
-**Softmax WOE**
+**Softmax WOE, scikit-learn 1.8 and pandas 3**
 
 ### New Features
 
-- **`SoftmaxWoe`**: conditional WOE from a hierarchical softmax. A generative classifier: per class, an autoregressive chain of penalized multinomial logistic regressions, fitted by maximum likelihood of the features given the class; its per-feature weights are Good's conditional weights of evidence under that model and sum exactly to the posterior log-odds. Unlike `FastWoe(conditional=True)` it never runs out of data in thin cells, since each feature's node model is shared by every path at its depth. `C` shrinks the nodes toward marginal WOE; `order` fixes the conditioning order and, unlike counted conditional WOE, changes the score as well as the attribution. Numerical features are binned by FastWoe (`binning_kwargs` passes its options), or by any binner with `fit(X, y)` and `transform(X)` passed as `binner=`, `node_proba()` shows each node's class probabilities, and `binner_` keeps the fitted FastWoe. Standard errors: `transform(X, output="se")` gives each weight's delta-method SE and `predict_ci()` an interval for the probability; the nodes are asymptotically independent, so the score's variance is the prior's plus the sum of the weight variances (about 95% coverage in simulation). Guide: `docs/softmax_woe_guide.md`; notebook: `examples/notebooks/fastwoe_softmax.ipynb`.
+- **`SoftmaxWoe`**: conditional WOE from a hierarchical softmax. A generative classifier: per class, an autoregressive chain of penalized multinomial logistic regressions, fitted by maximum likelihood of the features given the class; its per-feature weights are Good's conditional weights of evidence under that model and sum exactly to the posterior log-odds. Unlike `FastWoe(conditional=True)` it keeps conditioning where cells run thin instead of falling back to marginal weights, since each feature's node model is shared by every path at its depth. `C` shrinks the nodes toward marginal WOE; `order` fixes the conditioning order and, unlike counted conditional WOE, changes the score as well as the attribution. Numerical features are binned by FastWoe (`binning_kwargs` passes its options), or by any binner with `fit(X, y)` and `transform(X)` passed as `binner=`, `node_proba()` shows each node's class probabilities, and `binner_` keeps the fitted binner. Standard errors: `transform(X, output="se")` gives each weight's delta-method SE and `predict_ci()` an interval for the probability; the nodes are asymptotically independent, so the score's variance is the prior's plus the sum of the weight variances (about 95% coverage in simulation); they are computed on first use, so fitting stays fast. SoftmaxWoe is a scikit-learn estimator: `clone`, `GridSearchCV` (for example over `C`), `cross_val_score` and `Pipeline` work, and it has `predict` and `fit_transform`. Guide: `docs/softmax_woe_guide.md`; notebook: `examples/notebooks/fastwoe_softmax.ipynb`.
 - **`FastWoe.transform_bins()`**: the bin of every value as the encoder groups it; binned numerical features come back as ordered categoricals in numeric order, then `"Missing"`.
+
+### Compatibility
+
+- **scikit-learn 1.8 and pandas 3.** The dependency cap was `scikit-learn<1.8`, so fastwoe could not be installed next to scikit-learn 1.8, including in the current Pyodide release (Python 3.14, scikit-learn 1.8, pandas 3), where `micropip.install("fastwoe")` failed. The cap is now `<1.9`; the test suite passes on scikit-learn 1.8 with pandas 3.
+
+### Removed
+
+- **`requirements.txt`**, a stale `uv export` last refreshed for 0.1.5 that nothing read; `pyproject.toml` lists the dependencies.
 
 ### Bug Fixes
 
