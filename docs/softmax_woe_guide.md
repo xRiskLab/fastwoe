@@ -181,6 +181,34 @@ p.assign(weight=np.log(p.p_event / p.p_nonevent))
 
 `X` needs the feature and every feature before it in `order_`. The node models themselves are scikit-learn `LogisticRegression` objects in `nodes_`, keyed by `(feature, class)`; their inputs are the earlier features one-hot in `levels_` order.
 
+## Standard Errors
+
+`transform(X, output="se")` gives the standard error of every weight, and `predict_ci(X, alpha=0.05)` an interval for the probability, as `[lower, upper]` like `FastWoe.predict_ci`:
+
+```python
+model.transform(X_test, output="se").head()
+model.predict_ci(X_test)[:5]
+```
+
+```
+    bureau  utilization   card        P(event)   lower    upper
+3    0.084        0.126  0.046          0.0222   0.0163   0.0302
+5    0.688        0.948  0.409          0.9599   0.6775   0.9963
+12   0.064        0.152  0.102          0.0853   0.0598   0.1205
+13   0.064        0.229  0.109          0.0452   0.0275   0.0734
+22   0.084        0.246  0.036          0.0080   0.0048   0.0133
+```
+
+Each node's log-probability gets a delta-method variance: from the bin counts for the first node, $(1 - p) / (n p)$, and from the inverse penalized Hessian of its logistic regression after that. A weight's variance is the sum of its event and non-event nodes, which are fitted on separate rows. Within a class the log-likelihood is a sum of node terms with separate coefficients, so the nodes' estimates are asymptotically independent, and the variance of the log-odds is simply
+
+$$\text{Var}(\text{score}) = \frac{1}{n_1} + \frac{1}{n_0} + \sum_i \text{Var}(W_i)$$
+
+with no covariance terms. In simulation, with true weights known, 95% intervals covered them 94.5–95.0% of the time per feature at C = 100, and `predict_ci` covered the true probability 95.3% of the time.
+
+The weights are penalized, so they are biased toward marginal WOE, and the interval covers sampling noise, not that bias. At C = 1 in the same simulation the bias was about a third of a standard deviation and coverage fell to 93%. With a strong penalty, read the interval as one under the model's assumptions.
+
+Compared with `FastWoe(conditional=True)`: where no conditioning step falls back, its intervals come from the counts of a single cell and are wider than SoftmaxWoe's, which borrows strength across paths. Where a step falls back to the marginal weight, the interval is narrower, but the point estimate carries the double counting that conditioning was meant to remove.
+
 ## Choosing C
 
 `C` is the inverse L2 penalty of every node. Choose it by cross-validated log loss:
@@ -251,6 +279,7 @@ Unlike counted conditional WOE, where every order lands in the same cell and onl
 | `order_` | Conditioning order used |
 | `levels_` | Bins of each feature, in the order the chain uses them |
 | `prior_log_odds_` | Log-odds of the event in the training data |
+| `class_counts_` | Training rows per class, `{1: events, 0: non-events}` |
 | `nodes_` | Node models keyed by `(feature, class)`: bin shares for the first node, `LogisticRegression` after |
 | `binner_` | The fitted FastWoe that supplies the bins |
 

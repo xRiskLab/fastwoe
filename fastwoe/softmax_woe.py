@@ -39,6 +39,7 @@ from typing import Any, Optional, Union
 
 import numpy as np
 import pandas as pd
+from scipy.stats import norm
 from sklearn.linear_model import LogisticRegression
 
 from .fastwoe import FastWoe
@@ -93,6 +94,8 @@ class SoftmaxWoe:
         shows them, and its ``transform()`` gives the marginal WOE for comparison.
     levels_ : dict
         Bins of each feature, in the order the chain uses them.
+    class_counts_ : dict
+        Training rows per class, {1: events, 0: non-events}.
 
     Notes:
     -----
@@ -230,6 +233,8 @@ class SoftmaxWoe:
         }
         n_bad, n_good = int(target.sum()), int(len(target) - target.sum())
         self.prior_log_odds_ = float(np.log(n_bad / n_good))
+        self.class_counts_ = {1: n_bad, 0: n_good}
+        self._node_cov: dict[tuple[str, int], np.ndarray] = {}
 
         codes = {f: self._codes(frame[f], f) for f in order}
         self.nodes_: dict[tuple[str, int], Any] = {}
@@ -250,16 +255,123 @@ class SoftmaxWoe:
                 # two fits identical, so every node is shrunk alike.
                 two_bins = len(np.unique(node_codes)) == 2
                 node_C = 2 * self.C if two_bins else self.C
-                self.nodes_[(f, cls)] = LogisticRegression(C=node_C, max_iter=self.max_iter).fit(
-                    inputs, node_codes
-                )
+                node = LogisticRegression(C=node_C, max_iter=self.max_iter).fit(inputs, node_codes)
+                self.nodes_[(f, cls)] = node
+                self._node_cov[(f, cls)] = self._coef_covariance(node, inputs, node_C)
         return self
 
-    def transform(self, X: Union[pd.DataFrame, np.ndarray]) -> pd.DataFrame:
-        """Per-feature weights, one column per feature in X's column order.
+    # ------------------------------------------------------------------
+    # standard errors
+    # ------------------------------------------------------------------
 
-        prior_log_odds_ plus the row sum is the log-odds of the positive class.
+    @staticmethod
+    def _with_intercept(inputs: np.ndarray) -> np.ndarray:
+        return np.hstack([inputs, np.ones((len(inputs), 1))])
+
+    @staticmethod
+    def _coef_rows(node: LogisticRegression) -> np.ndarray:
+        """Coefficients and intercept of each softmax row: rows x (inputs + 1)."""
+        rows: np.ndarray = np.hstack([node.coef_, node.intercept_[:, None]])
+        return rows
+
+    def _coef_covariance(
+        self, node: LogisticRegression, inputs: np.ndarray, node_C: float
+    ) -> np.ndarray:
+        """Covariance of a node's coefficients: the inverse penalized Hessian.
+
+        The Hessian is that of the node's objective in units of log-likelihood,
+        with the L2 penalty 1/C on every coefficient and none on the intercept.
+        The softmax is over-parametrized (a constant added to every row changes
+        nothing), so the pseudo-inverse is used; the gradients it is applied to
+        are orthogonal to those directions.
         """
+        A = self._with_intercept(inputs)
+        d = A.shape[1]
+        rows = self._coef_rows(node)
+        penalty = np.r_[np.full(d - 1, 1.0 / node_C), 0.0]
+        if len(rows) == 1:  # binary node: one logit
+            q = 1.0 / (1.0 + np.exp(-A @ rows[0]))
+            H = (A * (q * (1 - q))[:, None]).T @ A + np.diag(penalty)
+        else:
+            Z = A @ rows.T
+            P = np.exp(Z - Z.max(axis=1, keepdims=True))
+            P /= P.sum(axis=1, keepdims=True)
+            K = len(rows)
+            H = np.zeros((K * d, K * d))
+            for a in range(K):
+                for b in range(a, K):
+                    w = P[:, a] * (float(a == b) - P[:, b])
+                    block = (A * w[:, None]).T @ A
+                    H[a * d : (a + 1) * d, b * d : (b + 1) * d] = block
+                    H[b * d : (b + 1) * d, a * d : (a + 1) * d] = block
+            H += np.diag(np.tile(penalty, K))
+        cov: np.ndarray = np.linalg.pinv(H)
+        return cov
+
+    def _log_prob_variance(
+        self, i: int, cls: int, codes: dict[str, np.ndarray], n: int
+    ) -> np.ndarray:
+        """Delta-method variance of log P(row's bin of feature i | earlier bins, class).
+
+        Counted shares use the multinomial variance (1 - p) / (n p); fitted
+        nodes use the gradient of log p against the coefficient covariance.
+        A bin unseen at fit gets 0 (its weight is fixed at 0).
+        """
+        feature = self.order_[i]
+        node = self.nodes_[(feature, cls)]
+        k = codes[feature]
+        known = k >= 0
+        n_class = self.class_counts_[cls]
+        if isinstance(node, np.ndarray):
+            p = node[np.where(known, k, 0)]
+            return np.where(known, (1 - p) / (n_class * p), 0.0)
+        x = self._with_intercept(self._onehot(codes, self.order_[:i], n))
+        rows = self._coef_rows(node)
+        cov = self._node_cov[(feature, cls)]
+        # position of each row's bin among the classes the node was fitted on
+        position = {c: j for j, c in enumerate(node.classes_)}
+        pos = np.array([position.get(c, -1) for c in k])
+        if len(rows) == 1:
+            q = 1.0 / (1.0 + np.exp(-x @ rows[0]))
+            grad = np.where(pos == 1, 1 - q, -q)[:, None] * x
+        else:
+            Z = x @ rows.T
+            P = np.exp(Z - Z.max(axis=1, keepdims=True))
+            P /= P.sum(axis=1, keepdims=True)
+            E = -P
+            hit = pos >= 0
+            E[np.flatnonzero(hit), pos[hit]] += 1.0
+            grad = (E[:, :, None] * x[:, None, :]).reshape(n, -1)
+        var = np.einsum("ij,jk,ik->i", grad, cov, grad)
+        # a bin this class never showed here sits at the probability floor
+        floor_var = (1 - _FLOOR) / (n_class * _FLOOR)
+        out: np.ndarray = np.where(~known, 0.0, np.where(pos < 0, floor_var, var))
+        return out
+
+    def _weight_se(self, codes: dict[str, np.ndarray], n: int) -> np.ndarray:
+        """Standard error of each feature's weight: rows x features in order_."""
+        var = [
+            self._log_prob_variance(i, 1, codes, n) + self._log_prob_variance(i, 0, codes, n)
+            for i in range(len(self.order_))
+        ]
+        se: np.ndarray = np.sqrt(np.column_stack(var))
+        return se
+
+    def transform(self, X: Union[pd.DataFrame, np.ndarray], output: str = "woe") -> pd.DataFrame:
+        """Per-feature weights, or their standard errors, one column per feature of X.
+
+        Parameters
+        ----------
+        X : DataFrame or ndarray
+            Features seen during fit.
+        output : {"woe", "se"}, default="woe"
+            "woe": the conditional weights; prior_log_odds_ plus the row sum is
+            the log-odds of the positive class. "se": the delta-method standard
+            error of each weight, from the event and non-event nodes, which are
+            fitted on separate rows.
+        """
+        if output not in ("woe", "se"):
+            raise ValueError(f"output must be 'woe' or 'se', got {output!r}")
         frame, codes = self._prepare(X, self.order_)
         n = len(frame)
         rows = np.arange(n)
@@ -274,6 +386,8 @@ class SoftmaxWoe:
             p_good = self._node_probs(i, 0, codes, n)[rows, bins]
             weights[:, i] = np.where(known, np.log(p_bad) - np.log(p_good), 0.0)
         self._handle_unseen(n)
+        if output == "se":
+            weights = self._weight_se(codes, n)
         out = pd.DataFrame(weights, index=frame.index, columns=self.order_)
         ordered: pd.DataFrame = out[[c for c in self._as_frame(X).columns if c in self.order_]]
         return ordered
@@ -299,6 +413,32 @@ class SoftmaxWoe:
         log_odds = self.prior_log_odds_ + self.transform(X).to_numpy().sum(axis=1)
         p = 1.0 / (1.0 + np.exp(-log_odds))
         return np.column_stack([1.0 - p, p])
+
+    def predict_ci(self, X: Union[pd.DataFrame, np.ndarray], alpha: float = 0.05) -> np.ndarray:
+        """Confidence interval for P(y=1): columns [lower, upper].
+
+        Within each class the log-likelihood is a sum of node terms with
+        separate coefficients, so the node estimates are asymptotically
+        independent: the variance of the log-odds is the prior's (1/n1 + 1/n0)
+        plus the sum of the weight variances. The interval on the log-odds,
+        score +/- z * SE, is mapped through the sigmoid.
+
+        The weights are penalized, so they are biased toward marginal WOE; the
+        interval covers sampling noise, not that bias. With a strong penalty
+        (small C) read it as an interval under the model's assumptions.
+        """
+        if not 0 < alpha < 1:
+            raise ValueError("alpha must be between 0 and 1")
+        frame, codes = self._prepare(X, self.order_)
+        n = len(frame)
+        score = self.prior_log_odds_ + self.transform(X).to_numpy().sum(axis=1)
+        prior_var = 1 / self.class_counts_[1] + 1 / self.class_counts_[0]
+        se = np.sqrt(prior_var + (self._weight_se(codes, n) ** 2).sum(axis=1))
+        z = norm.ppf(1 - alpha / 2)
+        bounds: np.ndarray = 1.0 / (
+            1.0 + np.exp(-np.column_stack([score - z * se, score + z * se]))
+        )
+        return bounds
 
     def node_proba(self, X: Union[pd.DataFrame, np.ndarray], feature: str) -> pd.DataFrame:
         """Probability of each row's bin of ``feature`` at its node, in each class.

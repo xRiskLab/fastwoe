@@ -255,3 +255,93 @@ def test_low_cardinality_numeric_is_categorical(numeric_data):
     with pytest.warns(UserWarning, match="not seen during fit"):
         w = m.transform(new)
     assert w["kids"].iloc[0] == 0.0 and w["kids"].iloc[1] != 0.0
+
+
+def test_weight_se_shape_and_root_formula(numeric_data):
+    """SEs are positive per feature; the root's is the multinomial (1 - p) / (n p) in each class."""
+    X, y = numeric_data
+    m = SoftmaxWoe(order=["score", "card"]).fit(X, y)
+    se = m.transform(X, output="se")
+    assert list(se.columns) == ["score", "card"]
+    assert np.isfinite(se.to_numpy()).all() and (se.to_numpy() > 0).all()
+    p = m.node_proba(X, "score")
+    n1, n0 = m.class_counts_[1], m.class_counts_[0]
+    expected = np.sqrt(
+        (1 - p.p_event) / (n1 * p.p_event) + (1 - p.p_nonevent) / (n0 * p.p_nonevent)
+    )
+    np.testing.assert_allclose(se["score"], expected)
+
+
+def test_weight_se_shrinks_with_sample_size():
+    """Four times the data halves the standard errors."""
+    rng = np.random.default_rng(3)
+
+    def draw(n):
+        y = rng.binomial(1, 0.3, n)
+        a = np.where(rng.random(n) < 0.3 + 0.3 * y, "hi", "lo")
+        b = np.where(rng.random(n) < np.where(a == "hi", 0.6, 0.3) + 0.1 * y, "x", "y")
+        return pd.DataFrame({"a": a, "b": b}), y
+
+    probe = pd.DataFrame({"a": ["hi", "lo"], "b": ["x", "y"]})
+    small = SoftmaxWoe(C=100.0).fit(*draw(4_000)).transform(probe, output="se")
+    large = SoftmaxWoe(C=100.0).fit(*draw(16_000)).transform(probe, output="se")
+    np.testing.assert_allclose(small / large, 2.0, rtol=0.15)
+
+
+def test_predict_ci(numeric_data):
+    """The interval contains the point estimate and widens as alpha falls."""
+    X, y = numeric_data
+    m = SoftmaxWoe().fit(X, y)
+    p = m.predict_proba(X)[:, 1]
+    ci95, ci80 = m.predict_ci(X), m.predict_ci(X, alpha=0.2)
+    assert ci95.shape == (len(X), 2)
+    assert (ci95[:, 0] <= p).all() and (p <= ci95[:, 1]).all()
+    assert (ci95[:, 0] <= ci80[:, 0]).all() and (ci80[:, 1] <= ci95[:, 1]).all()
+    with pytest.raises(ValueError, match="alpha"):
+        m.predict_ci(X, alpha=1.5)
+    with pytest.raises(ValueError, match="output must be"):
+        m.transform(X, output="wald")
+
+
+def test_unseen_category_has_zero_se(data):
+    """A category unseen at fit has weight 0 and standard error 0."""
+    X, y = data
+    new = X.head(2).copy()
+    new.loc[new.index[0], "c"] = "zzz"
+    m = SoftmaxWoe(unseen="prior").fit(X, y)
+    se = m.transform(new, output="se")
+    assert se.loc[new.index[0], "c"] == 0.0 and se.loc[new.index[1], "c"] > 0
+
+
+@pytest.mark.slow
+def test_intervals_cover_true_weights():
+    """With a correctly specified node, 95% intervals cover the true weights about 95% of the time."""
+    levels_a, levels_b = ["p", "q", "r"], ["u", "v", "w"]
+    share_a = {1: np.array([0.5, 0.3, 0.2]), 0: np.array([0.2, 0.3, 0.5])}
+    # P(b | a, class): a full table, which a softmax on one-hot a represents exactly
+    table_b = {
+        1: np.array([[0.6, 0.3, 0.1], [0.3, 0.4, 0.3], [0.2, 0.2, 0.6]]),
+        0: np.array([[0.3, 0.4, 0.3], [0.2, 0.3, 0.5], [0.1, 0.3, 0.6]]),
+    }
+    probe = pd.DataFrame(list(itertools.product(levels_a, levels_b)), columns=["a", "b"])
+    ia = probe.a.map(levels_a.index).to_numpy()
+    ib = probe.b.map(levels_b.index).to_numpy()
+    true_w = np.column_stack(
+        [
+            np.log(share_a[1][ia] / share_a[0][ia]),
+            np.log(table_b[1][ia, ib] / table_b[0][ia, ib]),
+        ]
+    )
+    rng = np.random.default_rng(0)
+    covered, reps = np.zeros_like(true_w), 150
+    for _ in range(reps):
+        n = 6000
+        y = rng.binomial(1, 0.25, n)
+        a = np.array([rng.choice(3, p=share_a[c]) for c in y])
+        b = np.array([rng.choice(3, p=table_b[c][k]) for c, k in zip(y, a)])
+        X = pd.DataFrame({"a": np.array(levels_a)[a], "b": np.array(levels_b)[b]})
+        m = SoftmaxWoe(C=1000.0).fit(X, y)
+        w, se = m.transform(probe).to_numpy(), m.transform(probe, output="se").to_numpy()
+        covered += np.abs(w - true_w) <= 1.96 * se
+    coverage = covered.mean(axis=0) / reps
+    assert ((coverage > 0.92) & (coverage < 0.98)).all(), coverage
