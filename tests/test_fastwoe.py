@@ -2097,6 +2097,10 @@ class TestMonotonicConstraints:
     def test_monotonic_constraints_functional_validation_faiss(self):
         # sourcery skip: extract-duplicate-method
         """Test that FAISS monotonic constraints are properly ignored and warnings are shown."""
+        import importlib.util
+
+        if importlib.util.find_spec("faiss") is None:
+            pytest.skip("FAISS not available, skipping FAISS KMeans tests")
         # Create synthetic data with clear monotonic relationship
         np.random.seed(42)
         n_samples = 1000

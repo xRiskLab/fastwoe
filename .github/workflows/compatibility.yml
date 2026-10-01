@@ -63,7 +63,7 @@ jobs:
       run: |
         echo "Testing Python ${{ matrix.python-version }} compatibility"
         uv run python -c "import fastwoe; print(f'fastwoe version: {fastwoe.__version__}')"
-        uv run python -m pytest tests/test_compatibility.py -v --tb=short
+        uv run python -m pytest tests/test_compatibility.py tests/test_softmax_woe.py -v --tb=short
 
     - name: Cleanup test artifacts
       if: always()
