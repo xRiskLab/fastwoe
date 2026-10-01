@@ -41,7 +41,7 @@ from typing import Any, Optional, Protocol, Union, runtime_checkable
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
-from sklearn.base import clone
+from sklearn.base import BaseEstimator, ClassifierMixin, TransformerMixin, clone
 from sklearn.linear_model import LogisticRegression
 
 from .fastwoe import FastWoe
@@ -69,7 +69,7 @@ class Binner(Protocol):
         """Return the bin label of every value of X, with X's columns."""
 
 
-class SoftmaxWoe:
+class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
     """Conditional WOE by hierarchical softmax (binary targets, categorical features).
 
     SoftmaxWoe is a generative classifier: per class, an autoregressive chain of
@@ -128,6 +128,12 @@ class SoftmaxWoe:
         Bins of each feature, in the order the chain uses them.
     class_counts_ : dict
         Training rows per class, {1: events, 0: non-events}.
+    classes_ : ndarray
+        The class labels, [0, 1].
+
+    Notes on scikit-learn: SoftmaxWoe is a scikit-learn estimator, so it works
+    with ``clone``, ``GridSearchCV`` (for example over ``C``), ``cross_val_score``
+    and ``Pipeline``. Parameters are checked when ``fit`` is called.
 
     Notes:
     -----
@@ -146,27 +152,31 @@ class SoftmaxWoe:
         binning_kwargs: Optional[dict[str, Any]] = None,
         binner: Optional[Binner] = None,
     ):
-        """Configure the model; parameters are described in the class docstring."""
-        if C <= 0:
-            raise ValueError("C must be positive")
-        if root_pseudo_count < 0:
-            raise ValueError("root_pseudo_count must be non-negative")
-        if unseen not in ("warn", "prior", "raise"):
-            raise ValueError(f"unseen must be 'warn', 'prior' or 'raise', got {unseen!r}")
-        self.order = None if order is None else list(order)
+        """Store the parameters as given; they are checked in fit (scikit-learn convention)."""
+        self.order = order
         self.C = C
         self.root_pseudo_count = root_pseudo_count
         self.max_iter = max_iter
         self.unseen = unseen
-        self.binning_kwargs = dict(binning_kwargs or {})
-        if conditional := [k for k in self.binning_kwargs if k.startswith("conditional")]:
-            raise ValueError(f"binning_kwargs configures binning only; remove {conditional}")
-        if binner is not None:
-            if self.binning_kwargs:
-                raise ValueError("pass either binner or binning_kwargs, not both")
-            if not isinstance(binner, Binner):
-                raise TypeError("binner must have fit(X, y) and transform(X) methods")
+        self.binning_kwargs = binning_kwargs
         self.binner = binner
+
+    def _check_params(self) -> None:
+        """Validate the constructor parameters."""
+        if self.C <= 0:
+            raise ValueError("C must be positive")
+        if self.root_pseudo_count < 0:
+            raise ValueError("root_pseudo_count must be non-negative")
+        if self.unseen not in ("warn", "prior", "raise"):
+            raise ValueError(f"unseen must be 'warn', 'prior' or 'raise', got {self.unseen!r}")
+        kwargs = self.binning_kwargs or {}
+        if conditional := [k for k in kwargs if k.startswith("conditional")]:
+            raise ValueError(f"binning_kwargs configures binning only; remove {conditional}")
+        if self.binner is not None:
+            if kwargs:
+                raise ValueError("pass either binner or binning_kwargs, not both")
+            if not isinstance(self.binner, Binner):
+                raise TypeError("binner must have fit(X, y) and transform(X) methods")
 
     # ------------------------------------------------------------------
     # helpers
@@ -182,7 +192,7 @@ class SoftmaxWoe:
     def _fit_binner(self, raw: pd.DataFrame, target: np.ndarray) -> None:
         """Fit the default FastWoe, or a clone of the given binner."""
         if self.binner is None:
-            self.binner_ = FastWoe(**self.binning_kwargs).fit(raw, target)
+            self.binner_ = FastWoe(**(self.binning_kwargs or {})).fit(raw, target)
             return
         try:
             binner = clone(self.binner)
@@ -286,6 +296,7 @@ class SoftmaxWoe:
 
         Returns self, as the scikit-learn estimator API expects.
         """
+        self._check_params()
         raw = self._as_frame(X)
         target = np.asarray(y)
         if not set(np.unique(target)) <= {0, 1} or len(np.unique(target)) != 2:
@@ -298,6 +309,8 @@ class SoftmaxWoe:
             )
 
         self.order_ = order
+        self.classes_ = np.array([0, 1])
+        self.n_features_in_ = raw.shape[1]
         self._fit_binner(raw[order], target)
         binned = self._bins(raw[order], order)
         frame = binned.astype(object).where(binned.notna(), MISSING)
@@ -322,9 +335,11 @@ class SoftmaxWoe:
         n_bad, n_good = int(target.sum()), int(len(target) - target.sum())
         self.prior_log_odds_ = float(np.log(n_bad / n_good))
         self.class_counts_ = {1: n_bad, 0: n_good}
-        self._node_cov: dict[tuple[str, int], np.ndarray] = {}
-
         codes = {f: self._codes(frame[f], f) for f in order}
+        # kept to compute standard errors on demand; covariances are cached on first use
+        self._fit_codes, self._fit_target = codes, target
+        self._node_C: dict[tuple[str, int], float] = {}
+        self._node_cov: dict[tuple[str, int], np.ndarray] = {}
         self.nodes_: dict[tuple[str, int], Any] = {}
         for i, f in enumerate(order):
             n_levels = len(self.levels_[f])
@@ -345,7 +360,7 @@ class SoftmaxWoe:
                 node_C = 2 * self.C if two_bins else self.C
                 node = LogisticRegression(C=node_C, max_iter=self.max_iter).fit(inputs, node_codes)
                 self.nodes_[(f, cls)] = node
-                self._node_cov[(f, cls)] = self._coef_covariance(node, inputs, node_C)
+                self._node_C[(f, cls)] = node_C
         return self
 
     # ------------------------------------------------------------------
@@ -396,6 +411,18 @@ class SoftmaxWoe:
         cov: np.ndarray = np.linalg.pinv(H)
         return cov
 
+    def _covariance(self, i: int, cls: int) -> np.ndarray:
+        """A fitted node's coefficient covariance, computed on first use and cached."""
+        key = (self.order_[i], cls)
+        if key not in self._node_cov:
+            rows = self._fit_target == cls
+            earlier = self.order_[:i]
+            inputs = self._onehot(
+                {g: self._fit_codes[g][rows] for g in earlier}, earlier, int(rows.sum())
+            )
+            self._node_cov[key] = self._coef_covariance(self.nodes_[key], inputs, self._node_C[key])
+        return self._node_cov[key]
+
     def _log_prob_variance(
         self, i: int, cls: int, codes: dict[str, np.ndarray], n: int
     ) -> np.ndarray:
@@ -415,7 +442,7 @@ class SoftmaxWoe:
             return np.where(known, (1 - p) / (n_class * p), 0.0)
         x = self._with_intercept(self._onehot(codes, self.order_[:i], n))
         rows = self._coef_rows(node)
-        cov = self._node_cov[(feature, cls)]
+        cov = self._covariance(i, cls)
         # position of each row's bin among the classes the node was fitted on
         position = {c: j for j, c in enumerate(node.classes_)}
         pos = np.array([position.get(c, -1) for c in k])
@@ -502,6 +529,11 @@ class SoftmaxWoe:
         p = 1.0 / (1.0 + np.exp(-log_odds))
         return np.column_stack([1.0 - p, p])
 
+    def predict(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
+        """Class labels: 1 where P(y=1) >= 0.5, else 0."""
+        labels: np.ndarray = (self.predict_proba(X)[:, 1] >= 0.5).astype(int)
+        return labels
+
     def predict_ci(self, X: Union[pd.DataFrame, np.ndarray], alpha: float = 0.05) -> np.ndarray:
         """Confidence interval for P(y=1): columns [lower, upper].
 
@@ -538,7 +570,6 @@ class SoftmaxWoe:
         """
         if not hasattr(self, "nodes_"):
             raise ValueError("SoftmaxWoe must be fitted first")
-        feature = feature
         if feature not in self.order_:
             raise ValueError(f"unknown feature {feature!r}; expected one of {self.order_}")
         i = self.order_.index(feature)

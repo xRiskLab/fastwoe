@@ -5,6 +5,7 @@ import itertools
 import numpy as np
 import pandas as pd
 import pytest
+import sklearn
 
 from fastwoe import FastWoe
 from fastwoe.softmax_woe import SoftmaxWoe
@@ -106,10 +107,12 @@ def test_unseen_category(data):
     "kwargs, match",
     [({"C": 0}, "C must be positive"), ({"unseen": "x"}, "unseen must be")],
 )
-def test_bad_parameters(kwargs, match):
-    """Invalid constructor arguments raise."""
+def test_bad_parameters(data, kwargs, match):
+    """Invalid parameters raise at fit; construction stores them as given (scikit-learn style)."""
+    X, y = data
+    model = SoftmaxWoe(**kwargs)
     with pytest.raises(ValueError, match=match):
-        SoftmaxWoe(**kwargs)
+        model.fit(X, y)
 
 
 def test_bad_order_and_target(data):
@@ -175,7 +178,7 @@ def test_binning_kwargs_reach_fastwoe(numeric_data):
     assert m.binner_.binning_method == "kbins"
     assert len(m.levels_["score"]) == 5  # four bins and Missing
     with pytest.raises(ValueError, match="binning only"):
-        SoftmaxWoe(binning_kwargs={"conditional": True})
+        SoftmaxWoe(binning_kwargs={"conditional": True}).fit(X, y)
 
 
 def test_numpy_input(numeric_data):
@@ -233,6 +236,10 @@ def test_faiss_binning_end_to_end(numeric_data):
     assert np.isfinite(m.predict_proba(X)).all()
 
 
+@pytest.mark.skipif(
+    tuple(int(v) for v in sklearn.__version__.split(".")[:2]) < (1, 4),
+    reason="tree monotonic constraints need scikit-learn 1.4",
+)
 def test_monotonic_constraint_holds_for_first_feature(numeric_data):
     """monotonic_cst reaches the binner, so the first feature's weights are monotone in its bins."""
     X, y = numeric_data
@@ -406,14 +413,14 @@ def test_binner_contract_errors(numeric_data):
     """Both binning options, a binner without transform, or a wrong shape are refused."""
     X, y = numeric_data
     with pytest.raises(ValueError, match="not both"):
-        SoftmaxWoe(binner=EdgesBinner({}), binning_kwargs={"binning_method": "kbins"})
+        SoftmaxWoe(binner=EdgesBinner({}), binning_kwargs={"binning_method": "kbins"}).fit(X, y)
 
     class NoTransform:
         def fit(self, X, y):
             pass
 
     with pytest.raises(TypeError, match="fit\\(X, y\\) and transform\\(X\\)"):
-        SoftmaxWoe(binner=NoTransform())
+        SoftmaxWoe(binner=NoTransform()).fit(X, y)
 
     class WrongShape(EdgesBinner):
         def transform(self, X):
@@ -474,3 +481,38 @@ def test_custom_binner_column_order_is_matched_by_name(numeric_data):
     b = SoftmaxWoe(order=["score", "card"], binner=Reversed(edges)).fit(X, y)
     assert a.levels_ == b.levels_
     pd.testing.assert_frame_equal(a.transform(X), b.transform(X))
+
+
+def test_scikit_learn_estimator(data):
+    """clone, get/set_params, predict, fit_transform, cross-validation and grid search work."""
+    from sklearn.base import clone
+    from sklearn.model_selection import GridSearchCV, cross_val_score
+
+    X, y = data
+    model = SoftmaxWoe(order=["a", "b", "c"], C=0.5)
+    copy_ = clone(model)
+    assert copy_.get_params() == model.get_params()
+    assert copy_.set_params(C=2.0).C == 2.0 and model.C == 0.5
+    model.fit(X, y)
+    assert list(model.classes_) == [0, 1] and model.n_features_in_ == 3
+    np.testing.assert_array_equal(
+        model.predict(X), (model.predict_proba(X)[:, 1] >= 0.5).astype(int)
+    )
+    pd.testing.assert_frame_equal(
+        SoftmaxWoe(order=["a", "b", "c"]).fit_transform(X, y),
+        SoftmaxWoe(order=["a", "b", "c"]).fit(X, y).transform(X),
+    )
+    scores = cross_val_score(SoftmaxWoe(), X, y, cv=3, scoring="neg_log_loss")
+    assert np.isfinite(scores).all()
+    search = GridSearchCV(SoftmaxWoe(), {"C": [0.01, 1.0]}, cv=3, scoring="neg_log_loss").fit(X, y)
+    assert search.best_params_["C"] in (0.01, 1.0)
+
+
+def test_covariances_computed_on_demand(data):
+    """fit computes no covariances; the first standard error does, and caches them."""
+    X, y = data
+    m = SoftmaxWoe().fit(X, y)
+    assert m._node_cov == {}
+    se = m.transform(X, output="se")
+    assert len(m._node_cov) == len(m._node_C) > 0
+    pd.testing.assert_frame_equal(se, m.transform(X, output="se"))
