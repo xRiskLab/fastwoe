@@ -1133,6 +1133,43 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
 
         return woe_df
 
+    def transform_bins(self, X: Union[pd.DataFrame, np.ndarray, pd.Series]) -> pd.DataFrame:
+        """Bin label of every value, as the encoder groups it.
+
+        Numerical features binned at fit come back as ordered categoricals with
+        interval labels in numeric order, then "Missing" for missing values.
+        Other features are returned unchanged.
+
+        Parameters
+        ----------
+        X : Union[pd.DataFrame, np.ndarray, pd.Series]
+            Input with the features seen during fit.
+
+        Returns:
+        -------
+        pd.DataFrame
+            Same shape and index as X.
+        """
+        X = self._ensure_dataframe(X, use_fitted_names=True)
+        if not self.is_fitted_:
+            raise ValueError("Model must be fitted before transform_bins()")
+        out = X.copy()
+        for col in X.columns:
+            if col not in self.binners_:
+                continue
+            labels = self._apply_binning_to_column(X, col).astype(str)
+            info = self.binning_info_[col]
+            binner = self.binners_[col]
+            if info.get("method") == "kbins" and hasattr(binner, "bin_edges_"):
+                order = _bin_labels(binner.bin_edges_[0])
+            elif "bin_edges" in info:
+                order = _bin_labels(info["bin_edges"])
+            else:
+                order = []
+            order += sorted(set(labels) - set(order) - {"Missing"}) + ["Missing"]
+            out[col] = pd.Categorical(labels, categories=order, ordered=True)
+        return out
+
     def fit_transform(self, X: pd.DataFrame, y=None, **_fit_params) -> pd.DataFrame:
         """Fit and transform in one step."""
         return self.fit(X, y).transform(X)

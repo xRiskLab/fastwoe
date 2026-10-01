@@ -92,3 +92,25 @@ def test_merged_bins_would_have_hidden_a_real_difference():
     assert shared, "the data should produce a one-decimal collision"
     rates = woe.get_mapping("x")["event_rate"].to_numpy()[[i + 1 for i in shared]]
     assert np.ptp(rates) > 0.02
+
+
+def test_transform_bins_ordered_categories():
+    """transform_bins gives each value's bin, as an ordered categorical in numeric order."""
+    rng = np.random.default_rng(0)
+    n = 2000
+    X = pd.DataFrame({"x": rng.normal(size=n), "c": rng.choice(list("abc"), n)})
+    X.loc[::50, "x"] = np.nan
+    y = (rng.random(n) < 1 / (1 + np.exp(-X.x.fillna(0)))).astype(int)
+    for kwargs in ({}, {"binning_method": "kbins"}):
+        fw = FastWoe(**kwargs).fit(X, y)
+        bins = fw.transform_bins(X)
+        assert bins.x.cat.ordered and bins.x.cat.categories[-1] == "Missing"
+        assert bins.x.notna().all() and (bins.x[X.x.isna()] == "Missing").all()
+        assert bins.c.equals(X.c)
+        lows = [
+            float(b.split(",")[0].strip("(").replace("-∞", "-inf"))
+            for b in bins.x.cat.categories[:-1]
+        ]
+        assert lows == sorted(lows)
+        woe = fw.transform(X).x
+        assert (woe.groupby(bins.x, observed=True).nunique() == 1).all()
