@@ -233,7 +233,7 @@ model.predict_ci(X_test)[:5]
 22   0.084        0.246  0.036          0.0080   0.0048   0.0133
 ```
 
-Each node's log-probability gets a delta-method variance: from the bin counts for the first node, $(1 - p) / (n p)$, and from the inverse penalized Hessian of its logistic regression after that. A weight's variance is the sum of its event and non-event nodes, which are fitted on separate rows. Within a class the log-likelihood is a sum of node terms with separate coefficients, so the nodes' estimates are asymptotically independent, and the variance of the log-odds is simply
+They are computed the first time they are asked for, so fitting does not pay for them. Each node's log-probability gets a delta-method variance: from the bin counts for the first node, $(1 - p) / (n p)$, and from the inverse penalized Hessian of its logistic regression after that. A weight's variance is the sum of its event and non-event nodes, which are fitted on separate rows. Within a class the log-likelihood is a sum of node terms with separate coefficients, so the nodes' estimates are asymptotically independent, and the variance of the log-odds is simply
 
 $$\text{Var}(\text{score}) = \frac{1}{n_1} + \frac{1}{n_0} + \sum_i \text{Var}(W_i)$$
 
@@ -245,7 +245,7 @@ Compared with `FastWoe(conditional=True)`: where no conditioning step falls back
 
 ## Choosing C
 
-`C` is the inverse L2 penalty of every node. Choose it by cross-validated log loss:
+`C` is the inverse L2 penalty of every node. Choose it by cross-validated log loss. SoftmaxWoe is a scikit-learn estimator, so `GridSearchCV(SoftmaxWoe(order=[...]), {"C": [0.01, 0.1, 1, 10]}, scoring="neg_log_loss")` does it in one line; written out by hand:
 
 ```python
 from sklearn.metrics import log_loss
@@ -315,6 +315,7 @@ Unlike counted conditional WOE, where every order lands in the same cell and onl
 | `levels_` | Bins of each feature, in the order the chain uses them |
 | `prior_log_odds_` | Log-odds of the event in the training data |
 | `class_counts_` | Training rows per class, `{1: events, 0: non-events}` |
+| `classes_` | The class labels, `[0, 1]` |
 | `nodes_` | Node models keyed by `(feature, class)`: bin shares for the first node, `LogisticRegression` after |
 | `binner_` | The fitted binner: a FastWoe by default, otherwise a clone of the one passed |
 
