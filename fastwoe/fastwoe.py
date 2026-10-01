@@ -432,9 +432,18 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
         # Fallback for other types
         return pd.DataFrame(X)
 
-    def _ensure_series(self, y: Union[pd.Series, np.ndarray]) -> pd.Series:
-        """Convert input to Series."""
-        return y if isinstance(y, pd.Series) else pd.Series(y)
+    @staticmethod
+    def _ensure_series(y: Union[pd.Series, np.ndarray], index: pd.Index) -> pd.Series:
+        """Convert input to a Series aligned with X by position, as scikit-learn does.
+
+        A numpy array or list gets X's index, so a row subset of X (after a
+        train/test split, say) lines up with its target. A Series whose index
+        differs from X's is matched by position too.
+        """
+        series = y if isinstance(y, pd.Series) else pd.Series(np.asarray(y))
+        if len(series) == len(index) and not series.index.equals(index):
+            series = pd.Series(series.to_numpy(), index=index, name=series.name)
+        return series
 
     def _validate_constraints(self, X: pd.DataFrame) -> None:
         """Validate monotonic constraints against actual feature names."""
@@ -723,7 +732,7 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
         """
         # Convert inputs to pandas DataFrame/Series consistently
         X = self._ensure_dataframe(X)
-        y = self._ensure_series(y)
+        y = self._ensure_series(y, X.index)
 
         # Validate monotonic constraints
         self._validate_constraints(X)
@@ -1170,7 +1179,7 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
             )
 
         X_new = self._ensure_dataframe(X_new, use_fitted_names=True)
-        y_new = self._ensure_series(y_new)
+        y_new = self._ensure_series(y_new, X_new.index)
 
         if len(X_new) != len(y_new):
             raise ValueError(
