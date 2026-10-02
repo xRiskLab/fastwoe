@@ -294,6 +294,7 @@ Unlike counted conditional WOE, where every order lands in the same cell and onl
 - **Monotonic constraints** shape the bins, so they hold for marginal WOE and for the first feature in `order`. The node models are not constrained, so a later feature's conditional weights need not be monotone. Put a constrained feature first if that matters.
 - **No temperature, no recalibration.** Dividing the node logits or the final score by a temperature did not improve on T = 1 in our experiments: the fitted chain is already calibrated, and `C` is the right shrinkage knob.
 - **Penalty type.** L1 and elastic-net nodes reached the same log loss as L2 at their cross-validated `C`; L2 is used because it degrades more gently when `C` is mis-set.
+- **One-hot node inputs.** Each node sees the earlier features one-hot. Feeding them in as weights of evidence instead (each earlier feature's WOE for the node's target bins) is feasible and, with a single earlier feature, gives the same fit. On the bank case study it was as accurate as one-hot with coarse bins (4 to 8 per feature) but less accurate with finer bins (validation log loss 0.1994 against 0.1947 at up to 16), where many cells are thin and their WOE estimates noisy; it was also 2 to 8 times slower to fit, because a feature with fewer bins than the node's target gives redundant, badly scaled columns. Capping WOE at ±3 halved the fitting time but lowered accuracy further, so the nodes use one-hot.
 
 ## Parameters
 
