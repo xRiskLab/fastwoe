@@ -1,6 +1,6 @@
 # Changelog
 
-## Version 0.2.0 (unreleased)
+## Version 0.2.0 (2026-10-02)
 
 **Softmax WOE, scikit-learn 1.8 and pandas 3**
 
