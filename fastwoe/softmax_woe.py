@@ -367,6 +367,29 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
     # standard errors
     # ------------------------------------------------------------------
 
+    def _distinct(
+        self, columns: dict[str, np.ndarray], features: list[str]
+    ) -> tuple[dict[str, np.ndarray], np.ndarray, np.ndarray]:
+        """Distinct rows of the given bin codes, with each row's index into them and their counts.
+
+        Codes (-1 for unseen) are packed into one integer per row so a 1-D unique
+        does the work; if that integer could overflow, rows are compared directly.
+        """
+        key = np.column_stack([columns[f] + 1 for f in features])
+        sizes = [len(self.levels_[f]) + 1 for f in features]
+        if float(np.prod(sizes, dtype=float)) < 2**62:
+            packed = np.zeros(len(key), dtype=np.int64)
+            for j, size in enumerate(sizes):
+                packed = packed * size + key[:, j]
+            _, first, back, counts = np.unique(
+                packed, return_index=True, return_inverse=True, return_counts=True
+            )
+            rows = key[first]
+        else:
+            rows, back, counts = np.unique(key, axis=0, return_inverse=True, return_counts=True)
+        distinct = {f: rows[:, j] - 1 for j, f in enumerate(features)}
+        return distinct, back.ravel(), counts
+
     @staticmethod
     def _with_intercept(inputs: np.ndarray) -> np.ndarray:
         return np.hstack([inputs, np.ones((len(inputs), 1))])
@@ -378,7 +401,7 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
         return rows
 
     def _coef_covariance(
-        self, node: LogisticRegression, inputs: np.ndarray, node_C: float
+        self, node: LogisticRegression, inputs: np.ndarray, counts: np.ndarray, node_C: float
     ) -> np.ndarray:
         """Covariance of a node's coefficients: the inverse penalized Hessian.
 
@@ -387,6 +410,12 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
         The softmax is over-parametrized (a constant added to every row changes
         nothing), so the pseudo-inverse is used; the gradients it is applied to
         are orthogonal to those directions.
+
+        The inputs are one-hot bins, so rows repeat: the Hessian is a sum over
+        rows, computed once per distinct row (``inputs``) weighted by how many
+        training rows share it (``counts``). The
+        multinomial Hessian sum_i (diag(p_i) - p_i p_i') kron a_i a_i' is built
+        as one matrix product of the stacked p kron a, plus the diagonal blocks.
         """
         A = self._with_intercept(inputs)
         d = A.shape[1]
@@ -394,19 +423,18 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
         penalty = np.r_[np.full(d - 1, 1.0 / node_C), 0.0]
         if len(rows) == 1:  # binary node: one logit
             q = 1.0 / (1.0 + np.exp(-A @ rows[0]))
-            H = (A * (q * (1 - q))[:, None]).T @ A + np.diag(penalty)
+            H = (A * (counts * q * (1 - q))[:, None]).T @ A + np.diag(penalty)
         else:
             Z = A @ rows.T
             P = np.exp(Z - Z.max(axis=1, keepdims=True))
             P /= P.sum(axis=1, keepdims=True)
             K = len(rows)
-            H = np.zeros((K * d, K * d))
-            for a in range(K):
-                for b in range(a, K):
-                    w = P[:, a] * (float(a == b) - P[:, b])
-                    block = (A * w[:, None]).T @ A
-                    H[a * d : (a + 1) * d, b * d : (b + 1) * d] = block
-                    H[b * d : (b + 1) * d, a * d : (a + 1) * d] = block
+            stacked = (P[:, :, None] * A[:, None, :]).reshape(len(A), K * d)
+            stacked *= np.sqrt(counts)[:, None]
+            H = -(stacked.T @ stacked)  # - sum_i p_i p_i' kron a_i a_i'
+            for k in range(K):  # + sum_i diag(p_i) kron a_i a_i'
+                block = slice(k * d, (k + 1) * d)
+                H[block, block] += (A.T * (counts * P[:, k])) @ A
             H += np.diag(np.tile(penalty, K))
         cov: np.ndarray = np.linalg.pinv(H)
         return cov
@@ -417,10 +445,13 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
         if key not in self._node_cov:
             rows = self._fit_target == cls
             earlier = self.order_[:i]
-            inputs = self._onehot(
-                {g: self._fit_codes[g][rows] for g in earlier}, earlier, int(rows.sum())
+            distinct, _, counts = self._distinct(
+                {g: self._fit_codes[g][rows] for g in earlier}, earlier
             )
-            self._node_cov[key] = self._coef_covariance(self.nodes_[key], inputs, self._node_C[key])
+            inputs = self._onehot(distinct, earlier, len(counts))
+            self._node_cov[key] = self._coef_covariance(
+                self.nodes_[key], inputs, counts, self._node_C[key]
+            )
         return self._node_cov[key]
 
     def _log_prob_variance(
@@ -434,18 +465,24 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
         """
         feature = self.order_[i]
         node = self.nodes_[(feature, cls)]
-        k = codes[feature]
-        known = k >= 0
         n_class = self.class_counts_[cls]
         if isinstance(node, np.ndarray):
+            k = codes[feature]
+            known = k >= 0
             p = node[np.where(known, k, 0)]
             return np.where(known, (1 - p) / (n_class * p), 0.0)
-        x = self._with_intercept(self._onehot(codes, self.order_[:i], n))
+        # rows with the same earlier bins and own bin share a variance: compute
+        # it once per distinct combination and map it back
+        earlier = self.order_[:i]
+        dcodes, back, _ = self._distinct(codes, [*earlier, feature])
+        dk = dcodes[feature]
+        u = len(dk)
+        x = self._with_intercept(self._onehot(dcodes, earlier, u))
         rows = self._coef_rows(node)
         cov = self._covariance(i, cls)
-        # position of each row's bin among the classes the node was fitted on
+        # position of each bin among the classes the node was fitted on
         position = {c: j for j, c in enumerate(node.classes_)}
-        pos = np.array([position.get(c, -1) for c in k])
+        pos = np.array([position.get(c, -1) for c in dk])
         if len(rows) == 1:
             q = 1.0 / (1.0 + np.exp(-x @ rows[0]))
             grad = np.where(pos == 1, 1 - q, -q)[:, None] * x
@@ -456,11 +493,12 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
             E = -P
             hit = pos >= 0
             E[np.flatnonzero(hit), pos[hit]] += 1.0
-            grad = (E[:, :, None] * x[:, None, :]).reshape(n, -1)
-        var = np.einsum("ij,jk,ik->i", grad, cov, grad)
+            grad = (E[:, :, None] * x[:, None, :]).reshape(u, -1)
+        var = ((grad @ cov) * grad).sum(axis=1)
         # a bin this class never showed here sits at the probability floor
         floor_var = (1 - _FLOOR) / (n_class * _FLOOR)
-        out: np.ndarray = np.where(~known, 0.0, np.where(pos < 0, floor_var, var))
+        per_distinct = np.where(dk < 0, 0.0, np.where(pos < 0, floor_var, var))
+        out: np.ndarray = per_distinct[back]
         return out
 
     def _weight_se(self, codes: dict[str, np.ndarray], n: int) -> np.ndarray:
