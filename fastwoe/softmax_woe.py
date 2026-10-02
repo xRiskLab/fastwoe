@@ -49,7 +49,7 @@ from .fastwoe import FastWoe
 __all__ = ["Binner", "SoftmaxWoe"]
 
 MISSING = "Missing"
-_MANY_LEVELS = 50  # more bins than this after binning suggests an unbinned column
+_MANY_LEVELS = 100  # more bins than this after binning suggests an unbinned column
 _FLOOR = 1e-6  # probability of a bin a class never showed at a node, before renormalizing
 
 
@@ -325,7 +325,9 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
             if len(self.levels_[f]) > _MANY_LEVELS:
                 warnings.warn(
                     f"'{f}' has {len(self.levels_[f])} distinct values after binning and is "
-                    "treated as that many categories; was a continuous column left unbinned?",
+                    "treated as that many categories; was a continuous column left unbinned? "
+                    "For a high-cardinality category, pool rare values first, e.g. "
+                    "make_pipeline(WoePreprocessor(min_count=30), SoftmaxWoe()).",
                     UserWarning,
                     stacklevel=2,
                 )

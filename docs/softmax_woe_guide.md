@@ -161,7 +161,15 @@ model.levels_["bureau"]
 
 Other examples: `{"special_codes": [-999]}` (a bin of its own for a 'no record' code, kept out of the intervals), `{"binning_method": "kbins", "binner_kwargs": {"n_bins": 5}}`, `{"binning_method": "faiss_kmeans", "faiss_kwargs": {"k": 5}}`, `{"monotonic_cst": {"bureau": -1}}`.
 
-Each node has a coefficient per earlier bin, so fewer, coarser bins mean steadier nodes. Capping the tree is a good default: on a bank case study (24,859 applications, six features) four tree bins per feature gave a lower validation log loss than both the default tree bins and hand-picked cut points.
+Use few, coarse bins. Each node estimates a distribution over its feature's bins from the earlier features' bins, so every extra bin thins the cells on both sides. On a bank case study (24,859 applications, six features), validation log loss with FastWoe tree bins was:
+
+| Bins per feature | SoftmaxWoe | Logistic regression on WOE |
+|---|---|---|
+| At most 4 (`{"tree_kwargs": {"max_leaf_nodes": 4}}`) | **0.1873** | 0.1885 |
+| FastWoe default (up to 8) | 0.1894 | 0.1890 |
+| Up to 16 (`{"tree_kwargs": {"max_depth": 4}}`) | 0.1947 | **0.1866** |
+
+SoftmaxWoe was best with 4 bins, where it beat the scorecard; with 16 the scorecard was better. Start with about 4 bins per feature (`binning_kwargs={"tree_kwargs": {"max_leaf_nodes": 4}}`) and go finer only if cross-validation says so.
 
 ### Your Own Binner
 
@@ -169,7 +177,7 @@ Any object with `fit(X, y)` and `transform(X)` can supply the bins instead of Fa
 
 - Ordered categoricals keep their order; other labels are sorted, numbers and intervals numerically.
 - Missing values become the level `"Missing"`.
-- A column the binner leaves unchanged is treated as categories (a warning flags one with more than 50 distinct values).
+- A column the binner leaves unchanged is treated as categories (a warning flags one with more than 100 distinct values).
 - The binner is cloned before fitting, so the object you pass is never modified, and `fit` may return `None`.
 - It always receives every column seen at fit; where `node_proba` is given only some, the others are passed as NaN.
 
@@ -199,7 +207,16 @@ A scikit-learn transformer works as well, for example `KBinsDiscretizer(encode="
 
 ### High-Cardinality Categories
 
-A nominal feature with hundreds of values (postcode, occupation code, merchant) gives each value its own bin, and most of those bins are thin. Grouping the values by their smoothed risk works better than keeping them all, or than grouping only the rare ones. A CatBoost encoder ([`category_encoders.CatBoostEncoder`](https://contrib.scikit-learn.org/category_encoders/catboost.html)) supplies that risk: each value's event rate, shrunk toward the overall rate with strength `a`. The binner below groups those rates into a few bins and leaves the other columns to FastWoe:
+A nominal feature with hundreds of values (postcode, occupation code, merchant) gives each value its own bin, and most of those bins are thin. Start by pooling the rare values with fastwoe's `WoePreprocessor`, which keeps frequent categories under their own names and puts the rest in one `"__other__"` bin. Set `min_count` to 30 or more: its default (10) keeps too many thin categories for SoftmaxWoe.
+
+```python
+from sklearn.pipeline import make_pipeline
+from fastwoe import SoftmaxWoe, WoePreprocessor
+
+model = make_pipeline(WoePreprocessor(min_count=30), SoftmaxWoe())
+```
+
+For more accuracy, at the cost of bins that are sets of categories rather than named ones, group the values by their smoothed risk instead. A CatBoost encoder ([`category_encoders.CatBoostEncoder`](https://contrib.scikit-learn.org/category_encoders/catboost.html)) supplies that risk: each value's event rate, shrunk toward the overall rate with strength `a`. The binner below groups those rates into a few bins and leaves the other columns to FastWoe:
 
 ```python
 import numpy as np
@@ -234,12 +251,13 @@ class RiskGroupBinner:
 model = SoftmaxWoe(binner=RiskGroupBinner(nominal=["postcode"]))
 ```
 
-A value unseen at fit gets the overall rate and lands in a middle group. On simulated data with 400 postcodes whose risk depends on 8 hidden regions, validation log loss was:
+A value unseen at fit gets the overall rate and lands in a middle group. On simulated data with 400 postcodes whose risk depends on 8 hidden regions, validation log loss with the code above was:
 
 | Postcode handling | Levels | Log loss |
 |---|---|---|
-| Every postcode its own bin | 400 | 0.406 |
-| `WoePreprocessor` (frequent postcodes kept, rare ones pooled) | 63 | 0.387 |
+| Every postcode its own bin | 400 | 0.407 |
+| `WoePreprocessor(min_count=10)`, the default | 269 | 0.399 |
+| `WoePreprocessor(min_count=30)` (frequent postcodes kept, rare ones pooled) | 63 | 0.388 |
 | Grouped by smoothed risk, 8 groups, `a=30` | 7 | **0.380** |
 | True model | | 0.368 |
 
