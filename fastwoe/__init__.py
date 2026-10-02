@@ -6,6 +6,7 @@ features with statistical confidence intervals and cardinality preprocessing.
 Features:
 - FastWoe: Fast WOE encoding with confidence intervals
 - WoePreprocessor: Cardinality reduction for high-cardinality features
+- SoftmaxWoe: Conditional WOE from a hierarchical softmax (generative classifier)
 - WeightOfEvidence: Model interpretability tool with FastWoe
 - plot_performance: CAP/Power curve visualization for binary and continuous targets
 - visualize_woe: WOE feature visualization
@@ -21,14 +22,16 @@ if TYPE_CHECKING:
     from .interpret_fastwoe import WeightOfEvidence
     from .metrics import gini_contributions
     from .plots import plot_performance, visualize_woe
+    from .softmax_woe import SoftmaxWoe
 
-__version__ = "0.1.9"
+__version__ = "0.2.0"
 __author__ = "xRiskLab"
 __email__ = "contact@xrisklab.ai"
 
 __all__ = [
     "FastWoe",
     "WoePreprocessor",
+    "SoftmaxWoe",
     "WeightOfEvidence",
     "plot_performance",
     "visualize_woe",
@@ -45,6 +48,7 @@ __all__ = [
 _LAZY = {
     "FastWoe": "fastwoe",
     "WoePreprocessor": "fastwoe",
+    "SoftmaxWoe": "softmax_woe",
     "WeightOfEvidence": "interpret_fastwoe",
     "plot_performance": "plots",
     "visualize_woe": "plots",

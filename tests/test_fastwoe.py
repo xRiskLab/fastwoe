@@ -2097,6 +2097,10 @@ class TestMonotonicConstraints:
     def test_monotonic_constraints_functional_validation_faiss(self):
         # sourcery skip: extract-duplicate-method
         """Test that FAISS monotonic constraints are properly ignored and warnings are shown."""
+        import importlib.util
+
+        if importlib.util.find_spec("faiss") is None:
+            pytest.skip("FAISS not available, skipping FAISS KMeans tests")
         # Create synthetic data with clear monotonic relationship
         np.random.seed(42)
         n_samples = 1000
@@ -2808,3 +2812,21 @@ class TestFinetune:
 
         assert woe.finetune(X_new, y_new) is None
         assert not woe.mappings_["cat1"]["woe"].equals(before)
+
+
+@pytest.mark.parametrize("as_type", [np.asarray, list, lambda v: pd.Series(v)])
+def test_fit_on_row_subset_aligns_target_by_position(as_type):
+    """A row subset of X with a positional target fits, even with missing numeric values."""
+    rng = np.random.default_rng(0)
+    n = 1000
+    X = pd.DataFrame({"x": rng.normal(size=n), "c": rng.choice(list("ab"), n)})
+    X.loc[::30, "x"] = np.nan
+    y = (rng.random(n) < 1 / (1 + np.exp(-X.x.fillna(0)))).astype(int)
+    keep = rng.random(n) < 0.7
+    subset = FastWoe().fit(X[keep], as_type(y[keep]))
+    reindexed = FastWoe().fit(X[keep].reset_index(drop=True), y[keep])
+    pd.testing.assert_frame_equal(
+        subset.transform(X[keep]).reset_index(drop=True),
+        reindexed.transform(X[keep].reset_index(drop=True)),
+    )
+    subset.finetune(X[~keep], as_type(y[~keep]))

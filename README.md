@@ -16,6 +16,7 @@ FastWoe is a Python library for efficient **Weight of Evidence (WOE)** encoding 
 
 - **Fast WOE Encoding**: Leverages scikit-learn's `TargetEncoder` for efficient computation
 - **Multiclass Support**: One-vs-rest WOE encoding for targets with 3+ classes
+- **Conditional WOE**: Good's chain rule, by counting (`FastWoe(conditional=True)`) or by a hierarchical softmax that keeps conditioning where cells run thin (`SoftmaxWoe`)
 - **Statistical Confidence Intervals**: Provides standard errors and confidence intervals for WOE values
 - **IV Standard Errors**: Statistical significance testing for Information Value with confidence intervals
 - **Cardinality Control**: Built-in preprocessing to handle high-cardinality categorical features
@@ -327,6 +328,22 @@ woe_encoder.unseen_counts_  # {column: {category: count}} from the last transfor
 
 Fit on data that contains missing values so a `Missing` bin is learned.
 
+### Special Codes
+Values that mean something other than their number, such as `-999` for "no bureau record", should not be binned with real values: they distort the split points and borrow a neighboring bin's WOE. `special_codes` keeps them out of the binning and gives them a bin of their own, with its own WOE, standard error and IV contribution (as in optbinning):
+
+```python
+woe = FastWoe(special_codes=[-999, 99999999])           # one "Special" bin in every binned numerical feature
+woe = FastWoe(special_codes={
+    "bureau_score": [-999],                              # "Special"
+    "income": {"not_stated": [-1], "refused": [-2]},     # "Special: not_stated", "Special: refused"
+})
+woe.fit(X, y)
+woe.get_mapping("bureau_score")   # intervals, then special bins, then Missing
+woe.get_binning_summary()         # includes a "special" count per feature
+```
+
+Special codes apply to the numerical features FastWoe bins; a categorical feature's values are already categories of their own. A special code that never occurred at fit follows the `unseen` policy.
+
 ### Conditional WOE
 Summing marginal WOE is exact only when features are independent. Conditional WOE uses Good's chain rule, `W(H : E1 E2) = W(H : E1) + W(H : E2 | E1)`, so each weight is measured within the population picked out by the features before it (binary targets only):
 
@@ -374,6 +391,39 @@ Information Value follows the same chain rule. `get_iv_analysis()` keeps `iv` as
 The order is an attribution choice: when the per-feature weights or IVs are used for explanations, set `conditional_order` deliberately (e.g. cause before symptom) and document it.
 
 A worked example, including calibration against marginal WOE and logistic regression, fallbacks and explanations, is in [`examples/notebooks/fastwoe_conditional.ipynb`](examples/notebooks/fastwoe_conditional.ipynb).
+
+### Softmax WOE
+`SoftmaxWoe` is a generative classifier: per class, an autoregressive chain of penalized multinomial logistic regressions, fitted by maximum likelihood of the features given the class; its per-feature weights are Good's conditional weights of evidence under that model and sum exactly to the posterior log-odds.
+
+In plain terms: within the bads and within the goods, each feature's bin is predicted from the bins of the features before it, and a feature's weight is the log ratio of the two predictions for the applicant's bin. Counted conditional WOE reads those shares off cells, which run thin after a few features and fall back to marginal weights; a logistic regression per feature lets thin cells borrow from the rest, so every applicant keeps a conditional weight.
+
+```python
+from fastwoe import SoftmaxWoe
+
+model = SoftmaxWoe(order=["bureau", "utilization", "card"], C=1.0)
+model.fit(X, y)                   # numeric columns binned by FastWoe
+
+model.transform(X)                # conditional weights; prior_log_odds_ + row sum = log-odds
+model.predict_proba(X)
+model.transform(X, output="se")   # delta-method standard error of every weight
+model.predict_ci(X)               # interval for P(y=1)
+model.node_proba(X, "card")       # P(bin | earlier bins) among events and among non-events
+```
+
+- `C` shrinks every node toward marginal WOE; choose it by cross-validation (`GridSearchCV` works, as do `clone`, `cross_val_score` and `Pipeline`).
+- `order` sets which features each weight is conditioned on. It moves evidence between features a lot and changes the score a little; choose it deliberately when the weights are used as reason codes.
+- Bins come from FastWoe by default (`binning_kwargs=` passes its options), or from any object with `fit(X, y)` and `transform(X)` passed as `binner=`, such as cut points taken from a gradient-boosting model.
+
+On a bank case study (24,859 applications, six correlated features, the same FastWoe tree bins for every method), validation log loss:
+
+| Method | Log loss |
+|---|---|
+| Marginal WOE | 0.338 |
+| Conditional WOE (counted, min count 1) | 0.197 |
+| Logistic regression on marginal WOE | 0.189 |
+| `SoftmaxWoe` | 0.187 |
+
+`SoftmaxWoe` matches the calibrated scorecard without a second fitting step, and its weights stay conditional weights of evidence that add up to the score. Guide: [`docs/softmax_woe_guide.md`](docs/softmax_woe_guide.md); notebook, including the method written out in plain scikit-learn: [`examples/notebooks/fastwoe_softmax.ipynb`](examples/notebooks/fastwoe_softmax.ipynb).
 
 ### Numerical Feature Binning
 
@@ -570,6 +620,21 @@ For a complete example, see [examples/scripts/fastwoe_monotonic.py](examples/scr
 - `get_mapping(column)`: Get WOE mapping for specific column
 - `predict_proba(X)`: Get probability predictions
 - `predict_ci(X, alpha)`: Get predictions with confidence intervals
+
+### SoftmaxWoe Class
+
+#### Parameters
+- `order` (list): Conditioning order; defaults to X's column order
+- `C` (float): Inverse L2 penalty of every node model (default 1.0); smaller shrinks toward marginal WOE
+- `root_pseudo_count` (float): Pseudo-count per bin wherever shares are counted (default 0.5)
+- `unseen` (str): `"warn"`, `"prior"` or `"raise"` for categories absent at fit
+- `binning_kwargs` (dict): Options for the default FastWoe binner
+- `binner` (Binner): Any object with `fit(X, y)` and `transform(X)` returning bins, instead of FastWoe
+
+#### Key Methods
+- `fit(X, y)`, `transform(X, output="woe" | "se")`, `fit_transform(X, y)`
+- `predict_proba(X)`, `predict(X)`, `predict_ci(X, alpha)`
+- `node_proba(X, feature)`: class probabilities of each row's bin at that feature's node
 
 ### WoePreprocessor Class
 
