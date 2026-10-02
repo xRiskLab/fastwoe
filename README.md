@@ -328,6 +328,22 @@ woe_encoder.unseen_counts_  # {column: {category: count}} from the last transfor
 
 Fit on data that contains missing values so a `Missing` bin is learned.
 
+### Special Codes
+Values that mean something other than their number, such as `-999` for "no bureau record", should not be binned with real values: they distort the split points and borrow a neighboring bin's WOE. `special_codes` keeps them out of the binning and gives them a bin of their own, with its own WOE, standard error and IV contribution (as in optbinning):
+
+```python
+woe = FastWoe(special_codes=[-999, 99999999])           # one "Special" bin in every binned numerical feature
+woe = FastWoe(special_codes={
+    "bureau_score": [-999],                              # "Special"
+    "income": {"not_stated": [-1], "refused": [-2]},     # "Special: not_stated", "Special: refused"
+})
+woe.fit(X, y)
+woe.get_mapping("bureau_score")   # intervals, then special bins, then Missing
+woe.get_binning_summary()         # includes a "special" count per feature
+```
+
+Special codes apply to the numerical features FastWoe bins; a categorical feature's values are already categories of their own. A special code that never occurred at fit follows the `unseen` policy.
+
 ### Conditional WOE
 Summing marginal WOE is exact only when features are independent. Conditional WOE uses Good's chain rule, `W(H : E1 E2) = W(H : E1) + W(H : E2 | E1)`, so each weight is measured within the population picked out by the features before it (binary targets only):
 

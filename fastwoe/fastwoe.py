@@ -210,6 +210,16 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
     unseen : {"warn", "prior", "raise"}, default="warn"
         How transform() treats categories absent from the fitted mapping,
         including missing values when the training data had none.
+    special_codes : list or dict, optional
+        Values of a numerical feature that mean something other than their
+        number (e.g. -999 for "no record"). They are kept out of the binning,
+        so they cannot move the split points, and get a bin of their own with
+        its own WOE, standard error and IV contribution, like "Missing".
+        A list applies to every numerical feature FastWoe bins and gives one
+        bin, "Special". A dict maps feature names to a list (one "Special" bin)
+        or to {name: values} (one bin per name, "Special: name"). Bins are
+        ordered intervals, then special bins, then "Missing". Categorical
+        features need none: each value is its own category already.
     conditional : bool, default=False
         Use conditional WOE (Good's chain rule): each feature's weight is
         measured within the population selected by the features before it,
@@ -254,6 +264,7 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
         conditional=False,
         conditional_order=None,
         conditional_min_count=30,
+        special_codes=None,
     ):
         """Configure the encoder; parameters are described in the class docstring."""
         super().__init__()
@@ -293,6 +304,17 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
         if monotonic_cst is not None and not isinstance(monotonic_cst, dict):
             raise TypeError("monotonic_cst must be a dictionary")
         self.monotonic_cst = monotonic_cst if monotonic_cst is not None else {}
+
+        # Special codes: values of a numerical feature kept out of its bins, each
+        # group getting a bin of its own (as optbinning's special_codes)
+        if special_codes is not None and not isinstance(
+            special_codes, (list, tuple, set, np.ndarray, dict)
+        ):
+            raise TypeError(
+                "special_codes must be a list of values or a dict mapping feature names to "
+                "a list of values or to {name: values}"
+            )
+        self.special_codes = special_codes
 
         # Validate monotonic constraints
         if self.monotonic_cst:
@@ -786,6 +808,7 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
 
         # Detect numerical features that need binning
         numerical_features = self._detect_numerical_features(X)
+        self._validate_special_codes(X, numerical_features)
 
         # Warn user about automatic binning if enabled
         if numerical_features and self.warn_on_numerical:
@@ -923,7 +946,75 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
             self._fit_conditional(X, y)
         return self
 
+    def _special_groups(self, col: str) -> dict[str, list[Any]]:
+        """Special-code bins of a feature: {bin label: values}."""
+        spec = self.special_codes
+        if spec is None:
+            return {}
+        groups = spec.get(col) if isinstance(spec, dict) else spec
+        if groups is None:
+            return {}
+        if isinstance(groups, dict):
+            return {f"Special: {name}": self._as_values(values) for name, values in groups.items()}
+        return {"Special": self._as_values(groups)}
+
+    @staticmethod
+    def _as_values(values: Any) -> list[Any]:
+        """A list of special codes from a list, tuple, set, array or single value."""
+        if isinstance(values, (list, tuple, set, frozenset, np.ndarray, pd.Series)):
+            return list(values)
+        return [values]
+
+    def _special_labels(self, col: str, values: pd.Series) -> pd.Series:
+        """Special bin label of each value, or None where the value is not a special code."""
+        labels = pd.Series(None, index=values.index, dtype=object)
+        for label, codes in self._special_groups(col).items():
+            labels[values.isin(codes)] = label
+        return labels
+
+    def _validate_special_codes(self, X: pd.DataFrame, numerical_features: list[str]) -> None:
+        """Check special codes against the data: known features, no value in two bins."""
+        spec = self.special_codes
+        if spec is None:
+            return
+        if isinstance(spec, dict):
+            if unknown := [c for c in spec if c not in X.columns]:
+                raise ValueError(f"special_codes names features not in X: {unknown}")
+            if ignored := [c for c in spec if c not in numerical_features]:
+                warnings.warn(
+                    f"special_codes for {ignored} are ignored: these features are not binned, "
+                    "so each value is its own category already.",
+                    UserWarning,
+                    stacklevel=3,
+                )
+        for col in numerical_features:
+            seen: set[Any] = set()
+            for codes in self._special_groups(col).values():
+                if overlap := seen & set(codes):
+                    raise ValueError(
+                        f"special code(s) {sorted(overlap)} of '{col}' are in two bins"
+                    )
+                seen |= set(codes)
+
     def _apply_binning_to_column(self, X: pd.DataFrame, col: str) -> pd.Series:
+        """Bin label of each value of a column: intervals, special bins, or "Missing".
+
+        Special codes are masked out before the fitted binner sees the values,
+        then labeled with their own bin.
+        """
+        if col not in self.binners_:
+            return X[col].copy()
+        special = self._special_labels(col, X[col])
+        is_special = special.notna()
+        if not is_special.any():
+            return self._bin_values(X, col)
+        masked = X.copy()
+        masked.loc[is_special, col] = np.nan
+        result = self._bin_values(masked, col).astype(object)
+        result.loc[is_special] = special[is_special]
+        return result
+
+    def _bin_values(self, X: pd.DataFrame, col: str) -> pd.Series:
         """Apply stored binning to a single column, returning string bin labels.
 
         Parameters
@@ -1386,6 +1477,13 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
             return self._conditional_mapping(feature, list(marginal["category"]))
         return self._ordered_mapping(feature, mapping).reset_index()
 
+    @staticmethod
+    def _bin_order(bin_labels: list[str], present: pd.Index) -> list[str]:
+        """Interval bins in order, then any special bins, then "Missing", as present in a mapping."""
+        extra = [label for label in present if label not in set(bin_labels)]
+        special = sorted(str(label) for label in extra if str(label) != "Missing")
+        return bin_labels + special + (["Missing"] if "Missing" in set(map(str, extra)) else [])
+
     def _ordered_mapping(self, feature: str, mapping: pd.DataFrame) -> pd.DataFrame:
         """Reindex a binned feature's mapping into bin order."""
         # For binned numerical features, reindex by bin_labels
@@ -1398,15 +1496,15 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
                 binner = self.binners_[feature]
                 edges = binner.bin_edges_[0]
                 bin_labels = _bin_labels(edges)
-                mapping = mapping.reindex(bin_labels)
+                mapping = mapping.reindex(self._bin_order(bin_labels, mapping.index))
             elif binning_info.get("method") == "tree" and "bin_edges" in binning_info:
                 edges = np.array(binning_info["bin_edges"])
                 bin_labels = _bin_labels(edges)
-                mapping = mapping.reindex(bin_labels)
+                mapping = mapping.reindex(self._bin_order(bin_labels, mapping.index))
             elif binning_info.get("method") == "faiss_kmeans" and "bin_edges" in binning_info:
                 edges = np.array(binning_info["bin_edges"])
                 bin_labels = _bin_labels(edges)
-                mapping = mapping.reindex(bin_labels)
+                mapping = mapping.reindex(self._bin_order(bin_labels, mapping.index))
         return mapping
 
     def get_all_mappings(self) -> dict:
@@ -1837,6 +1935,22 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
         return numerical_features
 
     def _bin_numerical_feature(self, X: pd.DataFrame, col: str, y: pd.Series) -> pd.DataFrame:
+        """Bin a numerical feature at fit, keeping special codes out of the binning."""
+        special = self._special_labels(col, X[col])
+        is_special = special.notna()
+        if not is_special.any():
+            return self._bin_numerical_values(X, col, y)
+        masked = X.copy()
+        masked.loc[is_special, col] = np.nan
+        binned = self._bin_numerical_values(masked, col, y)
+        binned[col] = binned[col].astype(object)
+        binned.loc[is_special, col] = special[is_special]
+        info = self.binning_info_[col]
+        info["missing"] = int(info["missing"]) - int(is_special.sum())
+        info["special"] = int(is_special.sum())
+        return binned
+
+    def _bin_numerical_values(self, X: pd.DataFrame, col: str, y: pd.Series) -> pd.DataFrame:
         """Apply binning to a numerical feature and return the binned data.
 
         Supports both KBinsDiscretizer and decision tree-based binning.
@@ -2216,7 +2330,7 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
         Returns:
         -------
         pd.DataFrame
-            Summary with columns: feature, values, n_bins, missing, method
+            Summary with columns: feature, values, n_bins, missing, special, method
 
         """
         if not self.binning_info_:
@@ -2229,6 +2343,7 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
                     "values": info["values"],
                     "n_bins": info["n_bins"],
                     "missing": info["missing"],
+                    "special": info.get("special", 0),
                     "method": info.get("method", "unknown"),
                     "monotonic_constraint": info.get("monotonic_constraint", 0),
                 }

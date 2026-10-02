@@ -7,6 +7,7 @@
 ### New Features
 
 - **`SoftmaxWoe`**: conditional WOE from a hierarchical softmax. A generative classifier: per class, an autoregressive chain of penalized multinomial logistic regressions, fitted by maximum likelihood of the features given the class; its per-feature weights are Good's conditional weights of evidence under that model and sum exactly to the posterior log-odds. Unlike `FastWoe(conditional=True)` it keeps conditioning where cells run thin instead of falling back to marginal weights, since each feature's node model is shared by every path at its depth. `C` shrinks the nodes toward marginal WOE; `order` fixes the conditioning order and, unlike counted conditional WOE, changes the score as well as the attribution. Numerical features are binned by FastWoe (`binning_kwargs` passes its options), or by any binner with `fit(X, y)` and `transform(X)` passed as `binner=`, `node_proba()` shows each node's class probabilities, and `binner_` keeps the fitted binner. Standard errors: `transform(X, output="se")` gives each weight's delta-method SE and `predict_ci()` an interval for the probability; the nodes are asymptotically independent, so the score's variance is the prior's plus the sum of the weight variances (about 95% coverage in simulation); they are computed on first use, so fitting stays fast. SoftmaxWoe is a scikit-learn estimator: `clone`, `GridSearchCV` (for example over `C`), `cross_val_score` and `Pipeline` work, and it has `predict` and `fit_transform`. Guide: `docs/softmax_woe_guide.md`; notebook: `examples/notebooks/fastwoe_softmax.ipynb`.
+- **`special_codes`** (as in optbinning): values of a numerical feature that mean something other than their number, such as `-999` for "no record", are kept out of the binning, so they cannot move the split points, and get a bin of their own with its own WOE, standard error and IV contribution. A list gives one `"Special"` bin in every binned numerical feature; a dict maps features to a list or to `{name: values}` for named bins (`"Special: name"`). Bins are ordered intervals, then special bins, then `"Missing"`; `get_binning_summary()` reports a `special` count. Works with every binning method, conditional WOE and `SoftmaxWoe` (through `binning_kwargs`).
 - **`FastWoe.transform_bins()`**: the bin of every value as the encoder groups it; binned numerical features come back as ordered categoricals in numeric order, then `"Missing"`.
 
 ### Compatibility
@@ -19,6 +20,7 @@
 
 ### Bug Fixes
 
+- **`get_mapping()` dropped the Missing bin of binned numerical features.** The mapping was reindexed to the interval labels only, so the `Missing` row (and its count) disappeared from the table, although `transform()` scored missing values correctly. It is now listed after the intervals.
 - **Fitting on a row subset failed.** With a numpy or list target, `fit()` and `finetune()` gave the target a fresh 0..n-1 index, so after a train/test split (X keeps its original index) binning a numerical feature with missing values raised `IndexingError`. The target is now aligned with X by position, as scikit-learn does.
 
 ## Version 0.1.9 (2026-09-25)

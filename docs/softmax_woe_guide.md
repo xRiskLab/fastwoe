@@ -159,7 +159,7 @@ model.levels_["bureau"]
 # ['(-∞, 478.6]', '(478.6, 572.3]', '(572.3, 625.2]', '(625.2, ∞)', 'Missing']
 ```
 
-Other examples: `{"binning_method": "kbins", "binner_kwargs": {"n_bins": 5}}`, `{"binning_method": "faiss_kmeans", "faiss_kwargs": {"k": 5}}`, `{"monotonic_cst": {"bureau": -1}}`.
+Other examples: `{"special_codes": [-999]}` (a bin of its own for a 'no record' code, kept out of the intervals), `{"binning_method": "kbins", "binner_kwargs": {"n_bins": 5}}`, `{"binning_method": "faiss_kmeans", "faiss_kwargs": {"k": 5}}`, `{"monotonic_cst": {"bureau": -1}}`.
 
 Each node has a coefficient per earlier bin, so fewer, coarser bins mean steadier nodes. Capping the tree is a good default: on a bank case study (24,859 applications, six features) four tree bins per feature gave a lower validation log loss than both the default tree bins and hand-picked cut points.
 
