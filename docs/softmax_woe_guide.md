@@ -197,6 +197,54 @@ model = SoftmaxWoe(binner=EdgesBinner({"bureau": [480, 570, 625], "utilization":
 
 A scikit-learn transformer works as well, for example `KBinsDiscretizer(encode="ordinal")` on numeric columns. Pass either `binner` or `binning_kwargs`, not both. With a custom binner, `binner_` is that fitted binner rather than a FastWoe.
 
+### High-Cardinality Categories
+
+A nominal feature with hundreds of values (postcode, occupation code, merchant) gives each value its own bin, and most of those bins are thin. Grouping the values by their smoothed risk works better than keeping them all, or than grouping only the rare ones. A CatBoost encoder ([`category_encoders.CatBoostEncoder`](https://contrib.scikit-learn.org/category_encoders/catboost.html)) supplies that risk: each value's event rate, shrunk toward the overall rate with strength `a`. The binner below groups those rates into a few bins and leaves the other columns to FastWoe:
+
+```python
+import numpy as np
+from category_encoders import CatBoostEncoder
+from fastwoe import FastWoe, SoftmaxWoe
+
+
+class RiskGroupBinner:
+    """FastWoe bins for most columns; listed nominal columns grouped by smoothed event rate."""
+
+    def __init__(self, nominal, n_groups=8, a=30.0):
+        self.nominal, self.n_groups, self.a = nominal, n_groups, a
+
+    def fit(self, X, y):
+        others = [c for c in X.columns if c not in self.nominal]
+        self.fastwoe_ = FastWoe().fit(X[others], y)
+        values = X[self.nominal].astype(str)
+        self.encoder_ = CatBoostEncoder(cols=self.nominal, a=self.a).fit(values, y)
+        rates = self.encoder_.transform(values)  # without y: full-sample smoothed rates
+        cuts = np.linspace(0, 1, self.n_groups + 1)[1:-1]
+        self.edges_ = {c: np.unique(np.quantile(rates[c], cuts)) for c in self.nominal}
+
+    def transform(self, X):
+        others = [c for c in X.columns if c not in self.nominal]
+        out = self.fastwoe_.transform_bins(X[others])
+        rates = self.encoder_.transform(X[self.nominal].astype(str))
+        for c in self.nominal:
+            out[c] = np.searchsorted(self.edges_[c], rates[c].to_numpy(), side="right")
+        return out[X.columns]
+
+
+model = SoftmaxWoe(binner=RiskGroupBinner(nominal=["postcode"]))
+```
+
+A value unseen at fit gets the overall rate and lands in a middle group. On simulated data with 400 postcodes whose risk depends on 8 hidden regions, validation log loss was:
+
+| Postcode handling | Levels | Log loss |
+|---|---|---|
+| Every postcode its own bin | 400 | 0.406 |
+| `WoePreprocessor` (frequent postcodes kept, rare ones pooled) | 63 | 0.387 |
+| Grouped by smoothed risk, 8 groups, `a=30` | 7 | **0.380** |
+| True model | | 0.368 |
+
+Use it only for unordered categories. For ordered features (a bureau score, income, age) the tree bins are much better, because they pool neighboring values, where risk-grouping treats each distinct value as its own category with a thin, noisy rate. On the bank case study, risk-grouping the numeric features gave 0.208 to 0.234 against 0.187 with FastWoe's tree bins.
+
 ## Inspecting a Node
 
 `node_proba` returns, for each row, the probability of its bin at that feature's node in each class. The log of their ratio is the feature's weight:
