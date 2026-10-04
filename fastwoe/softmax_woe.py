@@ -40,6 +40,7 @@ from typing import Any, Optional, Protocol, Union, runtime_checkable
 
 import numpy as np
 import pandas as pd
+from scipy.special import logsumexp
 from scipy.stats import norm
 from sklearn.base import BaseEstimator, ClassifierMixin, TransformerMixin, clone
 from sklearn.linear_model import LogisticRegression
@@ -70,12 +71,18 @@ class Binner(Protocol):
 
 
 class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
-    """Conditional WOE by hierarchical softmax (binary targets, categorical features).
+    """Conditional WOE by hierarchical softmax (binary or multiclass targets).
 
     SoftmaxWoe is a generative classifier: per class, an autoregressive chain of
     penalized multinomial logistic regressions, fitted by maximum likelihood of the
     features given the class; its per-feature weights are Good's conditional
     weights of evidence under that model and sum exactly to the posterior log-odds.
+
+    A binary target is coded 0/1 (1 = event). With three or more classes (any
+    labels) there is one chain per class and the class probabilities are a
+    softmax over classes of log P(class) + log P(x | class); transform() gives
+    each feature's contribution to each class's softmax score, or one-vs-rest
+    weights (``against="rest"``), or weights against one class (``against=j``).
 
     Parameters
     ----------
@@ -127,9 +134,13 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
     levels_ : dict
         Bins of each feature, in the order the chain uses them.
     class_counts_ : dict
-        Training rows per class, {1: events, 0: non-events}.
+        Training rows per class label.
     classes_ : ndarray
-        The class labels, [0, 1].
+        The class labels, sorted ([0, 1] for a binary target).
+    class_log_prior_ : ndarray
+        Log share of each class in the training data, in classes_ order.
+    prior_log_odds_ : float
+        Binary targets: log-odds of the event in the training data.
 
     Notes on scikit-learn: SoftmaxWoe is a scikit-learn estimator, so it works
     with ``clone``, ``GridSearchCV`` (for example over ``C``), ``cross_val_score``
@@ -181,6 +192,11 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
     # ------------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------------
+
+    @property
+    def _multiclass(self) -> bool:
+        """Whether the target has three or more classes."""
+        return len(self.classes_) > 2
 
     @staticmethod
     def _as_frame(X: Union[pd.DataFrame, np.ndarray]) -> pd.DataFrame:
@@ -298,9 +314,15 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
         """
         self._check_params()
         raw = self._as_frame(X)
-        target = np.asarray(y)
-        if not set(np.unique(target)) <= {0, 1} or len(np.unique(target)) != 2:
-            raise ValueError("SoftmaxWoe needs a binary (0/1) target with both classes present")
+        labels, target = np.unique(np.asarray(y), return_inverse=True)
+        target = target.ravel()
+        if len(labels) < 2:
+            raise ValueError("SoftmaxWoe needs at least two classes in the target")
+        if len(labels) == 2 and not set(labels.tolist()) <= {0, 1}:
+            raise ValueError(
+                "SoftmaxWoe needs a binary target coded 0/1 (1 = event); "
+                f"got {labels.tolist()}. Three or more classes may have any labels."
+            )
         order = list(raw.columns) if self.order is None else [str(c) for c in self.order]
         if len(set(order)) != len(order) or set(order) != set(raw.columns):
             raise ValueError(
@@ -309,7 +331,8 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
             )
 
         self.order_ = order
-        self.classes_ = np.array([0, 1])
+        # classes are indexed 0..K-1 internally; for a 0/1 target index and label coincide
+        self.classes_ = labels
         self.n_features_in_ = raw.shape[1]
         self._fit_binner(raw[order], target)
         binned = self._bins(raw[order], order)
@@ -334,9 +357,11 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
         self._index = {
             f: {v: k for k, v in enumerate(levels)} for f, levels in self.levels_.items()
         }
-        n_bad, n_good = int(target.sum()), int(len(target) - target.sum())
-        self.prior_log_odds_ = float(np.log(n_bad / n_good))
-        self.class_counts_ = {1: n_bad, 0: n_good}
+        self._counts = np.bincount(target, minlength=len(labels))
+        self.class_counts_ = {label: int(c) for label, c in zip(labels.tolist(), self._counts)}
+        self.class_log_prior_ = np.log(self._counts / self._counts.sum())
+        if not self._multiclass:
+            self.prior_log_odds_ = float(np.log(self._counts[1] / self._counts[0]))
         codes = {f: self._codes(frame[f], f) for f in order}
         # kept to compute standard errors on demand; covariances are cached on first use
         self._fit_codes, self._fit_target = codes, target
@@ -345,7 +370,7 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
         self.nodes_: dict[tuple[str, int], Any] = {}
         for i, f in enumerate(order):
             n_levels = len(self.levels_[f])
-            for cls in (1, 0):
+            for cls in range(len(labels)):
                 rows = target == cls
                 node_codes = codes[f][rows]
                 if i == 0 or len(np.unique(node_codes)) < 2:
@@ -467,7 +492,7 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
         """
         feature = self.order_[i]
         node = self.nodes_[(feature, cls)]
-        n_class = self.class_counts_[cls]
+        n_class = int(self._counts[cls])
         if isinstance(node, np.ndarray):
             k = codes[feature]
             known = k >= 0
@@ -512,7 +537,114 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
         se: np.ndarray = np.sqrt(np.column_stack(var))
         return se
 
-    def transform(self, X: Union[pd.DataFrame, np.ndarray], output: str = "woe") -> pd.DataFrame:
+    def _class_log_probs(
+        self, frame: pd.DataFrame, codes: dict[str, np.ndarray], n: int
+    ) -> list[np.ndarray]:
+        """The log P(bin | earlier bins, class) of each row: a rows x classes array per feature.
+
+        A bin unseen at fit gets 0 in every class, so it carries no evidence;
+        unseen_counts_ records it and the unseen policy is applied.
+        """
+        rows = np.arange(n)
+        self.unseen_counts_: dict[str, dict[Any, int]] = {}
+        out = []
+        for i, f in enumerate(self.order_):
+            known = codes[f] >= 0
+            if not known.all():
+                self.unseen_counts_[f] = dict(Counter(frame[f][~known]))
+            bins = np.where(known, codes[f], 0)
+            logp = np.column_stack(
+                [
+                    np.log(self._node_probs(i, cls, codes, n)[rows, bins])
+                    for cls in range(len(self.classes_))
+                ]
+            )
+            out.append(np.where(known[:, None], logp, 0.0))
+        self._handle_unseen(n)
+        return out
+
+    def _against_index(self, against: Any) -> Union[int, str, None]:
+        """Class index of ``against``; None for softmax contributions, "rest" for one-vs-rest."""
+        if against is None:
+            return None
+        labels = self.classes_.tolist()
+        if isinstance(against, str) and against == "rest":
+            if "rest" in labels:
+                raise ValueError(
+                    "against='rest' is ambiguous: a class is named 'rest'; relabel it to ask "
+                    "for one-vs-rest weights"
+                )
+            return "rest"
+        matches = np.flatnonzero(self.classes_ == against)
+        if len(matches) != 1:
+            raise ValueError(f"against must be 'rest' or one of {labels}, got {against!r}")
+        return int(matches[0])
+
+    def _multiclass_frame(
+        self, X: Union[pd.DataFrame, np.ndarray], values: np.ndarray, classes: list[int]
+    ) -> pd.DataFrame:
+        """Rows x (feature, class) values as a DataFrame with FastWoe's {feature}_class_{k} columns."""
+        columns, data = [], []
+        position = {f: i for i, f in enumerate(self.order_)}
+        for f in [c for c in self._as_frame(X).columns if c in position]:
+            for c in classes:
+                columns.append(f"{f}_class_{self.classes_[c]}")
+                data.append(values[:, position[f], c])
+        index = self._as_frame(X).index
+        frame: pd.DataFrame = pd.DataFrame(np.column_stack(data), index=index, columns=columns)
+        return frame
+
+    def _transform_multiclass(
+        self, X: Union[pd.DataFrame, np.ndarray], output: str, against: Any
+    ) -> pd.DataFrame:
+        """Multiclass weights: softmax contributions, one-vs-rest, or against one class."""
+        frame, codes = self._prepare(X, self.order_)
+        n, k_classes = len(frame), len(self.classes_)
+        ref = self._against_index(against)
+        classes = [c for c in range(k_classes) if c != ref]
+        if output == "se":
+            if ref == "rest":
+                raise NotImplementedError(
+                    "standard errors of one-vs-rest weights are not available (the mixture "
+                    "weights depend on the earlier features' estimates); use the default "
+                    "softmax contributions or against=<class>, or predict_ci()"
+                )
+            self._class_log_probs(frame, codes, n)  # applies the unseen policy
+            var = np.stack(
+                [
+                    np.column_stack(
+                        [self._log_prob_variance(i, c, codes, n) for c in range(k_classes)]
+                    )
+                    for i in range(len(self.order_))
+                ],
+                axis=1,
+            )  # rows x features x classes
+            if ref is None:  # centered contributions: (1 - 2/K) V_k + sum_j V_j / K^2
+                k = k_classes
+                se = np.sqrt((1 - 2 / k) * var + var.sum(axis=2, keepdims=True) / k**2)
+            else:
+                se = np.sqrt(var + var[:, :, [ref]])
+            return self._multiclass_frame(X, se, classes)
+        logp = np.stack(self._class_log_probs(frame, codes, n), axis=1)  # rows x features x classes
+        if ref is None:  # each feature's contribution to each class's softmax score
+            return self._multiclass_frame(X, logp - logp.mean(axis=2, keepdims=True), classes)
+        if isinstance(ref, int):
+            return self._multiclass_frame(X, logp - logp[:, :, [ref]], classes)
+        # one-vs-rest: "not k" is a mixture of the other classes, weighted by their
+        # prior times the evidence so far (Good's weighted average of factors)
+        before = self.class_log_prior_ + np.cumsum(logp, axis=1) - logp  # log pi_c P(x_<i | c)
+        weights = np.empty_like(logp)
+        for k in range(k_classes):
+            rest = [c for c in range(k_classes) if c != k]
+            log_rest_i = logsumexp(before[:, :, rest] + logp[:, :, rest], axis=2) - logsumexp(
+                before[:, :, rest], axis=2
+            )
+            weights[:, :, k] = logp[:, :, k] - log_rest_i
+        return self._multiclass_frame(X, weights, classes)
+
+    def transform(
+        self, X: Union[pd.DataFrame, np.ndarray], output: str = "woe", against: Any = None
+    ) -> pd.DataFrame:
         """Per-feature weights, or their standard errors, one column per feature of X.
 
         Parameters
@@ -524,28 +656,48 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
             the log-odds of the positive class. "se": the delta-method standard
             error of each weight, from the event and non-event nodes, which are
             fitted on separate rows.
+        against : None, "rest" or a class label, optional
+            Multiclass targets only; columns are ``{feature}_class_{k}``.
+            None (default): each feature's contribution to each class's softmax
+            score, log P(bin | earlier bins, k) centered over the classes, so
+            softmax over k of class_log_prior_[k] plus the row sum over class
+            k's columns is predict_proba. "rest": one-vs-rest weights, where
+            "not k" is the mixture of the other classes weighted by their prior
+            times the evidence of the earlier features; class k's prior odds
+            plus its row sum is its posterior log-odds against the rest. A
+            class label j: each other class's weight against j,
+            log P(bin | earlier bins, k) - log P(... | j). Standard errors are
+            available for the default and for a class label, not for "rest".
         """
         if output not in ("woe", "se"):
             raise ValueError(f"output must be 'woe' or 'se', got {output!r}")
+        if self._multiclass_target_fitted():
+            return self._transform_multiclass(X, output, against)
+        if against is not None:
+            raise ValueError("against is for targets with three or more classes")
         frame, codes = self._prepare(X, self.order_)
         n = len(frame)
-        rows = np.arange(n)
-        weights = np.zeros((n, len(self.order_)))
-        self.unseen_counts_: dict[str, dict[Any, int]] = {}
-        for i, f in enumerate(self.order_):
-            known = codes[f] >= 0
-            if not known.all():
-                self.unseen_counts_[f] = dict(Counter(frame[f][~known]))
-            bins = np.where(known, codes[f], 0)
-            p_bad = self._node_probs(i, 1, codes, n)[rows, bins]
-            p_good = self._node_probs(i, 0, codes, n)[rows, bins]
-            weights[:, i] = np.where(known, np.log(p_bad) - np.log(p_good), 0.0)
-        self._handle_unseen(n)
+        logp = self._class_log_probs(frame, codes, n)
+        weights = np.column_stack([lp[:, 1] - lp[:, 0] for lp in logp])
         if output == "se":
             weights = self._weight_se(codes, n)
         out = pd.DataFrame(weights, index=frame.index, columns=self.order_)
         ordered: pd.DataFrame = out[[c for c in self._as_frame(X).columns if c in self.order_]]
         return ordered
+
+    def _multiclass_target_fitted(self) -> bool:
+        """Fitted on three or more classes (raises if not fitted)."""
+        if not hasattr(self, "nodes_"):
+            raise ValueError("SoftmaxWoe must be fitted first")
+        return self._multiclass
+
+    def _class_scores(self, X: Union[pd.DataFrame, np.ndarray]) -> tuple[np.ndarray, Any, int]:
+        """The score log P(class) + log P(x | class) of every row and class, with the bin codes."""
+        frame, codes = self._prepare(X, self.order_)
+        n = len(frame)
+        logp = self._class_log_probs(frame, codes, n)
+        scores: np.ndarray = self.class_log_prior_ + np.sum(logp, axis=0)
+        return scores, codes, n
 
     def _handle_unseen(self, n_rows: int) -> None:
         """Handle unseen categories according to the unseen policy."""
@@ -564,13 +716,25 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
         warnings.warn(msg, UserWarning, stacklevel=3)
 
     def predict_proba(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
-        """Probabilities [P(0), P(1)] from the prior plus the summed weights."""
+        """Class probabilities, one column per class in classes_; rows sum to 1.
+
+        Binary: [P(0), P(1)] from the prior plus the summed weights. Multiclass:
+        a softmax over classes of log P(class) + sum of log P(bin | earlier
+        bins, class), Bayes' rule with each class's fitted chain.
+        """
+        if self._multiclass_target_fitted():
+            scores = self._class_scores(X)[0]
+            proba: np.ndarray = np.exp(scores - logsumexp(scores, axis=1, keepdims=True))
+            return proba
         log_odds = self.prior_log_odds_ + self.transform(X).to_numpy().sum(axis=1)
         p = 1.0 / (1.0 + np.exp(-log_odds))
         return np.column_stack([1.0 - p, p])
 
     def predict(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
-        """Class labels: 1 where P(y=1) >= 0.5, else 0."""
+        """Class labels: the most probable class (binary: 1 where P(y=1) >= 0.5)."""
+        if self._multiclass_target_fitted():
+            predicted: np.ndarray = self.classes_[self.predict_proba(X).argmax(axis=1)]
+            return predicted
         labels: np.ndarray = (self.predict_proba(X)[:, 1] >= 0.5).astype(int)
         return labels
 
@@ -589,10 +753,12 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
         """
         if not 0 < alpha < 1:
             raise ValueError("alpha must be between 0 and 1")
+        if self._multiclass_target_fitted():
+            return self._predict_ci_multiclass(X, alpha)
         frame, codes = self._prepare(X, self.order_)
         n = len(frame)
         score = self.prior_log_odds_ + self.transform(X).to_numpy().sum(axis=1)
-        prior_var = 1 / self.class_counts_[1] + 1 / self.class_counts_[0]
+        prior_var = 1 / self._counts[1] + 1 / self._counts[0]
         se = np.sqrt(prior_var + (self._weight_se(codes, n) ** 2).sum(axis=1))
         z = norm.ppf(1 - alpha / 2)
         bounds: np.ndarray = 1.0 / (
@@ -600,12 +766,49 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
         )
         return bounds
 
+    def _predict_ci_multiclass(
+        self, X: Union[pd.DataFrame, np.ndarray], alpha: float
+    ) -> np.ndarray:
+        """Per-class intervals for P(class | x): columns lower_0, upper_0, lower_1, ...
+
+        Each class's score is log P(class) + log P(x | class); classes' chains are
+        fitted on separate rows and nodes are asymptotically independent, so the
+        scores' variances are the sums of their node variances. The log-odds of
+        class k against the rest, S_k - logsumexp_(j != k) S_j, gets its variance
+        by the delta method: Var(S_k) + sum_j w_j^2 Var(S_j), with w_j class j's
+        share of the rest, plus the class priors' 1/n_k + sum_j w_j^2 / n_j.
+        """
+        scores, codes, n = self._class_scores(X)
+        k_classes = len(self.classes_)
+        var = np.column_stack(
+            [
+                np.sum(
+                    [self._log_prob_variance(i, c, codes, n) for i in range(len(self.order_))],
+                    axis=0,
+                )
+                for c in range(k_classes)
+            ]
+        )
+        z = norm.ppf(1 - alpha / 2)
+        out = np.empty((n, 2 * k_classes))
+        for k in range(k_classes):
+            rest = [c for c in range(k_classes) if c != k]
+            log_rest = logsumexp(scores[:, rest], axis=1)
+            w = np.exp(scores[:, rest] - log_rest[:, None])
+            logit = scores[:, k] - log_rest
+            v = var[:, k] + (w**2 * var[:, rest]).sum(axis=1)
+            v += 1 / self._counts[k] + (w**2 / self._counts[rest]).sum(axis=1)
+            se = np.sqrt(v)
+            out[:, 2 * k] = 1 / (1 + np.exp(-(logit - z * se)))
+            out[:, 2 * k + 1] = 1 / (1 + np.exp(-(logit + z * se)))
+        return out
+
     def node_proba(self, X: Union[pd.DataFrame, np.ndarray], feature: str) -> pd.DataFrame:
         """Probability of each row's bin of ``feature`` at its node, in each class.
 
         Columns ``p_event`` = P(bin | earlier bins, y=1) and ``p_nonevent`` =
         P(bin | earlier bins, y=0); the log of their ratio is the feature's
-        weight in transform(). X needs ``feature`` and every feature before it
+        weight in transform(). Multiclass: one column ``p_class_{k}`` per class. X needs ``feature`` and every feature before it
         in ``order_``. A bin not seen at fit gives NaN.
         """
         if not hasattr(self, "nodes_"):
@@ -618,9 +821,14 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
         known = codes[feature] >= 0
         bins = np.where(known, codes[feature], 0)
         rows = np.arange(n)
+        names = (
+            [(f"p_class_{label}", c) for c, label in enumerate(self.classes_)]
+            if self._multiclass
+            else [("p_event", 1), ("p_nonevent", 0)]
+        )
         out = {
             name: np.where(known, self._node_probs(i, cls, codes, n)[rows, bins], np.nan)
-            for name, cls in (("p_event", 1), ("p_nonevent", 0))
+            for name, cls in names
         }
         probs: pd.DataFrame = pd.DataFrame(out, index=frame.index)
         return probs

@@ -49,6 +49,8 @@ class MulticlassWoeMixin:
     transform: Any  # Method defined in FastWoe
     predict_proba: Any  # Method defined in FastWoe
     predict_ci: Any  # Method defined in FastWoe
+    _apply_binning_to_column: Any  # Method defined in FastWoe
+    _ensure_dataframe: Any  # Method defined in FastWoe
 
     def _detect_multiclass_target(self, y: Union[pd.Series, np.ndarray]) -> bool:
         """Detect if target is multiclass.
@@ -443,8 +445,11 @@ class MulticlassWoeMixin:
                     log_posterior_odds = class_woe + log_prior
                     woe_scores[:, i] = log_posterior_odds
 
-            # Convert to probabilities and return
-            result = sigmoid(woe_scores)
+            # Each column is a one-vs-rest probability; they need not sum to 1, so
+            # normalize each row, as scikit-learn's OneVsRestClassifier does.
+            # The ranking within a row, and so predict(), is unchanged.
+            one_vs_rest = sigmoid(woe_scores)
+            result = one_vs_rest / one_vs_rest.sum(axis=1, keepdims=True)
         else:
             # Binary case
             if self.y_prior_ is None:
@@ -472,6 +477,12 @@ class MulticlassWoeMixin:
             n_classes = len(self.classes_)
             z_crit = norm.ppf(1 - alpha / 2)
 
+            # Bin numerical features as at fit, so standard errors are looked up by bin
+            X_binned = self._ensure_dataframe(X, use_fitted_names=True).copy()
+            for col in X_binned.columns:
+                if col in self.binners_:
+                    X_binned[col] = self._apply_binning_to_column(X_binned, col)
+
             # Initialize arrays for each class
             ci_lower = np.zeros((n_samples, n_classes))
             ci_upper = np.zeros((n_samples, n_classes))
@@ -482,46 +493,22 @@ class MulticlassWoeMixin:
                 ]:
                     class_woe = X_woe[class_cols].sum(axis=1)
 
-                    # Calculate WOE standard error using proper delta method
-                    # For multiclass, we need to calculate SE for each sample individually
-                    woe_se_array = np.zeros(n_samples)
-
-                    for i in range(n_samples):
-                        sample_se_squared = 0.0
-
-                        for col in class_cols:
-                            # Extract original feature name (remove _class_X suffix)
-                            orig_feature = col.rsplit("_class_", 1)[0]
-
-                            # Get the mapping for this feature and class
-                            if (
-                                orig_feature in self.mappings_
-                                and class_label in self.mappings_[orig_feature]
-                            ):
-                                feature_mappings = self.mappings_[orig_feature]
-                                if not isinstance(feature_mappings, dict):
-                                    continue
-                                mapping = feature_mappings[class_label]
-                                if not isinstance(mapping, pd.DataFrame):
-                                    continue
-
-                                # Get the category value for this sample
-                                # Ensure X is a DataFrame
-                                if not isinstance(X, pd.DataFrame):
-                                    X = pd.DataFrame(X)
-                                cat_value = X[orig_feature].iloc[i]
-
-                                # Look up WOE standard error in mapping
-                                se_by_category = mapping["woe_se"]
-                                if cat_value in se_by_category.index:
-                                    woe_se_feature = float(se_by_category[cat_value])
-                                else:
-                                    # For unseen categories, use the average SE
-                                    woe_se_feature = float(se_by_category.mean())
-
-                                sample_se_squared += woe_se_feature**2
-
-                        woe_se_array[i] = np.sqrt(sample_se_squared)
+                    # Var(sum of WOEs) = sum of each feature's WOE variance, looked up
+                    # by the row's bin (numerical features binned as at fit)
+                    se_squared = np.zeros(n_samples)
+                    for col in class_cols:
+                        orig_feature = col.rsplit("_class_", 1)[0]
+                        feature_mappings = self.mappings_.get(orig_feature)
+                        if not isinstance(feature_mappings, dict):
+                            continue
+                        mapping = feature_mappings.get(class_label)
+                        if not isinstance(mapping, pd.DataFrame):
+                            continue
+                        se_map = mapping["woe_se"].to_dict()
+                        fallback = float(mapping["woe_se"].mean())  # unseen categories
+                        se = X_binned[orig_feature].map(se_map).fillna(fallback).to_numpy()
+                        se_squared += se.astype(float) ** 2
+                    woe_se_array = np.sqrt(se_squared)
 
                     # Calculate confidence intervals using per-sample standard errors
                     woe_score_lower = class_woe - z_crit * woe_se_array

@@ -1,5 +1,18 @@
 # Changelog
 
+## Version 0.3.0 (2026-10-04)
+
+**Multiclass SoftmaxWoe; multiclass probability fixes**
+
+### New Features
+
+- **Multiclass `SoftmaxWoe`.** With three or more classes (any labels) there is one chain per class; `predict_proba` is Bayes' rule, a softmax over classes of log P(class) + log P(x | class), so rows sum to 1, and `predict` returns the most probable label. `transform()` gives, in columns `{feature}_class_{k}`, each feature's contribution to each class's softmax score (log P(bin | earlier bins, k) centered over the classes, as a multinomial logistic regression reports coefficients), with standard errors; `against="rest"` gives one-vs-rest weights, where "not k" is the mixture of the other classes weighted by their prior times the evidence so far (Good's weighted average of factors); `against=label` gives weights against one class. All three add up exactly to the probabilities. Standard errors for the contributions and for weights against a class (`output="se"`), and per-class intervals from `predict_ci` (delta method through the softmax, with the class priors' multinomial variance) covered the truth about 95% of the time in simulation. `node_proba` has a column per class. New attribute `class_log_prior_` (log share of each class); `class_counts_` is keyed by class label, and `prior_log_odds_` is set for binary targets only. Binary targets behave as before; a two-class target must be coded 0/1. Notebook: `examples/notebooks/fastwoe_softmax_multi.ipynb`, the binary notebook's walkthrough for three classes.
+
+### Bug Fixes
+
+- **Multiclass probabilities did not sum to 1.** `predict_proba()` returned each class's one-vs-rest probability unnormalized, so rows summed to anywhere around 1 (0.96 to 1.07 in a test), although the README promised otherwise. Each row is now divided by its total, as scikit-learn's `OneVsRestClassifier` does; `predict()` is unchanged, since normalizing keeps each row's ranking.
+- **Multiclass intervals ignored the bins.** `predict_ci()` looked up each feature's WOE standard error by the row's raw value, so a binned numerical feature never matched a bin and every row got the feature's average standard error. Rows are now binned first, as in the binary case, and the lookup is vectorized.
+
 ## Version 0.2.0 (2026-10-02)
 
 **Softmax WOE, scikit-learn 1.8 and pandas 3**

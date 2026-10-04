@@ -218,7 +218,7 @@ print(classification_report(y, predictions))
 
 - **One-vs-Rest Encoding**: Each class gets separate WOE scores against all others
 - **Class-Specific Methods**: `predict_proba_class()` and `predict_ci_class()` for individual classes
-- **Softmax Probabilities**: `predict_proba()` returns probabilities that sum to 1 across classes
+- **Normalized Probabilities**: `predict_proba()` divides each class's one-vs-rest probability by the row's total, so the classes sum to 1 (as scikit-learn's `OneVsRestClassifier` does); `predict_ci()` gives one-vs-rest intervals per class
 - **Comprehensive Statistics**: All existing methods work with multiclass (IV analysis, feature stats, etc.)
 - **String Labels**: Supports both integer and string class labels
 
@@ -410,6 +410,7 @@ model.predict_ci(X)               # interval for P(y=1)
 model.node_proba(X, "card")       # P(bin | earlier bins) among events and among non-events
 ```
 
+- Multiclass targets: one chain per class, probabilities by Bayes' rule (they sum to 1), each feature's contribution to each class's softmax score by default, one-vs-rest weights (`against="rest"`) or weights against one class (`against=label`), with standard errors and intervals per class.
 - `C` shrinks every node toward marginal WOE; choose it by cross-validation (`GridSearchCV` works, as do `clone`, `cross_val_score` and `Pipeline`).
 - `order` sets which features each weight is conditioned on. It moves evidence between features a lot and changes the score a little; choose it deliberately when the weights are used as reason codes.
 - Bins come from FastWoe by default (`binning_kwargs=` passes its options), or from any object with `fit(X, y)` and `transform(X)` passed as `binner=`, such as cut points taken from a gradient-boosting model.
@@ -423,7 +424,7 @@ On a bank case study (24,859 applications, six correlated features, the same Fas
 | Logistic regression on marginal WOE | 0.189 |
 | `SoftmaxWoe` | 0.187 |
 
-`SoftmaxWoe` matches the calibrated scorecard without a second fitting step, and its weights stay conditional weights of evidence that add up to the score. Guide: [`docs/softmax_woe_guide.md`](docs/softmax_woe_guide.md); notebook, including the method written out in plain scikit-learn: [`examples/notebooks/fastwoe_softmax.ipynb`](examples/notebooks/fastwoe_softmax.ipynb).
+`SoftmaxWoe` matches the calibrated scorecard without a second fitting step, and its weights stay conditional weights of evidence that add up to the score. Guide: [`docs/softmax_woe_guide.md`](docs/softmax_woe_guide.md); notebook, including the method written out in plain scikit-learn: [`examples/notebooks/fastwoe_softmax.ipynb`](examples/notebooks/fastwoe_softmax.ipynb); for three classes: [`examples/notebooks/fastwoe_softmax_multi.ipynb`](examples/notebooks/fastwoe_softmax_multi.ipynb).
 
 ### Numerical Feature Binning
 
@@ -635,6 +636,7 @@ For a complete example, see [examples/scripts/fastwoe_monotonic.py](examples/scr
 - `fit(X, y)`, `transform(X, output="woe" | "se")`, `fit_transform(X, y)`
 - `predict_proba(X)`, `predict(X)`, `predict_ci(X, alpha)`
 - `node_proba(X, feature)`: class probabilities of each row's bin at that feature's node
+- `transform(X, against=None | "rest" | label)`: multiclass softmax contributions (default), one-vs-rest weights, or weights against one class
 
 ### WoePreprocessor Class
 

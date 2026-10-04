@@ -340,6 +340,43 @@ The curve is usually flat over a wide range of `C`, as here, and only clearly wo
 
 The penalty is applied to one coefficient row per bin. Where a node has only two bins, scikit-learn fits a single logit instead, and SoftmaxWoe fits it at `2C` so that two-bin nodes are shrunk exactly like the rest.
 
+## Multiclass Targets
+
+With three or more classes (any labels), SoftmaxWoe fits one chain per class and gets the class probabilities from Bayes' rule, a softmax over classes:
+
+$$P(k \mid x) \propto P(k) \prod_i P(x_i \mid x_{<i}, k)$$
+
+so they sum to 1 by construction. `predict` returns the most probable label, and `node_proba` has one column `p_class_{k}` per class.
+
+```python
+model = SoftmaxWoe(order=["bureau", "utilization", "card"]).fit(X, y)   # y: "low", "mid", "high"
+model.predict_proba(X)                 # one column per class in model.classes_
+model.transform(X)                     # contributions to each class's score: bureau_class_high, ...
+model.transform(X, output="se")        # their standard errors
+model.transform(X, against="rest")     # one-vs-rest weights
+model.transform(X, against="low")      # each other class against "low"
+model.predict_ci(X)                    # lower_k, upper_k for each class
+```
+
+The weights come in three flavors, and all add up exactly:
+
+- **Softmax contributions** (the default): each feature's contribution to each class's score, $c_{ik} = \log P(x_i \mid x_{<i}, k)$ centered over the classes, as a multinomial logistic regression reports its coefficients. They sum to zero over the classes, and $P(k \mid x)$ is the softmax over $k$ of $\log P(k) + \sum_i c_{ik}$ (centering shifts every class alike, which the softmax ignores). They read "this feature raises class $k$'s score by $c$ relative to the average class". Standard errors: $(1 - 2/K)\,V_{ik} + \frac{1}{K^2}\sum_j V_{ij}$, with $V$ the node variances of the separately fitted class chains.
+- **Against one class** (`against=j`): $\log P(x_i \mid x_{<i}, k) - \log P(x_i \mid x_{<i}, j)$. Added over features to $\log P(k)/P(j)$, they give $\log P(k \mid x)/P(j \mid x)$. Their standard errors add the two classes' node variances, since the chains are fitted on separate rows.
+- **One-vs-rest** (`against="rest"`, the meaning of FastWoe's multiclass columns): "not $k$" is a composite hypothesis, the mixture of the other classes. Its probability for the next feature is a weighted average of theirs, $\sum_{j \ne k} w_j P(x_i \mid x_{<i}, j)$, with $w_j \propto P(j)\, P(x_{<i} \mid j)$: each other class weighted by its prior times the evidence so far (Good's "weighted average of factors"). Added to the prior log-odds of $k$, the weights give its posterior log-odds against the rest. Per-feature standard errors are not available for these (the mixture weights depend on the earlier features' estimates); `predict_ci` gives intervals for the probabilities.
+
+Summing *marginal* one-vs-rest WOE, as `FastWoe` does for multiclass targets, is approximate twice over: shared signal is counted once per feature, and even features independent within every class are not independent within "not $k$", which is a mixture. On simulated data with three classes whose features depend on each other differently by class, test log loss was:
+
+| Model | Log loss |
+|---|---|
+| True posterior | 0.7518 |
+| SoftmaxWoe | **0.7529** |
+| Multinomial logistic regression on one-hot features | 0.9288 |
+| FastWoe, one-vs-rest WOE | 0.9339 |
+
+A worked example, with the whole method written out in plain scikit-learn for three classes, is in [`examples/notebooks/fastwoe_softmax_multi.ipynb`](../examples/notebooks/fastwoe_softmax_multi.ipynb).
+
+In the same setting, 95% intervals covered the truth about 95% of the time: 94.7 to 95.0% for the softmax contributions, 94.6 to 94.9% for weights against one class, and 94.9 to 95.5% for the class probabilities from `predict_ci`.
+
 ## Order
 
 `order` fixes which features each weight is conditioned on. The first feature gets its marginal weight; each later one gets what it adds given the earlier ones. Reversing the order moves the evidence between features:
@@ -354,7 +391,7 @@ Unlike counted conditional WOE, where every order lands in the same cell and onl
 
 ## Notes
 
-- **Binary targets only.** The target must be 0/1 with both classes present.
+- **Targets.** A binary target is coded 0/1, with 1 the event; three or more classes may have any labels (see Multiclass Targets).
 - **Unseen categories** at transform get weight 0 and a warning (`unseen="warn"`); `unseen="prior"` does the same silently and `unseen="raise"` fails. Numerical values always fall into a bin.
 - **One-class bins.** In a bin that holds only one class, marginal WOE is extreme (FastWoe's smoothing is tiny). The first node's 0.5 pseudo-count (`root_pseudo_count`) tempers it.
 - **Monotonic constraints** shape the bins, so they hold for marginal WOE and for the first feature in `order`. The node models are not constrained, so a later feature's conditional weights need not be monotone. Put a constrained feature first if that matters.
@@ -380,9 +417,10 @@ Unlike counted conditional WOE, where every order lands in the same cell and onl
 |---|---|
 | `order_` | Conditioning order used |
 | `levels_` | Bins of each feature, in the order the chain uses them |
-| `prior_log_odds_` | Log-odds of the event in the training data |
+| `prior_log_odds_` | Binary targets: log-odds of the event in the training data |
+| `class_log_prior_` | Log share of each class in the training data |
 | `class_counts_` | Training rows per class, `{1: events, 0: non-events}` |
-| `classes_` | The class labels, `[0, 1]` |
+| `classes_` | The class labels, sorted (`[0, 1]` for a binary target) |
 | `nodes_` | Node models keyed by `(feature, class)`: bin shares for the first node, `LogisticRegression` after |
 | `binner_` | The fitted binner: a FastWoe by default, otherwise a clone of the one passed |
 
