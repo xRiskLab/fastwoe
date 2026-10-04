@@ -516,3 +516,113 @@ def test_covariances_computed_on_demand(data):
     se = m.transform(X, output="se")
     assert len(m._node_cov) == len(m._node_C) > 0
     pd.testing.assert_frame_equal(se, m.transform(X, output="se"))
+
+
+@pytest.fixture
+def three_class():
+    """Three classes whose features depend on each other differently in each class."""
+    rng = np.random.default_rng(5)
+    n = 9000
+    y = rng.choice(["low", "mid", "high"], n, p=[0.5, 0.3, 0.2])
+    k = pd.Series(y).map({"low": 0, "mid": 1, "high": 2}).to_numpy()
+    a = np.array(list("pqr"))[(rng.integers(0, 3, n) + k) % 3]
+    b = np.where(rng.random(n) < np.where(a == "p", 0.7, 0.3) - 0.2 * (k == 2), "u", "v")
+    c = np.array(list("xyz"))[(rng.integers(0, 2, n) + (b == "u") * k) % 3]
+    return pd.DataFrame({"a": a, "b": b, "c": c}), y
+
+
+def test_multiclass_probabilities_and_exact_weights(three_class):
+    """Rows sum to 1; one-vs-rest and against-one-class weights add up to the log-odds exactly."""
+    from scipy.special import logit
+
+    X, y = three_class
+    m = SoftmaxWoe(order=["a", "b", "c"]).fit(X, y)
+    assert m.classes_.tolist() == ["high", "low", "mid"]
+    proba = m.predict_proba(X)
+    np.testing.assert_allclose(proba.sum(axis=1), 1.0)
+    assert (m.predict(X) == m.classes_[proba.argmax(axis=1)]).all()
+    prior_log_odds = m.class_log_prior_ - np.log1p(-np.exp(m.class_log_prior_))
+    ovr = m.transform(X)
+    assert list(ovr.columns[:3]) == ["a_class_high", "a_class_low", "a_class_mid"]
+    for j, label in enumerate(m.classes_):
+        total = prior_log_odds[j] + ovr.filter(like=f"_class_{label}").sum(axis=1)
+        np.testing.assert_allclose(total, logit(proba[:, j]), atol=1e-9)
+    vs_low = m.transform(X, against="low")
+    assert not any(col.endswith("_class_low") for col in vs_low.columns)
+    for j, label in enumerate(m.classes_):
+        if label == "low":
+            continue
+        total = m.class_log_prior_[j] - m.class_log_prior_[1]
+        total = total + vs_low.filter(like=f"_class_{label}").sum(axis=1)
+        np.testing.assert_allclose(total, np.log(proba[:, j] / proba[:, 1]), atol=1e-9)
+
+
+def test_multiclass_limits(three_class):
+    """C -> 0 is naive Bayes per class; with two features and large C, the cell frequencies."""
+    from scipy.special import logsumexp
+
+    X, y = three_class
+    m = SoftmaxWoe(C=1e-9).fit(X, y)
+    scores = np.tile(m.class_log_prior_, (len(X), 1))
+    for j, label in enumerate(m.classes_):
+        rows = X[y == label]
+        for f in X.columns:
+            share = rows[f].value_counts().reindex(m.levels_[f], fill_value=0) + 0.5
+            scores[:, j] += np.log((share / share.sum()).loc[X[f]].to_numpy())
+    naive = np.exp(scores - logsumexp(scores, axis=1, keepdims=True))
+    np.testing.assert_allclose(m.predict_proba(X), naive, atol=1e-3)
+    two = X[["a", "b"]]
+    saturated = SoftmaxWoe(C=1e6).fit(two, y).predict_proba(two)
+    cells = pd.crosstab([two.a, two.b], y, normalize="index")
+    expected = cells.loc[list(zip(two.a, two.b)), sorted(set(y))].to_numpy()
+    np.testing.assert_allclose(saturated, expected, atol=2e-3)
+
+
+def test_multiclass_outputs_and_errors(three_class):
+    """node_proba has a column per class; SEs exist against a class; misuse raises clearly."""
+    X, y = three_class
+    m = SoftmaxWoe().fit(X, y)
+    assert list(m.node_proba(X, "b").columns) == ["p_class_high", "p_class_low", "p_class_mid"]
+    assert m.class_counts_ == {label: int((y == label).sum()) for label in m.classes_}
+    se = m.transform(X, output="se", against="low")
+    assert np.isfinite(se.to_numpy()).all() and (se.to_numpy() > 0).all()
+    ci = m.predict_ci(X)
+    proba = m.predict_proba(X)
+    assert ci.shape == (len(X), 6)
+    assert ((ci[:, 0::2] <= proba) & (proba <= ci[:, 1::2])).all()
+    with pytest.raises(NotImplementedError, match="against"):
+        m.transform(X, output="se")
+    with pytest.raises(ValueError, match="against must be one of"):
+        m.transform(X, against="none")
+    binary = SoftmaxWoe().fit(X, (y == "high").astype(int))
+    with pytest.raises(ValueError, match="three or more classes"):
+        binary.transform(X, against=0)
+    with pytest.raises(ValueError, match="coded 0/1"):
+        SoftmaxWoe().fit(X, np.where(y == "high", "bad", "good"))
+
+
+@pytest.mark.slow
+def test_multiclass_intervals_cover_truth():
+    """With correctly specified nodes, multiclass intervals cover the true probabilities ~95%."""
+    from scipy.special import logsumexp
+
+    levels = [["p", "q", "r"], ["u", "v", "w"]]
+    prior = np.array([0.5, 0.3, 0.2])
+    share = np.array([[0.6, 0.3, 0.1], [0.3, 0.4, 0.3], [0.1, 0.3, 0.6]])  # P(a | class)
+    table = np.random.default_rng(0).dirichlet(np.ones(3), size=(3, 3))  # P(b | a, class)
+    profiles = pd.DataFrame(list(itertools.product(*levels)), columns=["a", "b"])
+    ia, ib = profiles.a.map(levels[0].index).to_numpy(), profiles.b.map(levels[1].index).to_numpy()
+    scores = np.log(prior) + np.log(share[:, ia].T) + np.log(table[:, ia, ib].T)
+    truth = np.exp(scores - logsumexp(scores, axis=1, keepdims=True))
+    rng = np.random.default_rng(1)
+    covered, reps = np.zeros_like(truth), 120
+    for _ in range(reps):
+        n = 6000
+        y = rng.choice(3, n, p=prior)
+        a = np.array([rng.choice(3, p=share[c]) for c in y])
+        b = np.array([rng.choice(3, p=table[c, k]) for c, k in zip(y, a)])
+        X = pd.DataFrame({"a": np.array(levels[0])[a], "b": np.array(levels[1])[b]})
+        ci = SoftmaxWoe(C=1000.0).fit(X, y).predict_ci(profiles)
+        covered += (ci[:, 0::2] <= truth) & (truth <= ci[:, 1::2])
+    coverage = covered.mean() / reps
+    assert 0.93 < coverage < 0.97, coverage

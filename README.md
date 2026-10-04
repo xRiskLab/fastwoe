@@ -410,6 +410,7 @@ model.predict_ci(X)               # interval for P(y=1)
 model.node_proba(X, "card")       # P(bin | earlier bins) among events and among non-events
 ```
 
+- Multiclass targets: one chain per class, probabilities by Bayes' rule (they sum to 1), one-vs-rest weights or weights against one class (`against=`), and intervals per class.
 - `C` shrinks every node toward marginal WOE; choose it by cross-validation (`GridSearchCV` works, as do `clone`, `cross_val_score` and `Pipeline`).
 - `order` sets which features each weight is conditioned on. It moves evidence between features a lot and changes the score a little; choose it deliberately when the weights are used as reason codes.
 - Bins come from FastWoe by default (`binning_kwargs=` passes its options), or from any object with `fit(X, y)` and `transform(X)` passed as `binner=`, such as cut points taken from a gradient-boosting model.
@@ -635,6 +636,7 @@ For a complete example, see [examples/scripts/fastwoe_monotonic.py](examples/scr
 - `fit(X, y)`, `transform(X, output="woe" | "se")`, `fit_transform(X, y)`
 - `predict_proba(X)`, `predict(X)`, `predict_ci(X, alpha)`
 - `node_proba(X, feature)`: class probabilities of each row's bin at that feature's node
+- `transform(X, against=label)`: multiclass weights against one class instead of one-vs-rest
 
 ### WoePreprocessor Class
 

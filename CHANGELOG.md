@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## Version 0.3.0 (unreleased)
+
+**Multiclass SoftmaxWoe; multiclass probability fixes**
+
+### New Features
+
+- **Multiclass `SoftmaxWoe`.** With three or more classes (any labels) there is one chain per class; `predict_proba` is Bayes' rule, a softmax over classes of log P(class) + log P(x | class), so rows sum to 1, and `predict` returns the most probable label. `transform()` gives one-vs-rest weights (`{feature}_class_{k}`, as FastWoe names them), where "not k" is the mixture of the other classes weighted by their prior times the evidence so far (Good's weighted average of factors), or weights against one class with `against=`; both add up exactly to the posterior log-odds. Standard errors for weights against a class (`output="se"`) and per-class intervals from `predict_ci` (delta method through the softmax, with the class priors' multinomial variance) covered the truth about 95% of the time in simulation. `node_proba` has a column per class. Binary targets behave as before; a two-class target must be coded 0/1.
 
 ### Bug Fixes
 
