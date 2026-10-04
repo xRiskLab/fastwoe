@@ -218,7 +218,7 @@ print(classification_report(y, predictions))
 
 - **One-vs-Rest Encoding**: Each class gets separate WOE scores against all others
 - **Class-Specific Methods**: `predict_proba_class()` and `predict_ci_class()` for individual classes
-- **Softmax Probabilities**: `predict_proba()` returns probabilities that sum to 1 across classes
+- **Normalized Probabilities**: `predict_proba()` divides each class's one-vs-rest probability by the row's total, so the classes sum to 1 (as scikit-learn's `OneVsRestClassifier` does); `predict_ci()` gives one-vs-rest intervals per class
 - **Comprehensive Statistics**: All existing methods work with multiclass (IV analysis, feature stats, etc.)
 - **String Labels**: Supports both integer and string class labels
 

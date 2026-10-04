@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Bug Fixes
+
+- **Multiclass probabilities did not sum to 1.** `predict_proba()` returned each class's one-vs-rest probability unnormalized, so rows summed to anywhere around 1 (0.96 to 1.07 in a test), although the README promised otherwise. Each row is now divided by its total, as scikit-learn's `OneVsRestClassifier` does; `predict()` is unchanged, since normalizing keeps each row's ranking.
+- **Multiclass intervals ignored the bins.** `predict_ci()` looked up each feature's WOE standard error by the row's raw value, so a binned numerical feature never matched a bin and every row got the feature's average standard error. Rows are now binned first, as in the binary case, and the lookup is vectorized.
+
 ## Version 0.2.0 (2026-10-02)
 
 **Softmax WOE, scikit-learn 1.8 and pandas 3**
