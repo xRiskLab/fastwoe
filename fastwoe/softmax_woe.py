@@ -81,7 +81,8 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
     A binary target is coded 0/1 (1 = event). With three or more classes (any
     labels) there is one chain per class and the class probabilities are a
     softmax over classes of log P(class) + log P(x | class); transform() gives
-    one-vs-rest weights, or weights against one class with ``against=``.
+    each feature's contribution to each class's softmax score, or one-vs-rest
+    weights (``against="rest"``), or weights against one class (``against=j``).
 
     Parameters
     ----------
@@ -562,13 +563,21 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
         self._handle_unseen(n)
         return out
 
-    def _against_index(self, against: Any) -> Optional[int]:
-        """Class index of ``against`` (None means one-vs-rest)."""
+    def _against_index(self, against: Any) -> Union[int, str, None]:
+        """Class index of ``against``; None for softmax contributions, "rest" for one-vs-rest."""
         if against is None:
             return None
+        labels = self.classes_.tolist()
+        if isinstance(against, str) and against == "rest":
+            if "rest" in labels:
+                raise ValueError(
+                    "against='rest' is ambiguous: a class is named 'rest'; relabel it to ask "
+                    "for one-vs-rest weights"
+                )
+            return "rest"
         matches = np.flatnonzero(self.classes_ == against)
         if len(matches) != 1:
-            raise ValueError(f"against must be one of {self.classes_.tolist()}, got {against!r}")
+            raise ValueError(f"against must be 'rest' or one of {labels}, got {against!r}")
         return int(matches[0])
 
     def _multiclass_frame(
@@ -588,16 +597,17 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
     def _transform_multiclass(
         self, X: Union[pd.DataFrame, np.ndarray], output: str, against: Any
     ) -> pd.DataFrame:
-        """Multiclass weights: one-vs-rest (Good's composite hypothesis) or against one class."""
+        """Multiclass weights: softmax contributions, one-vs-rest, or against one class."""
         frame, codes = self._prepare(X, self.order_)
         n, k_classes = len(frame), len(self.classes_)
         ref = self._against_index(against)
         classes = [c for c in range(k_classes) if c != ref]
         if output == "se":
-            if ref is None:
+            if ref == "rest":
                 raise NotImplementedError(
-                    "standard errors of one-vs-rest weights are not available; pass "
-                    "against=<class> for weights against one class, or use predict_ci()"
+                    "standard errors of one-vs-rest weights are not available (the mixture "
+                    "weights depend on the earlier features' estimates); use the default "
+                    "softmax contributions or against=<class>, or predict_ci()"
                 )
             self._class_log_probs(frame, codes, n)  # applies the unseen policy
             var = np.stack(
@@ -609,10 +619,16 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
                 ],
                 axis=1,
             )  # rows x features x classes
-            se = np.sqrt(var + var[:, :, [ref]])
+            if ref is None:  # centered contributions: (1 - 2/K) V_k + sum_j V_j / K^2
+                k = k_classes
+                se = np.sqrt((1 - 2 / k) * var + var.sum(axis=2, keepdims=True) / k**2)
+            else:
+                se = np.sqrt(var + var[:, :, [ref]])
             return self._multiclass_frame(X, se, classes)
         logp = np.stack(self._class_log_probs(frame, codes, n), axis=1)  # rows x features x classes
-        if ref is not None:
+        if ref is None:  # each feature's contribution to each class's softmax score
+            return self._multiclass_frame(X, logp - logp.mean(axis=2, keepdims=True), classes)
+        if isinstance(ref, int):
             return self._multiclass_frame(X, logp - logp[:, :, [ref]], classes)
         # one-vs-rest: "not k" is a mixture of the other classes, weighted by their
         # prior times the evidence so far (Good's weighted average of factors)
@@ -640,15 +656,18 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
             the log-odds of the positive class. "se": the delta-method standard
             error of each weight, from the event and non-event nodes, which are
             fitted on separate rows.
-        against : class label, optional
-            Multiclass targets only. By default each class k gets one-vs-rest
-            weights, columns ``{feature}_class_{k}``: "not k" is the mixture of
-            the other classes, weighted by their prior times the evidence of
-            the earlier features, so class_log_prior_ odds plus the row sum
-            over a class's columns is its posterior log-odds against the rest.
-            With ``against=j`` the columns are each other class's weight
-            against class j, log P(bin | earlier bins, k) - log P(... | j);
-            standard errors are available for these only.
+        against : None, "rest" or a class label, optional
+            Multiclass targets only; columns are ``{feature}_class_{k}``.
+            None (default): each feature's contribution to each class's softmax
+            score, log P(bin | earlier bins, k) centered over the classes, so
+            softmax over k of class_log_prior_[k] plus the row sum over class
+            k's columns is predict_proba. "rest": one-vs-rest weights, where
+            "not k" is the mixture of the other classes weighted by their prior
+            times the evidence of the earlier features; class k's prior odds
+            plus its row sum is its posterior log-odds against the rest. A
+            class label j: each other class's weight against j,
+            log P(bin | earlier bins, k) - log P(... | j). Standard errors are
+            available for the default and for a class label, not for "rest".
         """
         if output not in ("woe", "se"):
             raise ValueError(f"output must be 'woe' or 'se', got {output!r}")

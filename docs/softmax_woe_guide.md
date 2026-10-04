@@ -351,16 +351,18 @@ so they sum to 1 by construction. `predict` returns the most probable label, and
 ```python
 model = SoftmaxWoe(order=["bureau", "utilization", "card"]).fit(X, y)   # y: "low", "mid", "high"
 model.predict_proba(X)                 # one column per class in model.classes_
-model.transform(X)                     # one-vs-rest weights: bureau_class_high, bureau_class_low, ...
+model.transform(X)                     # contributions to each class's score: bureau_class_high, ...
+model.transform(X, output="se")        # their standard errors
+model.transform(X, against="rest")     # one-vs-rest weights
 model.transform(X, against="low")      # each other class against "low"
-model.transform(X, output="se", against="low")
 model.predict_ci(X)                    # lower_k, upper_k for each class
 ```
 
-The weights come in two flavors, and both add up exactly:
+The weights come in three flavors, and all add up exactly:
 
+- **Softmax contributions** (the default): each feature's contribution to each class's score, $c_{ik} = \log P(x_i \mid x_{<i}, k)$ centered over the classes, as a multinomial logistic regression reports its coefficients. They sum to zero over the classes, and $P(k \mid x)$ is the softmax over $k$ of $\log P(k) + \sum_i c_{ik}$ (centering shifts every class alike, which the softmax ignores). They read "this feature raises class $k$'s score by $c$ relative to the average class". Standard errors: $(1 - 2/K)\,V_{ik} + \frac{1}{K^2}\sum_j V_{ij}$, with $V$ the node variances of the separately fitted class chains.
 - **Against one class** (`against=j`): $\log P(x_i \mid x_{<i}, k) - \log P(x_i \mid x_{<i}, j)$. Added over features to $\log P(k)/P(j)$, they give $\log P(k \mid x)/P(j \mid x)$. Their standard errors add the two classes' node variances, since the chains are fitted on separate rows.
-- **One-vs-rest** (the default, matching FastWoe's multiclass columns): "not $k$" is a composite hypothesis, the mixture of the other classes. Its probability for the next feature is a weighted average of theirs, $\sum_{j \ne k} w_j P(x_i \mid x_{<i}, j)$, with $w_j \propto P(j)\, P(x_{<i} \mid j)$: each other class weighted by its prior times the evidence so far (Good's "weighted average of factors"). Added to the prior log-odds of $k$, the weights give its posterior log-odds against the rest. Per-feature standard errors are not available for these (the mixture weights depend on the earlier features' estimates); `predict_ci` gives intervals for the probabilities.
+- **One-vs-rest** (`against="rest"`, the meaning of FastWoe's multiclass columns): "not $k$" is a composite hypothesis, the mixture of the other classes. Its probability for the next feature is a weighted average of theirs, $\sum_{j \ne k} w_j P(x_i \mid x_{<i}, j)$, with $w_j \propto P(j)\, P(x_{<i} \mid j)$: each other class weighted by its prior times the evidence so far (Good's "weighted average of factors"). Added to the prior log-odds of $k$, the weights give its posterior log-odds against the rest. Per-feature standard errors are not available for these (the mixture weights depend on the earlier features' estimates); `predict_ci` gives intervals for the probabilities.
 
 Summing *marginal* one-vs-rest WOE, as `FastWoe` does for multiclass targets, is approximate twice over: shared signal is counted once per feature, and even features independent within every class are not independent within "not $k$", which is a mixture. On simulated data with three classes whose features depend on each other differently by class, test log loss was:
 
@@ -371,7 +373,7 @@ Summing *marginal* one-vs-rest WOE, as `FastWoe` does for multiclass targets, is
 | Multinomial logistic regression on one-hot features | 0.9288 |
 | FastWoe, one-vs-rest WOE | 0.9339 |
 
-In the same setting, 95% intervals from `predict_ci` covered the true class probabilities 94.9 to 95.5% of the time, and those for weights against one class 94.6 to 94.9%.
+In the same setting, 95% intervals covered the truth about 95% of the time: 94.7 to 95.0% for the softmax contributions, 94.6 to 94.9% for weights against one class, and 94.9 to 95.5% for the class probabilities from `predict_ci`.
 
 ## Order
 

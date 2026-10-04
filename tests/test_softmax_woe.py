@@ -532,8 +532,8 @@ def three_class():
 
 
 def test_multiclass_probabilities_and_exact_weights(three_class):
-    """Rows sum to 1; one-vs-rest and against-one-class weights add up to the log-odds exactly."""
-    from scipy.special import logit
+    """Rows sum to 1; softmax, one-vs-rest and against-one-class weights all add up exactly."""
+    from scipy.special import logit, softmax
 
     X, y = three_class
     m = SoftmaxWoe(order=["a", "b", "c"]).fit(X, y)
@@ -541,8 +541,15 @@ def test_multiclass_probabilities_and_exact_weights(three_class):
     proba = m.predict_proba(X)
     np.testing.assert_allclose(proba.sum(axis=1), 1.0)
     assert (m.predict(X) == m.classes_[proba.argmax(axis=1)]).all()
+    contributions = m.transform(X)  # default: contributions to each class's softmax score
+    assert list(contributions.columns[:3]) == ["a_class_high", "a_class_low", "a_class_mid"]
+    per_class = np.column_stack(
+        [contributions.filter(like=f"_class_{label}").sum(axis=1) for label in m.classes_]
+    )
+    np.testing.assert_allclose(softmax(m.class_log_prior_ + per_class, axis=1), proba, atol=1e-9)
+    np.testing.assert_allclose(per_class.sum(axis=1), 0.0, atol=1e-9)  # centered over classes
     prior_log_odds = m.class_log_prior_ - np.log1p(-np.exp(m.class_log_prior_))
-    ovr = m.transform(X)
+    ovr = m.transform(X, against="rest")
     assert list(ovr.columns[:3]) == ["a_class_high", "a_class_low", "a_class_mid"]
     for j, label in enumerate(m.classes_):
         total = prior_log_odds[j] + ovr.filter(like=f"_class_{label}").sum(axis=1)
@@ -584,21 +591,25 @@ def test_multiclass_outputs_and_errors(three_class):
     m = SoftmaxWoe().fit(X, y)
     assert list(m.node_proba(X, "b").columns) == ["p_class_high", "p_class_low", "p_class_mid"]
     assert m.class_counts_ == {label: int((y == label).sum()) for label in m.classes_}
-    se = m.transform(X, output="se", against="low")
-    assert np.isfinite(se.to_numpy()).all() and (se.to_numpy() > 0).all()
+    for against in (None, "low"):
+        se = m.transform(X, output="se", against=against)
+        assert np.isfinite(se.to_numpy()).all() and (se.to_numpy() > 0).all()
     ci = m.predict_ci(X)
     proba = m.predict_proba(X)
     assert ci.shape == (len(X), 6)
     assert ((ci[:, 0::2] <= proba) & (proba <= ci[:, 1::2])).all()
-    with pytest.raises(NotImplementedError, match="against"):
-        m.transform(X, output="se")
-    with pytest.raises(ValueError, match="against must be one of"):
+    with pytest.raises(NotImplementedError, match="one-vs-rest"):
+        m.transform(X, output="se", against="rest")
+    with pytest.raises(ValueError, match="against must be"):
         m.transform(X, against="none")
     binary = SoftmaxWoe().fit(X, (y == "high").astype(int))
     with pytest.raises(ValueError, match="three or more classes"):
         binary.transform(X, against=0)
     with pytest.raises(ValueError, match="coded 0/1"):
         SoftmaxWoe().fit(X, np.where(y == "high", "bad", "good"))
+    named_rest = SoftmaxWoe().fit(X, np.where(y == "low", "rest", y))
+    with pytest.raises(ValueError, match="ambiguous"):
+        named_rest.transform(X, against="rest")
 
 
 @pytest.mark.slow
