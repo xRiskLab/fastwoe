@@ -373,6 +373,8 @@ Summing *marginal* one-vs-rest WOE, as `FastWoe` does for multiclass targets, is
 | Multinomial logistic regression on one-hot features | 0.9288 |
 | FastWoe, one-vs-rest WOE | 0.9339 |
 
+A worked example, with the whole method written out in plain scikit-learn for three classes, is in [`examples/notebooks/fastwoe_softmax_multi.ipynb`](../examples/notebooks/fastwoe_softmax_multi.ipynb).
+
 In the same setting, 95% intervals covered the truth about 95% of the time: 94.7 to 95.0% for the softmax contributions, 94.6 to 94.9% for weights against one class, and 94.9 to 95.5% for the class probabilities from `predict_ci`.
 
 ## Order

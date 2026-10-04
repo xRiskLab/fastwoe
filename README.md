@@ -424,7 +424,7 @@ On a bank case study (24,859 applications, six correlated features, the same Fas
 | Logistic regression on marginal WOE | 0.189 |
 | `SoftmaxWoe` | 0.187 |
 
-`SoftmaxWoe` matches the calibrated scorecard without a second fitting step, and its weights stay conditional weights of evidence that add up to the score. Guide: [`docs/softmax_woe_guide.md`](docs/softmax_woe_guide.md); notebook, including the method written out in plain scikit-learn: [`examples/notebooks/fastwoe_softmax.ipynb`](examples/notebooks/fastwoe_softmax.ipynb).
+`SoftmaxWoe` matches the calibrated scorecard without a second fitting step, and its weights stay conditional weights of evidence that add up to the score. Guide: [`docs/softmax_woe_guide.md`](docs/softmax_woe_guide.md); notebook, including the method written out in plain scikit-learn: [`examples/notebooks/fastwoe_softmax.ipynb`](examples/notebooks/fastwoe_softmax.ipynb); for three classes: [`examples/notebooks/fastwoe_softmax_multi.ipynb`](examples/notebooks/fastwoe_softmax_multi.ipynb).
 
 ### Numerical Feature Binning
 
