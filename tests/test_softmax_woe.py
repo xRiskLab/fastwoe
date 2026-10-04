@@ -569,7 +569,9 @@ def test_multiclass_limits(three_class):
     from scipy.special import logsumexp
 
     X, y = three_class
-    m = SoftmaxWoe(C=1e-9).fit(X, y)
+    # C = 1e-6, not smaller: scikit-learn 1.3's lbfgs stops at once for C <= 1e-9 and
+    # leaves the intercepts at zero (uniform, not the bin shares)
+    m = SoftmaxWoe(C=1e-6).fit(X, y)
     scores = np.tile(m.class_log_prior_, (len(X), 1))
     for j, label in enumerate(m.classes_):
         rows = X[y == label]
