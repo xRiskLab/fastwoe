@@ -1,6 +1,6 @@
 # Changelog
 
-## Version 0.3.0 (unreleased)
+## Version 0.3.0 (2026-10-04)
 
 **Multiclass SoftmaxWoe; multiclass probability fixes**
 
