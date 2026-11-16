@@ -1,5 +1,13 @@
 # Changelog
 
+## Version 0.3.1 (unreleased)
+
+**Somers' D standard error**
+
+### Bug Fixes
+
+- **The standard error of Somers' D (Gini) was wrong.** `somersd_se()`, and with it the `somersd_se` and `somersd_ci_lower`/`somersd_ci_upper` that FastWoe reports for each feature, used the row midrank where the delta method needs the row count (the term inherited from the VUROCS R package, against which it had been tested). The error did not shrink with the sample size: on simulated binary data it stayed near 0.07 to 0.08 while the bootstrap standard error fell from 0.048 (n = 500) to 0.027 (n = 5,000), so intervals were up to three times too wide, and reversing the target's labels changed it. It now agrees with DeLong's standard error (to its n - 1 divisors) and with the bootstrap, and is unchanged when the target is reversed. Gini values themselves are unaffected. `docs/somersd_ase.md` is corrected.
+
 ## Version 0.3.0 (2026-10-04)
 
 **Multiclass SoftmaxWoe; multiclass probability fixes**
