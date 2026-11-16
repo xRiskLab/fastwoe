@@ -369,17 +369,62 @@ class TestFastWoe:
         expected_width = 2 * z_crit * stats["somersd_se"]
         np.testing.assert_allclose(ci_width, expected_width, rtol=1e-6)
 
-    def test_somersd_se_matches_vurocs(self):
-        """Validate somersd_se against VUROCS R package (Goktas & Oznur 2011)."""
+    @staticmethod
+    def _delong_gini_se(y, score):
+        """DeLong's SE of Gini (twice the SE of AUC), from midranks."""
+        from scipy.stats import rankdata
+
+        pos, neg = score[y == 1], score[y == 0]
+        m, k = len(pos), len(neg)
+        ranks = rankdata(np.r_[pos, neg])
+        v10 = (ranks[:m] - rankdata(pos)) / k
+        v01 = 1 - (ranks[m:] - rankdata(neg)) / m
+        return 2 * np.sqrt(v10.var(ddof=1) / m + v01.var(ddof=1) / k)
+
+    def test_somersd_se_textbook_example(self):
+        """Hand-checked delta-method SE on a 2x3 table (docs/somersd_ase.md)."""
         from fastwoe.metrics import somersd_se
 
-        # VUROCS example: SomersD(rep(1:5,each=3), c(3,3,3,rep(2:5,each=3)))
-        y = np.array([1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5], dtype=float)
-        fx = np.array([3, 3, 3, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5], dtype=float)
+        y = np.array([0, 0, 0, 0, 0, 1, 1, 1, 1, 1], dtype=float)
+        x = np.array([1, 1, 2, 2, 3, 1, 2, 3, 3, 3], dtype=float)
+        # residuals D_r (C - D) - (P - Q)(W - r_i) = [[100, 0, -200], [-250, -50, 100]]
+        expected = 2 / 50**2 * np.sqrt(2 * 100**2 + 200**2 + 250**2 + 50**2 + 3 * 100**2)
+        np.testing.assert_allclose(somersd_se(y, x), expected, rtol=1e-12)
 
-        se = somersd_se(y, fx)
-        # R output: val=0.7, ASE=0.3146721
-        np.testing.assert_allclose(se, 0.3146721, rtol=1e-5)
+    def test_somersd_se_invariant_to_reversing_labels(self):
+        """Reversing the target reverses the sign of Somers' D, not its SE."""
+        from fastwoe.metrics import somersd_se
+
+        rng = np.random.default_rng(0)
+        y = (rng.random(800) < 0.2).astype(float)
+        score = np.digitize(rng.normal(size=800) + y, [-1, 0, 0.5, 1, 2])
+        np.testing.assert_allclose(somersd_se(1 - y, score), somersd_se(y, score), rtol=1e-12)
+        np.testing.assert_allclose(somersd_se(y, -score), somersd_se(y, score), rtol=1e-12)
+
+        y_ord = rng.integers(1, 6, 300).astype(float)
+        x_ord = y_ord + rng.normal(size=300)
+        np.testing.assert_allclose(somersd_se(-y_ord, -x_ord), somersd_se(y_ord, x_ord), rtol=1e-12)
+
+    @pytest.mark.parametrize("n, rate, binned", [(500, 0.3, False), (5000, 0.05, True)])
+    def test_somersd_se_matches_delong_and_bootstrap(self, n, rate, binned):
+        """For binary targets the SE agrees with DeLong's and with the bootstrap."""
+        from sklearn.metrics import roc_auc_score
+
+        from fastwoe.metrics import somersd_se
+
+        rng = np.random.default_rng(1)
+        y = (rng.random(n) < rate).astype(int)
+        score = rng.normal(size=n) + y
+        if binned:
+            score = np.digitize(score, np.quantile(score, [0.2, 0.4, 0.6, 0.8]))
+        se = somersd_se(y, score)
+
+        np.testing.assert_allclose(se, self._delong_gini_se(y, score), rtol=0.01)
+        boot = []
+        for _ in range(400):
+            i = rng.integers(0, n, n)
+            boot.append(2 * roc_auc_score(y[i], score[i]) - 1)
+        np.testing.assert_allclose(se, np.std(boot, ddof=1), rtol=0.15)
 
     def test_get_iv_analysis(self, sample_data):
         """Test get_iv_analysis method."""

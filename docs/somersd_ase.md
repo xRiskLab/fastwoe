@@ -1,6 +1,6 @@
 # Asymptotic Standard Error of Somers' D
 
-Reference: Goktas, A., Oznur, I., 2011. *A Comparison of the Most Commonly Used Measures of Association for Doubly Ordered Square Contingency Tables via Simulation.* Metodoloski zvezki 8 (1), 17-37.
+References: Agresti, A., 2002. *Categorical Data Analysis*, 2nd ed., sec. 3.4. Goktas, A., Oznur, I., 2011. *A Comparison of the Most Commonly Used Measures of Association for Doubly Ordered Square Contingency Tables via Simulation.* Metodoloski zvezki 8 (1), 17-37.
 
 ## 1. Setup
 
@@ -46,21 +46,7 @@ $$D = \frac{P - Q}{D_r}$$
 
 For binary targets, this equals the Gini coefficient $= 2 \cdot \text{AUC} - 1$.
 
-## 4. Row Midranks
-
-Define the midrank of row $i$ as the average position of observations in that row:
-
-$$R_i = \sum_{k=1}^{i} r_k + \frac{1 - r_i}{2}$$
-
-This places each row at the center of its range in the marginal ranking.
-
-For example, if $r = [3, 3, 3]$:
-
-- $R_1 = 3 + (1-3)/2 = 2$
-- $R_2 = 6 + (1-3)/2 = 5$
-- $R_3 = 9 + (1-3)/2 = 8$
-
-## 5. ASE via the Delta Method
+## 4. ASE via the Delta Method
 
 Somers' D is a **ratio of two U-statistics**: $D = (P - Q) / D_r$.
 
@@ -78,15 +64,17 @@ This is how much cell $(i, j)$ contributes to the net concordance, scaled by the
 
 ### Part 2: Denominator correction
 
-$$(P - Q) \cdot (W - R_i)$$
+$$(P - Q) \cdot (W - r_i)$$
 
-Here $(W - R_i)$ captures how much row $i$ contributes to $D_r$ (pairs untied on $Y$). The factor $(P - Q) = D \cdot D_r$ weights this by the current value of $D$.
+One more observation in row $i$ adds $2(W - r_i)$ to $D_r$: it is untied on $Y$ with every observation outside its row. The factor $(P - Q) = D \cdot D_r$ weights this by the current value of $D$.
+
+> **Correction (0.3.1).** Earlier versions used the row midrank $R_i = \sum_{k \le i} r_k + (1 - r_i)/2$ in place of the row count $r_i$, following the VUROCS R package. With the midrank the term is not the derivative of $D_r$: the standard error did not shrink with the sample size (about 0.08 at $n = 5{,}000$, where the bootstrap gives 0.027), and reversing the order of $Y$ changed it. With $r_i$ it agrees with DeLong's standard error and with the bootstrap, and is unchanged when $Y$ is reversed.
 
 ### Combined residual per cell
 
-$$\varepsilon_{ij} = D_r \cdot (C_{ij} - D_{ij}) \;-\; (P - Q) \cdot (W - R_i)$$
+$$\varepsilon_{ij} = D_r \cdot (C_{ij} - D_{ij}) \;-\; (P - Q) \cdot (W - r_i)$$
 
-Note that $R_i$ depends only on the row, not the column - the denominator $D_r$ is determined entirely by the $Y$ marginal distribution.
+The second term depends only on the row, not the column: the denominator $D_r$ is determined entirely by the $Y$ marginal distribution.
 
 ### ASE formula
 
@@ -96,11 +84,11 @@ $$\boxed{\text{ASE}_1 = \frac{2}{D_r^2} \sqrt{\sum_{ij} f_{ij} \cdot \varepsilon
 
 Expanding:
 
-$$\text{ASE}_1 = \frac{2}{D_r^2} \sqrt{\sum_{ij} f_{ij} \left\{ D_r(C_{ij} - D_{ij}) - (P - Q)(W - R_i) \right\}^2}$$
+$$\text{ASE}_1 = \frac{2}{D_r^2} \sqrt{\sum_{ij} f_{ij} \left\{ D_r(C_{ij} - D_{ij}) - (P - Q)(W - r_i) \right\}^2}$$
 
 The factor of 2 accounts for the symmetry of ordered pairs (each unordered pair is counted twice).
 
-## 6. ASE Under the Null ($\text{ASE}_0$)
+## 5. ASE Under the Null ($\text{ASE}_0$)
 
 Under $H_0\!: D = 0$, the denominator correction term vanishes (since $P - Q = 0$), giving a simpler formula:
 
@@ -108,7 +96,7 @@ $$\boxed{\text{ASE}_0 = \frac{2}{D_r} \sqrt{\sum_{ij} f_{ij} (C_{ij} - D_{ij})^2
 
 This is used for hypothesis testing (is $D$ significantly different from zero?).
 
-## 7. Summary
+## 6. Summary
 
 | Quantity | Formula | Use |
 |----------|---------|-----|
@@ -124,7 +112,7 @@ For a two-sided test of $H_0\!: D = 0$:
 
 $$z = \frac{D}{\text{ASE}_0}$$
 
-## 8. Worked Example
+## 7. Worked Example
 
 A small binary credit risk table: 10 applicants, target $Y \in \{0, 1\}$, WOE-encoded feature $X \in \{1, 2, 3\}$ (three bins).
 
@@ -181,31 +169,23 @@ print(f"\nP={P}, Q={Q}, Dr={Dr}")
 print(f"Somers' D = (P-Q)/Dr = {D_val:.6f}")
 
 #-----------------------------------------------------------------------------------------------
-# Step 4: Row midranks
+# Step 4: ASE (delta method)
 #-----------------------------------------------------------------------------------------------
-RR = np.cumsum(r) + (1.0 - r) / 2.0
-print(f"\nRow midranks R = {RR}")
-
-#-----------------------------------------------------------------------------------------------
-# Step 5: ASE (delta method)
-#-----------------------------------------------------------------------------------------------
-RR_mat = np.repeat(RR[:, np.newaxis], b, axis=1)
-
-# Linearized residual per cell
-eps = Dr * (C - D) - (P - Q) * (W - RR_mat)
+# Linearized residual per cell; W - r[i] = observations outside row i
+eps = Dr * (C - D) - (P - Q) * (W - r)[:, np.newaxis]
 print(f"\nResiduals eps:\n{eps}")
 
 ASE = 2.0 / Dr**2 * np.sqrt((CT * eps**2).sum())
 print(f"\nASE = {ASE:.6f}")
 
 #-----------------------------------------------------------------------------------------------
-# Step 6: ASE under H0
+# Step 5: ASE under H0
 #-----------------------------------------------------------------------------------------------
 ASE0 = 2.0 / Dr * np.sqrt((CT * (C - D)**2).sum() - (P - Q)**2 / W)
 print(f"ASE0 = {ASE0:.6f}")
 
 #-----------------------------------------------------------------------------------------------
-# Step 7: 95% confidence interval
+# Step 6: 95% confidence interval
 #-----------------------------------------------------------------------------------------------
 print(f"\n95% CI: [{D_val - 1.96*ASE:.4f}, {D_val + 1.96*ASE:.4f}]")
 print(f"z-test (H0: D=0): z = {D_val / ASE0:.4f}")
@@ -230,19 +210,17 @@ P=28.0, Q=8.0, Dr=50.0
 
 Somers' D = (P-Q)/Dr = 0.400000
 
-Row midranks R = [3. 8.]
-
 Residuals eps:
-[[  60.  -40. -240.]
- [-190.   10.  160.]]
+[[ 100.    0. -200.]
+ [-250.  -50.  100.]]
 
-ASE = 0.340353
+ASE = 0.314960
 ASE0 = 0.314960
 
-95% CI: [-0.2671, 1.0671]
+95% CI: [-0.2173, 1.0173]
 z-test (H0: D=0): z = 1.2700
 ```
 
-## 9. Production Implementation
+## 8. Production Implementation
 
-See `fastwoe.metrics.somersd_se()` - validated against the VUROCS R package with exact numerical agreement across binary, ordinal, and continuous targets.
+See `fastwoe.metrics.somersd_se()`. The tests check it against this worked example, against DeLong's standard error and the bootstrap for binary targets, and that reversing $Y$ leaves it unchanged. (ASE and ASE0 coincide in the example above because both rows have the same count; they differ in general.)

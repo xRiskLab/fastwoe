@@ -496,14 +496,15 @@ def somersd_se(
     y_true: np.ndarray,
     y_pred: np.ndarray,
 ) -> float:
-    """Asymptotic SE of Somers' D(X|Y) per Goktas & Oznur (2011).
+    """Asymptotic SE of Somers' D (ties in Y excluded), by the delta method.
 
     Computes the asymptotic standard error from the contingency table of
     (y_true, y_pred) using per-cell concordant/discordant counts and the
     delta method for the ratio statistic.
 
     Works for binary, ordinal, and continuous targets.
-    For binary targets this equals SE(Gini) = SE(2*AUC - 1).
+    For binary targets this is SE(Gini) = 2 * SE(AUC), and agrees with
+    DeLong's standard error up to its n - 1 divisors.
 
     Args:
         y_true: Target values (binary, ordinal, or continuous).
@@ -513,6 +514,8 @@ def somersd_se(
         Asymptotic standard error of Somers' D, or NaN for degenerate inputs.
 
     References:
+        Agresti, A., 2002. Categorical Data Analysis, 2nd ed. Wiley, sec. 3.4.
+
         Goktas, A., Oznur, I., 2011. A Comparison of the Most Commonly Used
         Measures of Association for Doubly Ordered Square Contingency Tables
         via Simulation. Metodoloski zvezki 8 (1), 17-37.
@@ -555,12 +558,9 @@ def somersd_se(
     if Dr == 0:
         return np.nan
 
-    # Row midranks: RR[k] = cumsum(r)[k] + (1 - r[k]) / 2
-    RR = np.cumsum(r) + (1.0 - r) / 2.0
-    RR_mat = np.repeat(RR[:, np.newaxis], b, axis=1)
-
-    # ASE via delta method (Goktas & Oznur 2011, eq. for Somers' D)
-    inside = Dr * (C - D) - (P - Q) * (W - RR_mat)
+    # Delta method for the ratio (P - Q) / Dr. A cell in row i changes Dr by
+    # 2 (W - r_i), the observations outside its row (Agresti 2002, sec. 3.4).
+    inside = Dr * (C - D) - (P - Q) * (W - r)[:, np.newaxis]
     ase = 2.0 / Dr**2 * np.sqrt((CT * inside**2).sum())
     return float(ase)
 
