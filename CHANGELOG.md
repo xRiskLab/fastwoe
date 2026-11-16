@@ -1,6 +1,6 @@
 # Changelog
 
-## Version 0.3.1 (unreleased)
+## Version 0.3.1 (2026-11-16)
 
 **Somers' D standard error**
 
