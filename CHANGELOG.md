@@ -1,5 +1,21 @@
 # Changelog
 
+## Version 0.3.2 (unreleased)
+
+**JointWoe; FAISS binning fix**
+
+### New Features
+
+- **`JointWoe`**: WOE tables fitted jointly. One weight per bin of every feature, as in a scorecard, but all tables fitted at once, so evidence that correlated features share is counted once: logistic regression on the one-hot bins with an L2 penalty on the weights (`C`, as in scikit-learn), fitted by lbfgs on a sparse matrix. Takes 0/1 labels or proportions in [0, 1] (soft targets, for distilling a model into a scorecard) and `sample_weight`. `transform()` gives each row's weight per feature, `iv()` the conditional information value of each feature, `get_mapping()` a feature's table with its marginal WOE next to the joint weight; standard errors (`transform(output="se")`) and `predict_ci()` come from the inverse penalized Hessian, including the covariance between features (weight SEs matched the bootstrap in tests). Binning as in `SoftmaxWoe`: FastWoe by default, or any `Binner`. A scikit-learn estimator. Guide: `docs/joint_woe_guide.md`.
+
+### Bug Fixes
+
+- **FAISS k-means binning scrambled the WOE tables at fit.** `binning_method="faiss_kmeans"` wrote each row's cluster through a pandas Series that was aligned on the frame's row labels instead of by position. With any missing value in a column, or a DataFrame index other than 0 to n - 1, rows were counted in other rows' bins, and the fitted WOE was close to noise (in a test, event rates of about 0.5 in every bin where the true rates ran from 0.01 to 0.95). Bins are now written by position. `transform_bins()` was not affected, since it bins from the stored edges. Refit models that used FAISS binning.
+
+### Changes
+
+- **`SoftmaxWoe` moved to the module `fastwoe.fastwoe_softmax`**, next to `fastwoe.fastwoe_joint`, after `fastwoe.fastwoe_multiclass`. The old module path `fastwoe.softmax_woe` is removed: import `SoftmaxWoe` from `fastwoe`, and `Binner` from `fastwoe.fastwoe_softmax`. Binning shared by the two estimators lives in a private mixin.
+
 ## Version 0.3.1 (2026-11-16)
 
 **Somers' D standard error**

@@ -7,6 +7,7 @@ Features:
 - FastWoe: Fast WOE encoding with confidence intervals
 - WoePreprocessor: Cardinality reduction for high-cardinality features
 - SoftmaxWoe: Conditional WOE from a hierarchical softmax (generative classifier)
+- JointWoe: WOE tables fitted jointly (L2 logistic regression on the bins)
 - WeightOfEvidence: Model interpretability tool with FastWoe
 - plot_performance: CAP/Power curve visualization for binary and continuous targets
 - visualize_woe: WOE feature visualization
@@ -19,12 +20,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .display import StyledDataFrame, iv_styled, style_iv_analysis, style_woe_mapping, styled
     from .fastwoe import FastWoe, WoePreprocessor
+    from .fastwoe_joint import JointWoe
+    from .fastwoe_softmax import SoftmaxWoe
     from .interpret_fastwoe import WeightOfEvidence
     from .metrics import gini_contributions
     from .plots import plot_performance, visualize_woe
-    from .softmax_woe import SoftmaxWoe
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 __author__ = "xRiskLab"
 __email__ = "contact@xrisklab.ai"
 
@@ -32,6 +34,7 @@ __all__ = [
     "FastWoe",
     "WoePreprocessor",
     "SoftmaxWoe",
+    "JointWoe",
     "WeightOfEvidence",
     "plot_performance",
     "visualize_woe",
@@ -48,7 +51,8 @@ __all__ = [
 _LAZY = {
     "FastWoe": "fastwoe",
     "WoePreprocessor": "fastwoe",
-    "SoftmaxWoe": "softmax_woe",
+    "SoftmaxWoe": "fastwoe_softmax",
+    "JointWoe": "fastwoe_joint",
     "WeightOfEvidence": "interpret_fastwoe",
     "plot_performance": "plots",
     "visualize_woe": "plots",

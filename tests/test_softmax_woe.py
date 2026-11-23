@@ -7,8 +7,7 @@ import pandas as pd
 import pytest
 import sklearn
 
-from fastwoe import FastWoe
-from fastwoe.softmax_woe import SoftmaxWoe
+from fastwoe import FastWoe, SoftmaxWoe
 
 
 @pytest.fixture
@@ -440,7 +439,7 @@ def test_unbinned_continuous_column_warns(numeric_data):
 
 def test_binner_protocol():
     """Binner is a structural type: any object with fit and transform satisfies it."""
-    from fastwoe.softmax_woe import Binner
+    from fastwoe.fastwoe_softmax import Binner
 
     assert isinstance(EdgesBinner({}), Binner)
     assert isinstance(FastWoe(), Binner)

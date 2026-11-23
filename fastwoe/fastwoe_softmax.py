@@ -33,44 +33,24 @@ order defines a different smoothed distribution.
 
 from __future__ import annotations
 
-import copy
-import warnings
 from collections import Counter
-from typing import Any, Optional, Protocol, Union, runtime_checkable
+from typing import Any, Optional, Union
 
 import numpy as np
 import pandas as pd
 from scipy.special import logsumexp
 from scipy.stats import norm
-from sklearn.base import BaseEstimator, ClassifierMixin, TransformerMixin, clone
+from sklearn.base import BaseEstimator, ClassifierMixin, TransformerMixin
 from sklearn.linear_model import LogisticRegression
 
-from .fastwoe import FastWoe
+from ._binned import MISSING, Binner, _BinnedMixin
 
 __all__ = ["Binner", "SoftmaxWoe"]
 
-MISSING = "Missing"
-_MANY_LEVELS = 100  # more bins than this after binning suggests an unbinned column
 _FLOOR = 1e-6  # probability of a bin a class never showed at a node, before renormalizing
 
 
-@runtime_checkable
-class Binner(Protocol):
-    """What SoftmaxWoe needs from a binner: fit on X and y, then label every value with a bin.
-
-    ``transform`` returns a DataFrame or array with X's columns and a bin label
-    in every cell (strings, numbers, intervals or categoricals). Any object with
-    these two methods qualifies; it need not inherit from this class.
-    """
-
-    def fit(self, X: pd.DataFrame, y: np.ndarray) -> Any:
-        """Learn the bins from X and the binary target y; the return value is ignored."""
-
-    def transform(self, X: pd.DataFrame) -> Union[pd.DataFrame, np.ndarray]:
-        """Return the bin label of every value of X, with X's columns."""
-
-
-class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
+class SoftmaxWoe(_BinnedMixin, ClassifierMixin, TransformerMixin, BaseEstimator):
     """Conditional WOE by hierarchical softmax (binary or multiclass targets).
 
     SoftmaxWoe is a generative classifier: per class, an autoregressive chain of
@@ -178,16 +158,7 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
             raise ValueError("C must be positive")
         if self.root_pseudo_count < 0:
             raise ValueError("root_pseudo_count must be non-negative")
-        if self.unseen not in ("warn", "prior", "raise"):
-            raise ValueError(f"unseen must be 'warn', 'prior' or 'raise', got {self.unseen!r}")
-        kwargs = self.binning_kwargs or {}
-        if conditional := [k for k in kwargs if k.startswith("conditional")]:
-            raise ValueError(f"binning_kwargs configures binning only; remove {conditional}")
-        if self.binner is not None:
-            if kwargs:
-                raise ValueError("pass either binner or binning_kwargs, not both")
-            if not isinstance(self.binner, Binner):
-                raise TypeError("binner must have fit(X, y) and transform(X) methods")
+        self._check_binning_params()
 
     # ------------------------------------------------------------------
     # helpers
@@ -197,70 +168,6 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
     def _multiclass(self) -> bool:
         """Whether the target has three or more classes."""
         return len(self.classes_) > 2
-
-    @staticmethod
-    def _as_frame(X: Union[pd.DataFrame, np.ndarray]) -> pd.DataFrame:
-        """X as a DataFrame with string column names."""
-        frame: pd.DataFrame = X.copy() if isinstance(X, pd.DataFrame) else pd.DataFrame(X)
-        frame.columns = [str(c) for c in frame.columns]
-        return frame
-
-    def _fit_binner(self, raw: pd.DataFrame, target: np.ndarray) -> None:
-        """Fit the default FastWoe, or a clone of the given binner."""
-        if self.binner is None:
-            self.binner_ = FastWoe(**(self.binning_kwargs or {})).fit(raw, target)
-            return
-        try:
-            binner = clone(self.binner)
-        except TypeError:  # not a scikit-learn estimator
-            binner = copy.deepcopy(self.binner)
-        binner.fit(raw, target)
-        self.binner_ = binner
-
-    def _bins(self, raw: pd.DataFrame, features: list[str]) -> pd.DataFrame:
-        """Bin labels of the given features of raw, checked against the binner contract."""
-        if self.binner is None:
-            bins: pd.DataFrame = self.binner_.transform_bins(raw[features])
-            return bins
-        full = raw.copy()
-        for f in self.order_:  # a custom binner always sees every fitted column
-            if f not in full.columns:
-                full[f] = np.nan
-        full = full[self.order_]
-        out = self.binner_.transform(full)
-        if isinstance(out, pd.DataFrame):
-            out = out.copy()
-            out.columns = [str(c) for c in out.columns]
-            if missing := [f for f in self.order_ if f not in out.columns]:
-                raise ValueError(f"binner.transform() dropped columns {missing}")
-            if len(out) != len(full):
-                raise ValueError("binner.transform() must return one row per row of X")
-            out.index = full.index
-        else:
-            values = np.asarray(out)
-            if values.shape != full.shape:
-                raise ValueError(
-                    f"binner.transform() returned shape {values.shape}; expected {full.shape}"
-                )
-            out = pd.DataFrame(values, index=full.index, columns=full.columns)
-        selected: pd.DataFrame = out[features]
-        return selected
-
-    def _frame(self, X: Union[pd.DataFrame, np.ndarray], features: list[str]) -> pd.DataFrame:
-        """The given features of X, binned by binner_, as objects with missing values filled."""
-        binned = self._bins(self._as_frame(X), features)
-        filled: pd.DataFrame = binned.astype(object).where(binned.notna(), MISSING)
-        return filled
-
-    @staticmethod
-    def _sort_key(value: Any) -> tuple[int, Any]:
-        """Numbers in numeric order, then strings."""
-        return (1, value) if isinstance(value, str) else (0, value)
-
-    def _codes(self, column: pd.Series, feature: str) -> np.ndarray:
-        """Position of each value in levels_[feature]; -1 for a level not seen at fit."""
-        lookup = self._index[feature]
-        return np.array([lookup.get(v, -1) for v in column], dtype=int)
 
     def _onehot(self, codes: dict[str, np.ndarray], features: list[str], n: int) -> np.ndarray:
         """Every bin of every earlier feature, no reference level; unseen bins are all zero."""
@@ -331,32 +238,14 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
             )
 
         self.order_ = order
+        self._binned_features = order
         # classes are indexed 0..K-1 internally; for a 0/1 target index and label coincide
         self.classes_ = labels
         self.n_features_in_ = raw.shape[1]
         self._fit_binner(raw[order], target)
         binned = self._bins(raw[order], order)
         frame = binned.astype(object).where(binned.notna(), MISSING)
-        self.levels_ = {}
-        for f in order:
-            seen = set(frame[f].unique())
-            if isinstance(binned[f].dtype, pd.CategoricalDtype):
-                ordered = [b for b in binned[f].cat.categories if b in seen]
-                self.levels_[f] = ordered + sorted(seen - set(ordered), key=self._sort_key)
-            else:
-                self.levels_[f] = sorted(seen, key=self._sort_key)
-            if len(self.levels_[f]) > _MANY_LEVELS:
-                warnings.warn(
-                    f"'{f}' has {len(self.levels_[f])} distinct values after binning and is "
-                    "treated as that many categories; was a continuous column left unbinned? "
-                    "For a high-cardinality category, pool rare values first, e.g. "
-                    "make_pipeline(WoePreprocessor(min_count=30), SoftmaxWoe()).",
-                    UserWarning,
-                    stacklevel=2,
-                )
-        self._index = {
-            f: {v: k for k, v in enumerate(levels)} for f, levels in self.levels_.items()
-        }
+        self._set_levels(binned, frame, order)
         self._counts = np.bincount(target, minlength=len(labels))
         self.class_counts_ = {label: int(c) for label, c in zip(labels.tolist(), self._counts)}
         self.class_log_prior_ = np.log(self._counts / self._counts.sum())
@@ -698,22 +587,6 @@ class SoftmaxWoe(ClassifierMixin, TransformerMixin, BaseEstimator):
         logp = self._class_log_probs(frame, codes, n)
         scores: np.ndarray = self.class_log_prior_ + np.sum(logp, axis=0)
         return scores, codes, n
-
-    def _handle_unseen(self, n_rows: int) -> None:
-        """Handle unseen categories according to the unseen policy."""
-        if not self.unseen_counts_ or self.unseen == "prior":
-            return
-        detail = "; ".join(
-            f"'{f}': " + ", ".join(f"{v!r} ({k})" for v, k in counts.items())
-            for f, counts in self.unseen_counts_.items()
-        )
-        msg = (
-            f"categories not seen during fit, given weight 0 (the prior) in {n_rows} rows: "
-            f"{detail}. Set unseen='prior' to silence this, or unseen='raise' to fail."
-        )
-        if self.unseen == "raise":
-            raise ValueError(msg)
-        warnings.warn(msg, UserWarning, stacklevel=3)
 
     def predict_proba(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
         """Class probabilities, one column per class in classes_; rows sum to 1.
