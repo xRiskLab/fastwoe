@@ -142,6 +142,24 @@ class JointWoe(_BinnedMixin, ClassifierMixin, TransformerMixin, BaseEstimator):
         self._handle_unseen(len(frame))
         return frame, codes
 
+    def _weight_se(self) -> np.ndarray:
+        """Standard error of every bin weight as reported, centered within its table.
+
+        Shifting a whole table by c and the intercept by -c changes no prediction,
+        only the penalty, so the raw covariance carries the uncertainty of that
+        arbitrary level (about sqrt(C / K) for a table of K bins) in every weight.
+        The reported tables sum to zero, so each weight's variance is taken from
+        the covariance projected onto centered tables, P S P with P = I - 11'/K.
+        """
+        cov = self._covariance()
+        out = np.empty(self._n_bins)
+        for f in self._binned_features:
+            start, k = self._offsets[f], len(self.levels_[f])
+            block = cov[start : start + k, start : start + k]
+            centered = block - block.mean(axis=0) - block.mean(axis=1)[:, None] + block.mean()
+            out[start : start + k] = np.sqrt(np.clip(np.diag(centered), 0, None))
+        return out
+
     def _covariance(self) -> np.ndarray:
         """Covariance of [bin weights..., intercept]: the inverse penalized Hessian, computed once."""
         if self._cov is None:
@@ -238,7 +256,7 @@ class JointWoe(_BinnedMixin, ClassifierMixin, TransformerMixin, BaseEstimator):
             raise ValueError(f"output must be 'woe' or 'se', got {output!r}")
         frame, codes = self._prepare(X)
         if output == "se":
-            se = np.sqrt(np.clip(np.diag(self._covariance())[: self._n_bins], 0, None))
+            se = self._weight_se()
         values = np.zeros(frame.shape)
         for j, f in enumerate(self._binned_features):
             known = codes[f] >= 0
@@ -325,7 +343,7 @@ class JointWoe(_BinnedMixin, ClassifierMixin, TransformerMixin, BaseEstimator):
         with np.errstate(divide="ignore", invalid="ignore"):
             marginal = np.log((events / events.sum()) / (nonevents / nonevents.sum()))
             rate = events / count
-        se = np.sqrt(np.clip(np.diag(self._covariance())[start : start + k], 0, None))
+        se = self._weight_se()[start : start + k]
         return pd.DataFrame(
             {
                 "category": self.levels_[feature],

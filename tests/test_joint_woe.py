@@ -119,6 +119,35 @@ def test_standard_errors_are_positive_and_shrink_with_data():
     assert se_large.to_numpy().mean() < se_small.to_numpy().mean()
 
 
+def test_weight_standard_errors_match_the_bootstrap():
+    """The SE of a centered table weight tracks the bootstrap spread, with the bins held fixed."""
+
+    class FixedBins:
+        def __init__(self, fitted):
+            self.fitted = fitted
+
+        def fit(self, X, y):
+            pass
+
+        def transform(self, X):
+            return self.fitted.transform_bins(X)
+
+    X, y = correlated(n=8000)
+    X = X[["a", "b"]]
+    m = JointWoe().fit(X, y)
+    se = m.get_mapping("a").set_index("category").woe_se
+    rng = np.random.default_rng(7)
+    boot = []
+    for _ in range(60):
+        i = rng.integers(0, len(y), len(y))
+        fit = JointWoe(binner=FixedBins(m.binner_)).fit(X.iloc[i].reset_index(drop=True), y[i])
+        boot.append(fit.tables_["a"].reindex(m.levels_["a"]).to_numpy())
+    spread = pd.Series(np.std(boot, axis=0, ddof=1), index=m.levels_["a"])
+    ratio = (se / spread).to_numpy()
+    assert 0.7 < np.median(ratio) < 1.4
+    assert se.max() > 1.5 * se.min()  # thin bins are less certain
+
+
 def test_unseen_bins_follow_the_policy():
     X, y = cells()
     new = pd.DataFrame({"u": ["p", "t"], "v": ["k", "k"]})
