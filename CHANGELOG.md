@@ -1,6 +1,6 @@
 # Changelog
 
-## Version 0.3.2 (unreleased)
+## Version 0.3.2 (2026-11-23)
 
 **JointWoe; FAISS binning fix**
 
