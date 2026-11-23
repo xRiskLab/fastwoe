@@ -1186,6 +1186,28 @@ class TestIntegration:
         # All values should be valid WOE scores
         assert X_transformed["numerical_score"].dtype == "float64"
 
+    @pytest.mark.parametrize("offset", [0, 1000])
+    def test_faiss_kmeans_fit_counts_match_bins(self, offset):
+        """The WOE table at fit counts each row in its own bin, with missing values and any index."""
+        import importlib.util
+
+        if importlib.util.find_spec("faiss") is None:
+            pytest.skip("FAISS not available, skipping FAISS KMeans tests")
+
+        rng = np.random.default_rng(0)
+        n = 2000
+        x = rng.normal(size=n)
+        x[rng.random(n) < 0.1] = np.nan
+        y = (rng.random(n) < 1 / (1 + np.exp(-2 * np.nan_to_num(x)))).astype(int)
+        X = pd.DataFrame({"x": x}, index=np.arange(n) + offset)
+
+        woe = FastWoe(binning_method="faiss_kmeans", random_state=0).fit(X, y)
+        fitted = woe.get_mapping("x").dropna(subset=["count"]).set_index("category")
+        actual = pd.DataFrame({"bin": woe.transform_bins(X)["x"].astype(str), "y": y})
+        actual = actual.groupby("bin").y.agg(["count", "mean"])
+        np.testing.assert_array_equal(fitted["count"], actual.loc[fitted.index, "count"])
+        np.testing.assert_allclose(fitted["event_rate"], actual.loc[fitted.index, "mean"], rtol=1e-4)
+
     def test_faiss_kmeans_binning_parameters(self):
         """Test FAISS KMeans binning with different parameters."""
         import importlib.util

@@ -2250,9 +2250,10 @@ class FastWoe(PiecewiseWoeMixin, MulticlassWoeMixin, ConditionalWoeMixin):  # py
                 sorted_pos = cluster_id_to_sorted_position[cluster_id]
                 cluster_to_bin[cluster_id] = bin_labels[sorted_pos]
 
-            # Convert to pandas Series to use .map() method
-            cluster_series = pd.Series(cluster_labels)
-            X_binned.loc[~mask_missing, col] = cluster_series.map(cluster_to_bin)
+            # Write by position: a Series would be aligned on X_binned's row labels, which
+            # differ from 0..m-1 when values are missing or the index is not the default
+            bins = pd.Series(cluster_labels).map(cluster_to_bin).to_numpy()
+            X_binned.loc[~mask_missing, col] = bins
 
         # Handle missing values
         if mask_missing.any():
