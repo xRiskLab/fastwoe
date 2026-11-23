@@ -17,6 +17,7 @@ FastWoe is a Python library for efficient **Weight of Evidence (WOE)** encoding 
 - **Fast WOE Encoding**: Leverages scikit-learn's `TargetEncoder` for efficient computation
 - **Multiclass Support**: One-vs-rest WOE encoding for targets with 3+ classes
 - **Conditional WOE**: Good's chain rule, by counting (`FastWoe(conditional=True)`) or by a hierarchical softmax that keeps conditioning where cells run thin (`SoftmaxWoe`)
+- **Joint WOE**: WOE tables fitted together (`JointWoe`), one weight per bin with evidence shared by correlated features counted once; soft targets, standard errors and conditional IV (see [guide](docs/joint_woe_guide.md))
 - **Statistical Confidence Intervals**: Provides standard errors and confidence intervals for WOE values
 - **IV Standard Errors**: Statistical significance testing for Information Value with confidence intervals
 - **Cardinality Control**: Built-in preprocessing to handle high-cardinality categorical features
