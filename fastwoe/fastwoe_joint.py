@@ -262,7 +262,8 @@ class JointWoe(_BinnedMixin, ClassifierMixin, TransformerMixin, BaseEstimator):
             known = codes[f] >= 0
             source = se if output == "se" else self._coef
             values[known, j] = source[codes[f][known] + self._offsets[f]]
-        return pd.DataFrame(values, index=frame.index, columns=self._binned_features)
+        out: pd.DataFrame = pd.DataFrame(values, index=frame.index, columns=self._binned_features)
+        return out
 
     def decision_function(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
         """Log-odds of the event: the intercept plus the summed weights."""
@@ -321,7 +322,8 @@ class JointWoe(_BinnedMixin, ClassifierMixin, TransformerMixin, BaseEstimator):
             raise ValueError("iv needs 0/1 labels with both classes present")
         weights = self.transform(X).to_numpy()
         values = weights[labels == 1].mean(axis=0) - weights[labels == 0].mean(axis=0)
-        return pd.Series(values, index=self._binned_features, name="iv")
+        iv: pd.Series = pd.Series(values, index=self._binned_features, name="iv")
+        return iv
 
     def get_mapping(self, feature: str) -> pd.DataFrame:
         """One feature's table: bin, training count and event rate, marginal WOE, joint weight and its SE.
@@ -344,7 +346,7 @@ class JointWoe(_BinnedMixin, ClassifierMixin, TransformerMixin, BaseEstimator):
             marginal = np.log((events / events.sum()) / (nonevents / nonevents.sum()))
             rate = events / count
         se = self._weight_se()[start : start + k]
-        return pd.DataFrame(
+        table: pd.DataFrame = pd.DataFrame(
             {
                 "category": self.levels_[feature],
                 "count": count,
@@ -354,3 +356,4 @@ class JointWoe(_BinnedMixin, ClassifierMixin, TransformerMixin, BaseEstimator):
                 "woe_se": se,
             }
         )
+        return table
