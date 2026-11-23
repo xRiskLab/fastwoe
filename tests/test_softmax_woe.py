@@ -7,8 +7,7 @@ import pandas as pd
 import pytest
 import sklearn
 
-from fastwoe import FastWoe
-from fastwoe.softmax_woe import SoftmaxWoe
+from fastwoe import FastWoe, SoftmaxWoe
 
 
 @pytest.fixture
@@ -440,7 +439,7 @@ def test_unbinned_continuous_column_warns(numeric_data):
 
 def test_binner_protocol():
     """Binner is a structural type: any object with fit and transform satisfies it."""
-    from fastwoe.softmax_woe import Binner
+    from fastwoe.fastwoe_softmax import Binner
 
     assert isinstance(EdgesBinner({}), Binner)
     assert isinstance(FastWoe(), Binner)
@@ -639,3 +638,18 @@ def test_multiclass_intervals_cover_truth():
         covered += (ci[:, 0::2] <= truth) & (truth <= ci[:, 1::2])
     coverage = covered.mean() / reps
     assert 0.93 < coverage < 0.97, coverage
+
+
+def test_old_module_path_still_imports():
+    """fastwoe.softmax_woe (0.2.0 to 0.3.1) re-exports from fastwoe.fastwoe_softmax, with a warning."""
+    import importlib
+    import sys
+
+    sys.modules.pop("fastwoe.softmax_woe", None)
+    with pytest.warns(DeprecationWarning, match="fastwoe.softmax_woe is deprecated"):
+        old = importlib.import_module("fastwoe.softmax_woe")
+    from fastwoe.fastwoe_softmax import Binner
+    from fastwoe.fastwoe_softmax import SoftmaxWoe as Current
+
+    assert old.SoftmaxWoe is Current
+    assert old.Binner is Binner

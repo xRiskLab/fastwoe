@@ -1,0 +1,707 @@
+"""Softmax WOE: conditional weight of evidence from a hierarchical softmax.
+
+SoftmaxWoe is a generative classifier: per class, an autoregressive chain of
+penalized multinomial logistic regressions, fitted by maximum likelihood of the
+features given the class; its per-feature weights are Good's conditional
+weights of evidence under that model and sum exactly to the posterior log-odds.
+
+Conditional WOE (``FastWoe(conditional=True)``) measures each feature's weight
+inside the cell picked out by the features before it, by counting. With more
+than a few features the cells run thin and fall back to marginal weights.
+
+Softmax WOE replaces the counts with a small model per feature. Within each
+class, the bin of feature i is predicted from the bins of the earlier features
+by a multinomial logistic regression (the "node"); the first node is the bin
+shares. Per class this is the hierarchical softmax of Goodfellow et al.
+(2016, sec. 12.4.3.2), with applicant profiles in place of words. The weight at
+node i is
+
+    W(H : bin_i | bin_<i) = log P(bin_i | bin_<i, H) - log P(bin_i | bin_<i, not-H)
+
+Each node is a proper distribution over its bins, so in each class the product
+along a path is a proper distribution over all profiles, and the weights add
+up exactly to the log likelihood ratio of the profile:
+
+    log-odds = prior + sum_i W_i
+
+The node penalty ``C`` moves along a ladder of assumptions: as C goes to 0 the
+nodes shrink to their bin shares and the result is marginal WOE (naive Bayes);
+as C grows the nodes fit main effects of the earlier bins freely. Unlike the
+counting chain, the score depends on the order of the features, because each
+order defines a different smoothed distribution.
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+from typing import Any, Optional, Union
+
+import numpy as np
+import pandas as pd
+from scipy.special import logsumexp
+from scipy.stats import norm
+from sklearn.base import BaseEstimator, ClassifierMixin, TransformerMixin
+from sklearn.linear_model import LogisticRegression
+
+from ._binned import MISSING, Binner, _BinnedMixin
+
+__all__ = ["Binner", "SoftmaxWoe"]
+
+_FLOOR = 1e-6  # probability of a bin a class never showed at a node, before renormalizing
+
+
+class SoftmaxWoe(_BinnedMixin, ClassifierMixin, TransformerMixin, BaseEstimator):
+    """Conditional WOE by hierarchical softmax (binary or multiclass targets).
+
+    SoftmaxWoe is a generative classifier: per class, an autoregressive chain of
+    penalized multinomial logistic regressions, fitted by maximum likelihood of the
+    features given the class; its per-feature weights are Good's conditional
+    weights of evidence under that model and sum exactly to the posterior log-odds.
+
+    A binary target is coded 0/1 (1 = event). With three or more classes (any
+    labels) there is one chain per class and the class probabilities are a
+    softmax over classes of log P(class) + log P(x | class); transform() gives
+    each feature's contribution to each class's softmax score, or one-vs-rest
+    weights (``against="rest"``), or weights against one class (``against=j``).
+
+    Parameters
+    ----------
+    order : list of str, optional
+        Order in which features are conditioned on. Defaults to the column order
+        of X at fit. Unlike counted conditional WOE, the order changes the score
+        as well as how evidence is attributed across features.
+    C : float, default=1.0
+        Inverse L2 penalty of every node model (smaller means more shrinkage
+        toward marginal WOE), applied to one coefficient row per bin, so nodes
+        with two bins are shrunk like the rest. Choose it by cross-validation.
+    root_pseudo_count : float, default=0.5
+        Pseudo-count added to each bin when shares are counted: at the first
+        node, and at any node where a class shows a single bin.
+    max_iter : int, default=5000
+        Iteration limit of each node's logistic regression.
+    unseen : {"warn", "prior", "raise"}, default="warn"
+        What transform() does with a category absent at fit: give that
+        feature's weight 0 and warn, do so silently, or raise.
+    binner : Binner, optional
+        Turns X into bins. Any object with ``fit(X, y)`` and ``transform(X)``
+        (the ``Binner`` protocol),
+        where ``transform`` returns a DataFrame or array with X's columns and a
+        bin label in every cell: strings, numbers, intervals or categoricals.
+        Ordered categoricals keep their order; other labels are sorted (numbers
+        and intervals numerically). Missing values become the level "Missing",
+        and a column the binner leaves unchanged is treated as categories. The
+        binner is cloned before fitting, and ``fit`` may return None. It always
+        receives every column seen at fit; where ``node_proba`` is given only
+        some, the others are passed as NaN. Defaults to a FastWoe configured by
+        ``binning_kwargs``.
+    binning_kwargs : dict, optional
+        Keyword arguments for the default FastWoe binner, e.g.
+        ``{"binning_method": "kbins", "numerical_threshold": 10}`` or
+        ``{"monotonic_cst": {"income": -1}}``. Defaults to FastWoe's own
+        defaults (decision-tree bins for numeric columns with at least 20
+        distinct values; numeric columns with fewer are treated as categories).
+        A monotonic constraint shapes the bins, so it holds for the marginal
+        weights and for the first feature in ``order``; the node models are not
+        constrained, so a later feature's conditional weights need not be
+        monotone.
+
+    Attributes:
+    ----------
+    binner_ : object
+        The fitted binner. With the default it is a FastWoe: its
+        ``get_binning_summary()`` shows the bins, and its ``transform()`` gives
+        the marginal WOE for comparison.
+    levels_ : dict
+        Bins of each feature, in the order the chain uses them.
+    class_counts_ : dict
+        Training rows per class label.
+    classes_ : ndarray
+        The class labels, sorted ([0, 1] for a binary target).
+    class_log_prior_ : ndarray
+        Log share of each class in the training data, in classes_ order.
+    prior_log_odds_ : float
+        Binary targets: log-odds of the event in the training data.
+
+    Notes on scikit-learn: SoftmaxWoe is a scikit-learn estimator, so it works
+    with ``clone``, ``GridSearchCV`` (for example over ``C``), ``cross_val_score``
+    and ``Pipeline``. Parameters are checked when ``fit`` is called.
+
+    Notes:
+    -----
+    By default numerical features are binned exactly as FastWoe bins them; every
+    other feature is treated as categorical. Missing values form their own level,
+    "Missing".
+    """
+
+    def __init__(
+        self,
+        order: Optional[list[str]] = None,
+        C: float = 1.0,
+        root_pseudo_count: float = 0.5,
+        max_iter: int = 5000,
+        unseen: str = "warn",
+        binning_kwargs: Optional[dict[str, Any]] = None,
+        binner: Optional[Binner] = None,
+    ):
+        """Store the parameters as given; they are checked in fit (scikit-learn convention)."""
+        self.order = order
+        self.C = C
+        self.root_pseudo_count = root_pseudo_count
+        self.max_iter = max_iter
+        self.unseen = unseen
+        self.binning_kwargs = binning_kwargs
+        self.binner = binner
+
+    def _check_params(self) -> None:
+        """Validate the constructor parameters."""
+        if self.C <= 0:
+            raise ValueError("C must be positive")
+        if self.root_pseudo_count < 0:
+            raise ValueError("root_pseudo_count must be non-negative")
+        self._check_binning_params()
+
+    # ------------------------------------------------------------------
+    # helpers
+    # ------------------------------------------------------------------
+
+    @property
+    def _multiclass(self) -> bool:
+        """Whether the target has three or more classes."""
+        return len(self.classes_) > 2
+
+    def _onehot(self, codes: dict[str, np.ndarray], features: list[str], n: int) -> np.ndarray:
+        """Every bin of every earlier feature, no reference level; unseen bins are all zero."""
+        blocks = []
+        for f in features:
+            block = np.zeros((n, len(self.levels_[f])))
+            known = codes[f] >= 0
+            block[np.flatnonzero(known), codes[f][known]] = 1.0
+            blocks.append(block)
+        return np.hstack(blocks) if blocks else np.zeros((n, 0))
+
+    def _shares(self, codes: np.ndarray, n_levels: int) -> np.ndarray:
+        """Return the share of each level, with pseudo-count smoothing."""
+        counts = np.bincount(codes, minlength=n_levels).astype(float)
+        counts += self.root_pseudo_count
+        shares: np.ndarray = counts / counts.sum()
+        return shares
+
+    def _node_probs(self, i: int, cls: int, codes: dict[str, np.ndarray], n: int) -> np.ndarray:
+        """P(bin of feature i | earlier bins, class): rows x bins, each row summing to 1."""
+        feature = self.order_[i]
+        node = self.nodes_[(feature, cls)]
+        if isinstance(node, np.ndarray):
+            return np.tile(node, (n, 1))
+        probs = np.full((n, len(self.levels_[feature])), _FLOOR)
+        probs[:, node.classes_] = node.predict_proba(self._onehot(codes, self.order_[:i], n))
+        normalized: np.ndarray = probs / probs.sum(axis=1, keepdims=True)
+        return normalized
+
+    def _prepare(
+        self, X: Union[pd.DataFrame, np.ndarray], features: list[str]
+    ) -> tuple[pd.DataFrame, dict[str, np.ndarray]]:
+        """Check the model is fitted and X has the features; return X and its bin codes."""
+        if not hasattr(self, "nodes_"):
+            raise ValueError("SoftmaxWoe must be fitted first")
+        if missing := [f for f in features if f not in self._as_frame(X).columns]:
+            raise ValueError(f"features seen during fit are missing from X: {missing}")
+        frame = self._frame(X, features)
+        return frame, {f: self._codes(frame[f], f) for f in features}
+
+    # ------------------------------------------------------------------
+    # fit / transform
+    # ------------------------------------------------------------------
+
+    def fit(
+        self, X: Union[pd.DataFrame, np.ndarray], y: Union[pd.Series, np.ndarray]
+    ) -> SoftmaxWoe:
+        """Fit one node model per feature and class.
+
+        Returns self, as the scikit-learn estimator API expects.
+        """
+        self._check_params()
+        raw = self._as_frame(X)
+        labels, target = np.unique(np.asarray(y), return_inverse=True)
+        target = target.ravel()
+        if len(labels) < 2:
+            raise ValueError("SoftmaxWoe needs at least two classes in the target")
+        if len(labels) == 2 and not set(labels.tolist()) <= {0, 1}:
+            raise ValueError(
+                "SoftmaxWoe needs a binary target coded 0/1 (1 = event); "
+                f"got {labels.tolist()}. Three or more classes may have any labels."
+            )
+        order = list(raw.columns) if self.order is None else [str(c) for c in self.order]
+        if len(set(order)) != len(order) or set(order) != set(raw.columns):
+            raise ValueError(
+                "order must list every column of X exactly once; got "
+                f"{order} for columns {list(raw.columns)}"
+            )
+
+        self.order_ = order
+        self._binned_features = order
+        # classes are indexed 0..K-1 internally; for a 0/1 target index and label coincide
+        self.classes_ = labels
+        self.n_features_in_ = raw.shape[1]
+        self._fit_binner(raw[order], target)
+        binned = self._bins(raw[order], order)
+        frame = binned.astype(object).where(binned.notna(), MISSING)
+        self._set_levels(binned, frame, order)
+        self._counts = np.bincount(target, minlength=len(labels))
+        self.class_counts_ = {label: int(c) for label, c in zip(labels.tolist(), self._counts)}
+        self.class_log_prior_ = np.log(self._counts / self._counts.sum())
+        if not self._multiclass:
+            self.prior_log_odds_ = float(np.log(self._counts[1] / self._counts[0]))
+        codes = {f: self._codes(frame[f], f) for f in order}
+        # kept to compute standard errors on demand; covariances are cached on first use
+        self._fit_codes, self._fit_target = codes, target
+        self._node_C: dict[tuple[str, int], float] = {}
+        self._node_cov: dict[tuple[str, int], np.ndarray] = {}
+        self.nodes_: dict[tuple[str, int], Any] = {}
+        for i, f in enumerate(order):
+            n_levels = len(self.levels_[f])
+            for cls in range(len(labels)):
+                rows = target == cls
+                node_codes = codes[f][rows]
+                if i == 0 or len(np.unique(node_codes)) < 2:
+                    self.nodes_[(f, cls)] = self._shares(node_codes, n_levels)
+                    continue
+                inputs = self._onehot(
+                    {g: codes[g][rows] for g in order[:i]}, order[:i], int(rows.sum())
+                )
+                # With two bins scikit-learn fits one logit, bin 1 against bin 0,
+                # instead of a coefficient row per bin. Under the same C that is
+                # penalized twice as hard as the symmetric softmax; 2C makes the
+                # two fits identical, so every node is shrunk alike.
+                two_bins = len(np.unique(node_codes)) == 2
+                node_C = 2 * self.C if two_bins else self.C
+                node = LogisticRegression(C=node_C, max_iter=self.max_iter).fit(inputs, node_codes)
+                self.nodes_[(f, cls)] = node
+                self._node_C[(f, cls)] = node_C
+        return self
+
+    # ------------------------------------------------------------------
+    # standard errors
+    # ------------------------------------------------------------------
+
+    def _distinct(
+        self, columns: dict[str, np.ndarray], features: list[str]
+    ) -> tuple[dict[str, np.ndarray], np.ndarray, np.ndarray]:
+        """Distinct rows of the given bin codes, with each row's index into them and their counts.
+
+        Codes (-1 for unseen) are packed into one integer per row so a 1-D unique
+        does the work; if that integer could overflow, rows are compared directly.
+        """
+        key = np.column_stack([columns[f] + 1 for f in features])
+        sizes = [len(self.levels_[f]) + 1 for f in features]
+        if float(np.prod(sizes, dtype=float)) < 2**62:
+            packed = np.zeros(len(key), dtype=np.int64)
+            for j, size in enumerate(sizes):
+                packed = packed * size + key[:, j]
+            _, first, back, counts = np.unique(
+                packed, return_index=True, return_inverse=True, return_counts=True
+            )
+            rows = key[first]
+        else:
+            rows, back, counts = np.unique(key, axis=0, return_inverse=True, return_counts=True)
+        distinct = {f: rows[:, j] - 1 for j, f in enumerate(features)}
+        return distinct, back.ravel(), counts
+
+    @staticmethod
+    def _with_intercept(inputs: np.ndarray) -> np.ndarray:
+        return np.hstack([inputs, np.ones((len(inputs), 1))])
+
+    @staticmethod
+    def _coef_rows(node: LogisticRegression) -> np.ndarray:
+        """Coefficients and intercept of each softmax row: rows x (inputs + 1)."""
+        rows: np.ndarray = np.hstack([node.coef_, node.intercept_[:, None]])
+        return rows
+
+    def _coef_covariance(
+        self, node: LogisticRegression, inputs: np.ndarray, counts: np.ndarray, node_C: float
+    ) -> np.ndarray:
+        """Covariance of a node's coefficients: the inverse penalized Hessian.
+
+        The Hessian is that of the node's objective in units of log-likelihood,
+        with the L2 penalty 1/C on every coefficient and none on the intercept.
+        The softmax is over-parametrized (a constant added to every row changes
+        nothing), so the pseudo-inverse is used; the gradients it is applied to
+        are orthogonal to those directions.
+
+        The inputs are one-hot bins, so rows repeat: the Hessian is a sum over
+        rows, computed once per distinct row (``inputs``) weighted by how many
+        training rows share it (``counts``). The
+        multinomial Hessian sum_i (diag(p_i) - p_i p_i') kron a_i a_i' is built
+        as one matrix product of the stacked p kron a, plus the diagonal blocks.
+        """
+        A = self._with_intercept(inputs)
+        d = A.shape[1]
+        rows = self._coef_rows(node)
+        penalty = np.r_[np.full(d - 1, 1.0 / node_C), 0.0]
+        if len(rows) == 1:  # binary node: one logit
+            q = 1.0 / (1.0 + np.exp(-A @ rows[0]))
+            H = (A * (counts * q * (1 - q))[:, None]).T @ A + np.diag(penalty)
+        else:
+            Z = A @ rows.T
+            P = np.exp(Z - Z.max(axis=1, keepdims=True))
+            P /= P.sum(axis=1, keepdims=True)
+            K = len(rows)
+            stacked = (P[:, :, None] * A[:, None, :]).reshape(len(A), K * d)
+            stacked *= np.sqrt(counts)[:, None]
+            H = -(stacked.T @ stacked)  # - sum_i p_i p_i' kron a_i a_i'
+            for k in range(K):  # + sum_i diag(p_i) kron a_i a_i'
+                block = slice(k * d, (k + 1) * d)
+                H[block, block] += (A.T * (counts * P[:, k])) @ A
+            H += np.diag(np.tile(penalty, K))
+        cov: np.ndarray = np.linalg.pinv(H)
+        return cov
+
+    def _covariance(self, i: int, cls: int) -> np.ndarray:
+        """A fitted node's coefficient covariance, computed on first use and cached."""
+        key = (self.order_[i], cls)
+        if key not in self._node_cov:
+            rows = self._fit_target == cls
+            earlier = self.order_[:i]
+            distinct, _, counts = self._distinct(
+                {g: self._fit_codes[g][rows] for g in earlier}, earlier
+            )
+            inputs = self._onehot(distinct, earlier, len(counts))
+            self._node_cov[key] = self._coef_covariance(
+                self.nodes_[key], inputs, counts, self._node_C[key]
+            )
+        return self._node_cov[key]
+
+    def _log_prob_variance(
+        self, i: int, cls: int, codes: dict[str, np.ndarray], n: int
+    ) -> np.ndarray:
+        """Delta-method variance of log P(row's bin of feature i | earlier bins, class).
+
+        Counted shares use the multinomial variance (1 - p) / (n p); fitted
+        nodes use the gradient of log p against the coefficient covariance.
+        A bin unseen at fit gets 0 (its weight is fixed at 0).
+        """
+        feature = self.order_[i]
+        node = self.nodes_[(feature, cls)]
+        n_class = int(self._counts[cls])
+        if isinstance(node, np.ndarray):
+            k = codes[feature]
+            known = k >= 0
+            p = node[np.where(known, k, 0)]
+            return np.where(known, (1 - p) / (n_class * p), 0.0)
+        # rows with the same earlier bins and own bin share a variance: compute
+        # it once per distinct combination and map it back
+        earlier = self.order_[:i]
+        dcodes, back, _ = self._distinct(codes, [*earlier, feature])
+        dk = dcodes[feature]
+        u = len(dk)
+        x = self._with_intercept(self._onehot(dcodes, earlier, u))
+        rows = self._coef_rows(node)
+        cov = self._covariance(i, cls)
+        # position of each bin among the classes the node was fitted on
+        position = {c: j for j, c in enumerate(node.classes_)}
+        pos = np.array([position.get(c, -1) for c in dk])
+        if len(rows) == 1:
+            q = 1.0 / (1.0 + np.exp(-x @ rows[0]))
+            grad = np.where(pos == 1, 1 - q, -q)[:, None] * x
+        else:
+            Z = x @ rows.T
+            P = np.exp(Z - Z.max(axis=1, keepdims=True))
+            P /= P.sum(axis=1, keepdims=True)
+            E = -P
+            hit = pos >= 0
+            E[np.flatnonzero(hit), pos[hit]] += 1.0
+            grad = (E[:, :, None] * x[:, None, :]).reshape(u, -1)
+        var = ((grad @ cov) * grad).sum(axis=1)
+        # a bin this class never showed here sits at the probability floor
+        floor_var = (1 - _FLOOR) / (n_class * _FLOOR)
+        per_distinct = np.where(dk < 0, 0.0, np.where(pos < 0, floor_var, var))
+        out: np.ndarray = per_distinct[back]
+        return out
+
+    def _weight_se(self, codes: dict[str, np.ndarray], n: int) -> np.ndarray:
+        """Standard error of each feature's weight: rows x features in order_."""
+        var = [
+            self._log_prob_variance(i, 1, codes, n) + self._log_prob_variance(i, 0, codes, n)
+            for i in range(len(self.order_))
+        ]
+        se: np.ndarray = np.sqrt(np.column_stack(var))
+        return se
+
+    def _class_log_probs(
+        self, frame: pd.DataFrame, codes: dict[str, np.ndarray], n: int
+    ) -> list[np.ndarray]:
+        """The log P(bin | earlier bins, class) of each row: a rows x classes array per feature.
+
+        A bin unseen at fit gets 0 in every class, so it carries no evidence;
+        unseen_counts_ records it and the unseen policy is applied.
+        """
+        rows = np.arange(n)
+        self.unseen_counts_: dict[str, dict[Any, int]] = {}
+        out = []
+        for i, f in enumerate(self.order_):
+            known = codes[f] >= 0
+            if not known.all():
+                self.unseen_counts_[f] = dict(Counter(frame[f][~known]))
+            bins = np.where(known, codes[f], 0)
+            logp = np.column_stack(
+                [
+                    np.log(self._node_probs(i, cls, codes, n)[rows, bins])
+                    for cls in range(len(self.classes_))
+                ]
+            )
+            out.append(np.where(known[:, None], logp, 0.0))
+        self._handle_unseen(n)
+        return out
+
+    def _against_index(self, against: Any) -> Union[int, str, None]:
+        """Class index of ``against``; None for softmax contributions, "rest" for one-vs-rest."""
+        if against is None:
+            return None
+        labels = self.classes_.tolist()
+        if isinstance(against, str) and against == "rest":
+            if "rest" in labels:
+                raise ValueError(
+                    "against='rest' is ambiguous: a class is named 'rest'; relabel it to ask "
+                    "for one-vs-rest weights"
+                )
+            return "rest"
+        matches = np.flatnonzero(self.classes_ == against)
+        if len(matches) != 1:
+            raise ValueError(f"against must be 'rest' or one of {labels}, got {against!r}")
+        return int(matches[0])
+
+    def _multiclass_frame(
+        self, X: Union[pd.DataFrame, np.ndarray], values: np.ndarray, classes: list[int]
+    ) -> pd.DataFrame:
+        """Rows x (feature, class) values as a DataFrame with FastWoe's {feature}_class_{k} columns."""
+        columns, data = [], []
+        position = {f: i for i, f in enumerate(self.order_)}
+        for f in [c for c in self._as_frame(X).columns if c in position]:
+            for c in classes:
+                columns.append(f"{f}_class_{self.classes_[c]}")
+                data.append(values[:, position[f], c])
+        index = self._as_frame(X).index
+        frame: pd.DataFrame = pd.DataFrame(np.column_stack(data), index=index, columns=columns)
+        return frame
+
+    def _transform_multiclass(
+        self, X: Union[pd.DataFrame, np.ndarray], output: str, against: Any
+    ) -> pd.DataFrame:
+        """Multiclass weights: softmax contributions, one-vs-rest, or against one class."""
+        frame, codes = self._prepare(X, self.order_)
+        n, k_classes = len(frame), len(self.classes_)
+        ref = self._against_index(against)
+        classes = [c for c in range(k_classes) if c != ref]
+        if output == "se":
+            if ref == "rest":
+                raise NotImplementedError(
+                    "standard errors of one-vs-rest weights are not available (the mixture "
+                    "weights depend on the earlier features' estimates); use the default "
+                    "softmax contributions or against=<class>, or predict_ci()"
+                )
+            self._class_log_probs(frame, codes, n)  # applies the unseen policy
+            var = np.stack(
+                [
+                    np.column_stack(
+                        [self._log_prob_variance(i, c, codes, n) for c in range(k_classes)]
+                    )
+                    for i in range(len(self.order_))
+                ],
+                axis=1,
+            )  # rows x features x classes
+            if ref is None:  # centered contributions: (1 - 2/K) V_k + sum_j V_j / K^2
+                k = k_classes
+                se = np.sqrt((1 - 2 / k) * var + var.sum(axis=2, keepdims=True) / k**2)
+            else:
+                se = np.sqrt(var + var[:, :, [ref]])
+            return self._multiclass_frame(X, se, classes)
+        logp = np.stack(self._class_log_probs(frame, codes, n), axis=1)  # rows x features x classes
+        if ref is None:  # each feature's contribution to each class's softmax score
+            return self._multiclass_frame(X, logp - logp.mean(axis=2, keepdims=True), classes)
+        if isinstance(ref, int):
+            return self._multiclass_frame(X, logp - logp[:, :, [ref]], classes)
+        # one-vs-rest: "not k" is a mixture of the other classes, weighted by their
+        # prior times the evidence so far (Good's weighted average of factors)
+        before = self.class_log_prior_ + np.cumsum(logp, axis=1) - logp  # log pi_c P(x_<i | c)
+        weights = np.empty_like(logp)
+        for k in range(k_classes):
+            rest = [c for c in range(k_classes) if c != k]
+            log_rest_i = logsumexp(before[:, :, rest] + logp[:, :, rest], axis=2) - logsumexp(
+                before[:, :, rest], axis=2
+            )
+            weights[:, :, k] = logp[:, :, k] - log_rest_i
+        return self._multiclass_frame(X, weights, classes)
+
+    def transform(
+        self, X: Union[pd.DataFrame, np.ndarray], output: str = "woe", against: Any = None
+    ) -> pd.DataFrame:
+        """Per-feature weights, or their standard errors, one column per feature of X.
+
+        Parameters
+        ----------
+        X : DataFrame or ndarray
+            Features seen during fit.
+        output : {"woe", "se"}, default="woe"
+            "woe": the conditional weights; prior_log_odds_ plus the row sum is
+            the log-odds of the positive class. "se": the delta-method standard
+            error of each weight, from the event and non-event nodes, which are
+            fitted on separate rows.
+        against : None, "rest" or a class label, optional
+            Multiclass targets only; columns are ``{feature}_class_{k}``.
+            None (default): each feature's contribution to each class's softmax
+            score, log P(bin | earlier bins, k) centered over the classes, so
+            softmax over k of class_log_prior_[k] plus the row sum over class
+            k's columns is predict_proba. "rest": one-vs-rest weights, where
+            "not k" is the mixture of the other classes weighted by their prior
+            times the evidence of the earlier features; class k's prior odds
+            plus its row sum is its posterior log-odds against the rest. A
+            class label j: each other class's weight against j,
+            log P(bin | earlier bins, k) - log P(... | j). Standard errors are
+            available for the default and for a class label, not for "rest".
+        """
+        if output not in ("woe", "se"):
+            raise ValueError(f"output must be 'woe' or 'se', got {output!r}")
+        if self._multiclass_target_fitted():
+            return self._transform_multiclass(X, output, against)
+        if against is not None:
+            raise ValueError("against is for targets with three or more classes")
+        frame, codes = self._prepare(X, self.order_)
+        n = len(frame)
+        logp = self._class_log_probs(frame, codes, n)
+        weights = np.column_stack([lp[:, 1] - lp[:, 0] for lp in logp])
+        if output == "se":
+            weights = self._weight_se(codes, n)
+        out = pd.DataFrame(weights, index=frame.index, columns=self.order_)
+        ordered: pd.DataFrame = out[[c for c in self._as_frame(X).columns if c in self.order_]]
+        return ordered
+
+    def _multiclass_target_fitted(self) -> bool:
+        """Fitted on three or more classes (raises if not fitted)."""
+        if not hasattr(self, "nodes_"):
+            raise ValueError("SoftmaxWoe must be fitted first")
+        return self._multiclass
+
+    def _class_scores(self, X: Union[pd.DataFrame, np.ndarray]) -> tuple[np.ndarray, Any, int]:
+        """The score log P(class) + log P(x | class) of every row and class, with the bin codes."""
+        frame, codes = self._prepare(X, self.order_)
+        n = len(frame)
+        logp = self._class_log_probs(frame, codes, n)
+        scores: np.ndarray = self.class_log_prior_ + np.sum(logp, axis=0)
+        return scores, codes, n
+
+    def predict_proba(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
+        """Class probabilities, one column per class in classes_; rows sum to 1.
+
+        Binary: [P(0), P(1)] from the prior plus the summed weights. Multiclass:
+        a softmax over classes of log P(class) + sum of log P(bin | earlier
+        bins, class), Bayes' rule with each class's fitted chain.
+        """
+        if self._multiclass_target_fitted():
+            scores = self._class_scores(X)[0]
+            proba: np.ndarray = np.exp(scores - logsumexp(scores, axis=1, keepdims=True))
+            return proba
+        log_odds = self.prior_log_odds_ + self.transform(X).to_numpy().sum(axis=1)
+        p = 1.0 / (1.0 + np.exp(-log_odds))
+        return np.column_stack([1.0 - p, p])
+
+    def predict(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
+        """Class labels: the most probable class (binary: 1 where P(y=1) >= 0.5)."""
+        if self._multiclass_target_fitted():
+            predicted: np.ndarray = self.classes_[self.predict_proba(X).argmax(axis=1)]
+            return predicted
+        labels: np.ndarray = (self.predict_proba(X)[:, 1] >= 0.5).astype(int)
+        return labels
+
+    def predict_ci(self, X: Union[pd.DataFrame, np.ndarray], alpha: float = 0.05) -> np.ndarray:
+        """Confidence interval for P(y=1): columns [lower, upper].
+
+        Within each class the log-likelihood is a sum of node terms with
+        separate coefficients, so the node estimates are asymptotically
+        independent: the variance of the log-odds is the prior's (1/n1 + 1/n0)
+        plus the sum of the weight variances. The interval on the log-odds,
+        score +/- z * SE, is mapped through the sigmoid.
+
+        The weights are penalized, so they are biased toward marginal WOE; the
+        interval covers sampling noise, not that bias. With a strong penalty
+        (small C) read it as an interval under the model's assumptions.
+        """
+        if not 0 < alpha < 1:
+            raise ValueError("alpha must be between 0 and 1")
+        if self._multiclass_target_fitted():
+            return self._predict_ci_multiclass(X, alpha)
+        frame, codes = self._prepare(X, self.order_)
+        n = len(frame)
+        score = self.prior_log_odds_ + self.transform(X).to_numpy().sum(axis=1)
+        prior_var = 1 / self._counts[1] + 1 / self._counts[0]
+        se = np.sqrt(prior_var + (self._weight_se(codes, n) ** 2).sum(axis=1))
+        z = norm.ppf(1 - alpha / 2)
+        bounds: np.ndarray = 1.0 / (
+            1.0 + np.exp(-np.column_stack([score - z * se, score + z * se]))
+        )
+        return bounds
+
+    def _predict_ci_multiclass(
+        self, X: Union[pd.DataFrame, np.ndarray], alpha: float
+    ) -> np.ndarray:
+        """Per-class intervals for P(class | x): columns lower_0, upper_0, lower_1, ...
+
+        Each class's score is log P(class) + log P(x | class); classes' chains are
+        fitted on separate rows and nodes are asymptotically independent, so the
+        scores' variances are the sums of their node variances. The log-odds of
+        class k against the rest, S_k - logsumexp_(j != k) S_j, gets its variance
+        by the delta method: Var(S_k) + sum_j w_j^2 Var(S_j), with w_j class j's
+        share of the rest, plus the class priors' 1/n_k + sum_j w_j^2 / n_j.
+        """
+        scores, codes, n = self._class_scores(X)
+        k_classes = len(self.classes_)
+        var = np.column_stack(
+            [
+                np.sum(
+                    [self._log_prob_variance(i, c, codes, n) for i in range(len(self.order_))],
+                    axis=0,
+                )
+                for c in range(k_classes)
+            ]
+        )
+        z = norm.ppf(1 - alpha / 2)
+        out = np.empty((n, 2 * k_classes))
+        for k in range(k_classes):
+            rest = [c for c in range(k_classes) if c != k]
+            log_rest = logsumexp(scores[:, rest], axis=1)
+            w = np.exp(scores[:, rest] - log_rest[:, None])
+            logit = scores[:, k] - log_rest
+            v = var[:, k] + (w**2 * var[:, rest]).sum(axis=1)
+            v += 1 / self._counts[k] + (w**2 / self._counts[rest]).sum(axis=1)
+            se = np.sqrt(v)
+            out[:, 2 * k] = 1 / (1 + np.exp(-(logit - z * se)))
+            out[:, 2 * k + 1] = 1 / (1 + np.exp(-(logit + z * se)))
+        return out
+
+    def node_proba(self, X: Union[pd.DataFrame, np.ndarray], feature: str) -> pd.DataFrame:
+        """Probability of each row's bin of ``feature`` at its node, in each class.
+
+        Columns ``p_event`` = P(bin | earlier bins, y=1) and ``p_nonevent`` =
+        P(bin | earlier bins, y=0); the log of their ratio is the feature's
+        weight in transform(). Multiclass: one column ``p_class_{k}`` per class. X needs ``feature`` and every feature before it
+        in ``order_``. A bin not seen at fit gives NaN.
+        """
+        if not hasattr(self, "nodes_"):
+            raise ValueError("SoftmaxWoe must be fitted first")
+        if feature not in self.order_:
+            raise ValueError(f"unknown feature {feature!r}; expected one of {self.order_}")
+        i = self.order_.index(feature)
+        frame, codes = self._prepare(X, self.order_[: i + 1])
+        n = len(frame)
+        known = codes[feature] >= 0
+        bins = np.where(known, codes[feature], 0)
+        rows = np.arange(n)
+        names = (
+            [(f"p_class_{label}", c) for c, label in enumerate(self.classes_)]
+            if self._multiclass
+            else [("p_event", 1), ("p_nonevent", 0)]
+        )
+        out = {
+            name: np.where(known, self._node_probs(i, cls, codes, n)[rows, bins], np.nan)
+            for name, cls in names
+        }
+        probs: pd.DataFrame = pd.DataFrame(out, index=frame.index)
+        return probs

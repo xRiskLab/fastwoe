@@ -1206,7 +1206,9 @@ class TestIntegration:
         actual = pd.DataFrame({"bin": woe.transform_bins(X)["x"].astype(str), "y": y})
         actual = actual.groupby("bin").y.agg(["count", "mean"])
         np.testing.assert_array_equal(fitted["count"], actual.loc[fitted.index, "count"])
-        np.testing.assert_allclose(fitted["event_rate"], actual.loc[fitted.index, "mean"], rtol=1e-4)
+        np.testing.assert_allclose(
+            fitted["event_rate"], actual.loc[fitted.index, "mean"], rtol=1e-4
+        )
 
     def test_faiss_kmeans_binning_parameters(self):
         """Test FAISS KMeans binning with different parameters."""

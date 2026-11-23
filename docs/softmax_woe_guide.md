@@ -173,7 +173,7 @@ SoftmaxWoe was best with 4 bins, where it beat the scorecard; with 16 the scorec
 
 ### Your Own Binner
 
-Any object with `fit(X, y)` and `transform(X)` can supply the bins instead of FastWoe: the `Binner` protocol (`from fastwoe.softmax_woe import Binner`), which a binner satisfies by having the two methods, without inheriting from anything. `transform` must return a DataFrame or array with X's columns and a bin label in every cell: strings, numbers, intervals or categoricals.
+Any object with `fit(X, y)` and `transform(X)` can supply the bins instead of FastWoe: the `Binner` protocol (`from fastwoe.fastwoe_softmax import Binner`), which a binner satisfies by having the two methods, without inheriting from anything. `transform` must return a DataFrame or array with X's columns and a bin label in every cell: strings, numbers, intervals or categoricals.
 
 - Ordered categoricals keep their order; other labels are sorted, numbers and intervals numerically.
 - Missing values become the level `"Missing"`.
